@@ -15,7 +15,7 @@
 - 2026-05-10: Minimum Viable Product (MVP) és Dokumentáció (13. hét)
 
 ## Projekt Setup és Laragon környezet (1. hét)
-A fejlesztői környezet (Laragon) beállítása, a lokális webszerver és a MariaDB adatbázis elindítása[cite: 540, 541]. [cite_start]A Laravel keretrendszer inicializálása és a fejlesztői eszközök (VS Code) konfigurálása.
+A fejlesztői környezet (Laragon) beállítása, a lokális webszerver és a MariaDB adatbázis elindítása. A Laravel keretrendszer inicializálása és a fejlesztői eszközök (VS Code) konfigurálása.
 
 ## Adatbázis Tervezés és Migrációk (2. hét)
 A relációs adatbázis sémájának leprogramozása Laravel migrációk segítségével. A táblák (felhasználók, termékek, raktárak, készletek, tranzakciók) és azok mezőinek, kényszereinek pontos megtervezése a specifikáció alapján.

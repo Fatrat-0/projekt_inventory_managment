@@ -1,54 +1,54 @@
-# Projekt Ütemterv
+# Projekt Ütemterv: Inventory Management Application
 
-- 2026-03-01: Fejlesztői környezet és adatbázis sémák
-- 2026-03-08: Eloquent modellek és kapcsolatok
-- 2026-03-15: Hitelesítés és jogosultságkezelés
-- 2026-03-22: Törzsadatok I. (Kategóriák és Termékek)
-- 2026-03-29: Törzsadatok II. (Raktárak és Partnerek)
-- 2026-04-05: Készletmozgások alapjai
-- 2026-04-12: Adatintegritás és MVP lezárása
-- 2026-04-19: Raktárközi átmozgatások indítása
-- 2026-04-26: Raktárközi átmozgatások jóváhagyása
-- 2026-05-03: Vezérlőpult és riasztások
-- 2026-05-10: Felhasználói felület finomítása
-- 2026-05-17: Átfogó tesztelés
-- 2026-05-24: Dokumentáció és hibajavítás
+- 2026-02-15: Projekt Setup és Laragon környezet (1. hét) - [FOLYAMATBAN]
+- 2026-02-22: Adatbázis Tervezés és Migrációk (2. hét)
+- 2026-03-01: Modellek, Kapcsolatok és Tesztadatok (3. hét)
+- 2026-03-08: Biztonság és Autentikáció (RBAC) (4. hét)
+- 2026-03-15: Törzsadatok I. (Kategóriák és Termékek CRUD) (5. hét)
+- 2026-03-22: Törzsadatok II. (Raktárak és Partnerek) (6. hét)
+- 2026-03-29: Készletmozgások és Proof of Concept (PoC) (7. hét)
+- 2026-04-05: Raktárközi Átmozgatások Indítása (8. hét)
+- 2026-04-12: Raktárközi Átmozgatások Jóváhagyása (9. hét)
+- 2026-04-19: Vezérlőpult (Dashboard) és Riasztások (10. hét)
+- 2026-04-26: Admin Panel és Adatintegritás (11. hét)
+- 2026-05-03: UX/UI Finomhangolás és Hibakezelés (12. hét)
+- 2026-05-10: Minimum Viable Product (MVP) és Dokumentáció (13. hét)
 
-## Fejlesztői környezet és adatbázis sémák
-A fejlesztői környezet beállítása, valamint az adatbázis táblák (felhasználók, termékek, raktárak, készletek) megtervezése migrációk segítségével.
+## Projekt Setup és Laragon környezet (1. hét)
+A fejlesztői környezet (Laragon) beállítása, a lokális webszerver és a MariaDB adatbázis elindítása[cite: 540, 541]. [cite_start]A Laravel keretrendszer inicializálása és a fejlesztői eszközök (VS Code) konfigurálása.
 
-## Eloquent modellek és kapcsolatok
-Az adatbázist kezelő Eloquent ORM modellek létrehozása, a kapcsolatok definiálása, és tesztadatok betöltése a gyorsabb fejlesztés érdekében.
+## Adatbázis Tervezés és Migrációk (2. hét)
+A relációs adatbázis sémájának leprogramozása Laravel migrációk segítségével. A táblák (felhasználók, termékek, raktárak, készletek, tranzakciók) és azok mezőinek, kényszereinek pontos megtervezése a specifikáció alapján.
 
-## Hitelesítés és jogosultságkezelés
-A felhasználói beléptetés és a szerepkör-alapú hozzáférés-szabályozás (RBAC) implementálása a különböző felhasználói szintekhez (Admin, Raktárvezető, Raktáros).
+## Modellek, Kapcsolatok és Tesztadatok (3. hét)
+Az adatbázist kezelő Eloquent ORM modellek létrehozása. Az adatbázis kapcsolatok (1:N, N:M) definiálása az adatintegritás érdekében. Tesztadatok (Seeders/Factories) betöltése a gyorsabb fejlesztéshez.
 
-## Törzsadatok I. (Kategóriák és Termékek)
-A termékek és kategóriák rögzítéséhez, szerkesztéséhez és listázásához szükséges adminisztrációs űrlapok és logikák lefejlesztése.
+## Biztonság és Autentikáció (RBAC) (4. hét)
+A Laravel Breeze csomag beállítása a biztonságos felhasználói beléptetéshez. A Szerepkör alapú hozzáférés-szabályozás (Role-Based Access Control) implementálása Middleware-ekkel, elkülönítve az Admin, Raktárvezető és Raktáros szinteket.
 
-## Törzsadatok II. (Raktárak és Partnerek)
-A több raktár, illetve a vevők és beszállítók kezelését végző modulok elkészítése a megfelelő adatbázis kapcsolatokkal.
+## Törzsadatok I. (Kategóriák és Termékek CRUD) (5. hét)
+A terméktörzs és a kategóriák rögzítéséhez, szerkesztéséhez és listázásához szükséges adminisztrációs űrlapok lefejlesztése. Alapvető validációs szabályok beállítása (pl. egyedi cikkszám).
 
-## Készletmozgások alapjai
-A készletkezelés legfontosabb tranzakcióinak (bevételezés, kiadás, selejtezés) és a készletnapló (Inventory Movements) automatikus rögzítésének lefejlesztése.
+## Törzsadatok II. (Raktárak és Partnerek) (6. hét)
+A több raktár (Multi-warehouse) rendszer alapjainak lerakása. A vevők és beszállítók adatainak kezelését végző CRUD modulok elkészítése.
 
-## Adatintegritás és MVP lezárása
-Az adatbázis tranzakciók véglegesítése a negatív készletek elkerülése érdekében, amivel a rendszer eléri a Minimum Viable Product (MVP) szintet.
+## Készletmozgások és Proof of Concept (PoC) (7. hét)
+A rendszer legfontosabb üzleti logikájának, a tranzakció-alapú készletváltozásoknak (bevételezés, kiadás) a leprogramozása[cite: 633, 654]. [cite_start]A műveletek automatikus rögzítése a megmásíthatatlan készletnaplóba (Inventory_Movements). A rendszer bemutatása PoC fázisban.
 
-## Raktárközi átmozgatások indítása
-A több lépcsős átmozgatási folyamat első felének elkészítése, ahol a forrásraktárból elinduló készlet "Úton lévő" (Pending) státuszba kerül.
+## Raktárközi Átmozgatások Indítása (8. hét)
+A raktárközi átmozgatás logikájának első fele: a folyamat indítása a forrásraktárból, a készlet zárolása és "Úton lévő" (Pending) státuszba helyezése a hiányok elkerülése végett.
 
-## Raktárközi átmozgatások jóváhagyása
-A folyamat lezárása a célraktárban: a beérkező áruk átvétele, jóváhagyása (Approve) és a készletek végleges frissítése.
+## Raktárközi Átmozgatások Jóváhagyása (9. hét)
+A kétlépcsős folyamat lezárása: az áru átvétele a célraktárban. A rendszer véglegesíti a tranzakciót (Completed státusz) és hozzáadja a mennyiséget a célraktár aktuális készletéhez.
 
-## Vezérlőpult és riasztások
-A belépés utáni irányítópult (Dashboard) kialakítása, amely összegzi a készletértéket, és riasztásokat jelenít meg a minimum szint alá eső termékekről.
+## Vezérlőpult (Dashboard) és Riasztások (10. hét)
+A belépés utáni Vezérlőpult kialakítása metrika kártyákkal (összkészlet értéke, folyamatban lévő tranzakciók)[cite: 298]. [cite_start]A minimum szint alá eső termékek monitorozása és a figyelmeztető lista (Low Stock Alerts) vizuális megjelenítése.
 
-## Felhasználói felület finomítása
-A webes felületek továbbfejlesztése: dinamikus űrlapok, keresők és gyors vizuális visszajelzések implementálása az egyszerűbb használat érdekében.
+## Admin Panel és Adatintegritás (11. hét)
+Az Adminisztrátorok számára a felhasználók és jogosultságok menedzselését végző felületek véglegesítése. Az adatbázis tranzakciók (DB::transaction) és zárolások (Pessimistic Locking) implementálása a konkurens adatmódosítások (Race Condition) elkerülésére.
 
-## Átfogó tesztelés
-Funkcionális tesztek elvégzése a matematikai pontosság (pl. készletszámítás), a jogosultságok ellenőrzése, és a lehetséges biztonsági hibák kiszűrése céljából.
+## UX/UI Finomhangolás és Hibakezelés (12. hét)
+A Tailwind CSS és Alpine.js alapú felületek ergonómiájának és reszponzivitásának tökéletesítése. Dinamikus elemek, AJAX keresők és gyors vizuális visszajelzések (Toast üzenetek, inline validációk) finomhangolása.
 
-## Dokumentáció és hibajavítás
-A rendszer kódjának kommentálása, a végső hibajavítások elvégzése és a szakdolgozat fejlesztési fejezeteihez szükséges dokumentációk összekészítése.
+## Minimum Viable Product (MVP) és Dokumentáció (13. hét)
+Az elkészült rendszer átfogó funkcionális és biztonsági tesztelése (különös tekintettel a negatív készletek elleni védelemre és a készlet-matematikára). A forráskód rendezése és a szakdolgozat fejlesztési fejezeteihez szükséges dokumentációk befejezése.

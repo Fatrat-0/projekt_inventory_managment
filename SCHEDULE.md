@@ -1,8 +1,8 @@
 # Projekt Ütemterv: Inventory Management Application
 
-- 2026-02-15: Projekt Setup és Laragon környezet (1. hét) - [FOLYAMATBAN]
-- 2026-02-22: Adatbázis Tervezés és Migrációk (2. hét)
-- 2026-03-01: Modellek, Kapcsolatok és Tesztadatok (3. hét)
+- 2026-02-15: Projekt Setup és Laragon környezet (1. hét) - [KÉSZ]
+- 2026-02-22: Adatbázis Tervezés és Migrációk (2. hét) - [KÉSZ]
+- 2026-03-01: Modellek, Kapcsolatok és Tesztadatok (3. hét) - [FOLYAMATBAN]
 - 2026-03-08: Biztonság és Autentikáció (RBAC) (4. hét)
 - 2026-03-15: Törzsadatok I. (Kategóriák és Termékek CRUD) (5. hét)
 - 2026-03-22: Törzsadatok II. (Raktárak és Partnerek) (6. hét)

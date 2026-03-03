@@ -15,11 +15,13 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
+        // 1. Létrehozunk 5 kategóriát
+        \App\Models\Category::factory(5)->create();
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // 2. Létrehozunk 3 raktárat
+        \App\Models\Warehouse::factory(3)->create();
+
+        // 3. Létrehozunk 50 db terméket (ezek automatikusan megkapják valamelyik kategóriát)
+        \App\Models\Product::factory(50)->create();
     }
 }

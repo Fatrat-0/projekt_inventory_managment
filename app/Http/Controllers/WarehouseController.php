@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Warehouse;
 use Illuminate\Http\Request;
 
 class WarehouseController extends Controller
@@ -11,7 +12,8 @@ class WarehouseController extends Controller
      */
     public function index()
     {
-        //
+        $warehouses = Warehouse::all();
+        return view('warehouses.index', compact('warehouses'));
     }
 
     /**
@@ -27,7 +29,13 @@ class WarehouseController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $validated = $request->validate([
+            'warehouse_name' => 'required|max:100',
+            'location' => 'required|max:255'
+        ]);
+
+        Warehouse::create($validated);
+        return redirect()->route('warehouses.index')->with('success', 'Raktár sikeresen hozzáadva!');
     }
 
     /**
@@ -59,6 +67,7 @@ class WarehouseController extends Controller
      */
     public function destroy(string $id)
     {
-        //
+        Warehouse::findOrFail($id)->delete();
+        return redirect()->route('warehouses.index')->with('success', 'Raktár törölve!');
     }
 }

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Category;
 use Illuminate\Http\Request;
 
 class CategoryController extends Controller
@@ -11,7 +12,8 @@ class CategoryController extends Controller
      */
     public function index()
     {
-        //
+        $categories = Category::all();
+        return view('categories.index', compact('categories'));
     }
 
     /**
@@ -27,7 +29,12 @@ class CategoryController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $validated = $request->validate([
+            'category_name' => 'required|max:50|unique:categories,category_name'
+        ]);
+
+        Category::create($validated);
+        return redirect()->route('categories.index')->with('success', 'Kategória sikeresen hozzáadva!');
     }
 
     /**
@@ -59,6 +66,7 @@ class CategoryController extends Controller
      */
     public function destroy(string $id)
     {
-        //
+        Category::findOrFail($id)->delete();
+        return redirect()->route('categories.index')->with('success', 'Kategória törölve!');
     }
 }

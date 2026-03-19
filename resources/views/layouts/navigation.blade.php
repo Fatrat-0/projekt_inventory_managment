@@ -24,6 +24,12 @@
                     <x-nav-link :href="route('warehouses.index')" :active="request()->routeIs('warehouses.*')">
                         Raktárak
                     </x-nav-link>
+                    <x-nav-link :href="route('stock.index')" :active="request()->routeIs('stock.*')">
+                        Leltár (Készlet)
+                    </x-nav-link>
+                    <x-nav-link :href="route('movements.index')" :active="request()->routeIs('movements.*')">
+                        Mozgások (IN/OUT)
+                    </x-nav-link>
                 </div>
             </div>
 

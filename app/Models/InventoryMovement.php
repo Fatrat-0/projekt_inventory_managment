@@ -6,11 +6,25 @@ use Illuminate\Database\Eloquent\Model;
 
 class InventoryMovement extends Model
 {
-    protected $fillable = ['stock_id', 'type', 'quantity', 'reference_id', 'user_id'];
+    protected $fillable = [
+        'product_id',
+        'warehouse_id',
+        'user_id',
+        'type',
+        'quantity',
+        'reference',
+    ];
 
-    public function stock()
+    // Kapcsolat a Termékkel
+    public function product()
     {
-        return $this->belongsTo(Stock::class, 'stock_id', 'id');
+        return $this->belongsTo(Product::class, 'product_id', 'product_id');
+    }
+
+    // Kapcsolat a Raktárral
+    public function warehouse()
+    {
+        return $this->belongsTo(Warehouse::class, 'warehouse_id', 'warehouse_id');
     }
 
     // Melyik felhasználó csinálta a tranzakciót
@@ -18,4 +32,7 @@ class InventoryMovement extends Model
     {
         return $this->belongsTo(User::class, 'user_id', 'id');
     }
+
+
+
 }

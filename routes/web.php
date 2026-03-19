@@ -5,6 +5,8 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\WarehouseController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\StockController;
+use App\Http\Controllers\InventoryMovementController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -25,6 +27,8 @@ Route::middleware(['auth'])->group(function () {
     // Mindenki, aki be van jelentkezve (admin, manager, worker) láthatja és kezelheti a termékeket
     Route::middleware(['role:admin,manager,worker'])->group(function () {
         Route::resource('products', ProductController::class);
+        Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+        Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store']);
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja

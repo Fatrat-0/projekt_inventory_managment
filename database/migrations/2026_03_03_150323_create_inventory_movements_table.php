@@ -12,24 +12,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('inventory_movements', function (Blueprint $table) {
-            $table->id(); // PK
-            
-            // Kapcsolat a készlet sorhoz
-            $table->foreignId('stock_id')->constrained('stocks')->restrictOnDelete();
-            
-            // Milyen típusú mozgás történt?
-            $table->enum('type', ['purchase', 'sale', 'transfer_in', 'transfer_out', 'adjustment']);
-            
-            // Mennyiség (lehet pozitív vagy negatív is, ezért sima integer)
-            $table->integer('quantity'); 
-            
-            // Opcionális hivatkozás (pl. melyik rendelés ID-ja miatt történt)
-            $table->unsignedBigInteger('reference_id')->nullable();
-            
-            // Melyik felhasználó csinálta? (A Laravel alapértelmezett users táblájához kötjük)
-            $table->foreignId('user_id')->constrained('users')->restrictOnDelete();
-            
-            $table->timestamps(); // Ez automatikusan rögzíti, hogy MIKOR történt
+            $table->id();
+            $table->foreignId('product_id')->constrained('products', 'product_id');
+            $table->foreignId('warehouse_id')->constrained('warehouses', 'warehouse_id');
+            $table->enum('type', ['in', 'out']); // Így fog egyezni az űrlappal!
+            $table->integer('quantity');
+            $table->string('reference')->nullable(); // Átneveztem, hogy rugalmasabb legyen
+            $table->foreignId('user_id')->constrained('users');
+            $table->timestamps();
         });
     }
 

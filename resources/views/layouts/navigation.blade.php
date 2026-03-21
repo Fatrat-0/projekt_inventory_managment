@@ -24,6 +24,9 @@
                     <x-nav-link :href="route('warehouses.index')" :active="request()->routeIs('warehouses.*')">
                         Raktárak
                     </x-nav-link>
+                    <x-nav-link :href="route('partners.index')" :active="request()->routeIs('partners.*')">
+                        Partnerek
+                    </x-nav-link>
                     <x-nav-link :href="route('stock.index')" :active="request()->routeIs('stock.*')">
                         Leltár (Készlet)
                     </x-nav-link>

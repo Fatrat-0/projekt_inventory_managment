@@ -7,6 +7,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\InventoryMovementController;
+use App\Http\Controllers\PartnerController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -29,6 +30,7 @@ Route::middleware(['auth'])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
         Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store']);
+        Route::resource('partners', PartnerController::class)->only(['index', 'store', 'destroy']);
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja

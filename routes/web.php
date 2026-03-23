@@ -8,6 +8,7 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\PartnerController;
+use App\Http\Controllers\InventoryTransferController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -31,6 +32,9 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
         Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store']);
         Route::resource('partners', PartnerController::class)->only(['index', 'store', 'destroy']);
+        Route::resource('transfers', InventoryTransferController::class);
+        Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');
+        Route::patch('/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->name('transfers.cancel');
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja

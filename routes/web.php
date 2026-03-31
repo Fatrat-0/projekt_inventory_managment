@@ -9,14 +9,15 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
+use App\Http\Controllers\DashboardController;
 
 Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('/dashboard', function () {
-    return view('dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+Route::get('/dashboard', [DashboardController::class, 'index'])
+    ->middleware(['auth', 'verified'])
+    ->name('dashboard');
 
 // Csak bejelentkezett felhasználóknak (auth), és beállítjuk a jogosultságokat (role)
 Route::middleware(['auth'])->group(function () {

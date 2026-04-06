@@ -20,5 +20,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         \App\Models\InventoryMovement::observe(\App\Observers\InventoryMovementObserver::class);
+
+        \Illuminate\Pagination\Paginator::useTailwind();
     }
 }

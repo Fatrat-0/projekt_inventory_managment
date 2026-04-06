@@ -9,13 +9,26 @@ class ProductController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        // 1. Lekérdezzük a termékeket
-        $products = \App\Models\Product::with('category')->get();
+        // 1. Elmentjük a keresőszót, ha van
+        $search = $request->input('search');
 
-        // 2. Kiküldjük őket a 'products.index' nevű nézetnek
-        return view('products.index', compact('products'));
+        // Elmentjük, mennyit kért a felhasználó, alapértelmezett a 10
+        $perPage = $request->input('per_page', 10);
+
+        // 2. Lekérdezzük a termékeket (kapcsolatokkal együtt)
+        $products = \App\Models\Product::with('category')
+            ->when($search, function ($query, $search) {
+                // Ha van keresőszó, szűrünk a névre vagy a cikkszámra
+                return $query->where('product_name', 'like', "%{$search}%")
+                            ->orWhere('sku', 'like', "%{$search}%");
+            })
+            ->latest()
+            ->paginate($perPage); // $perPage darab termék jut egy oldalra
+
+        // 3. Átadjuk az adatokat a nézetnek
+        return view('products.index', compact('products', 'search', 'perPage'));
     }
 
     /**

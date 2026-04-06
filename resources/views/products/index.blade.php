@@ -9,12 +9,32 @@
 
     <x-app-layout>
     <x-slot name="header">
-        <div class="flex justify-between items-center">
-            <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-                {{ __('Termékek Kezelése') }}
-            </h2>
-            <a href="{{ route('products.create') }}" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-                + Új Termék
+        <div class="mb-6 flex justify-between items-center bg-white p-4 rounded-lg shadow-sm">
+            <form action="{{ route('products.index') }}" method="GET" class="flex items-center gap-4">
+                <div class="flex gap-2">
+                    <input type="text" name="search" value="{{ $search ?? '' }}" 
+                        placeholder="Keresés..." 
+                        class="border-gray-300 rounded-md shadow-sm w-80">
+                    <x-primary-button type="submit">Keresés</x-primary-button>
+                </div>
+
+                <div class="flex items-center gap-2 border-l pl-4 border-gray-200">
+                    <label class="text-sm text-gray-600">Megjelenítés:</label>
+                    <select name="per_page" onchange="this.form.submit()" class="border-gray-300 rounded-md shadow-sm text-sm">
+                        <option value="10" {{ $perPage == 10 ? 'selected' : '' }}>10</option>
+                        <option value="25" {{ $perPage == 25 ? 'selected' : '' }}>25</option>
+                        <option value="50" {{ $perPage == 50 ? 'selected' : '' }}>50</option>
+                        <option value="100" {{ $perPage == 100 ? 'selected' : '' }}>100</option>
+                    </select>
+                </div>
+
+                @if($search)
+                    <a href="{{ route('products.index') }}" class="text-sm text-gray-500 hover:text-red-500">Szűrők törlése</a>
+                @endif
+            </form>
+
+            <a href="{{ route('products.create') }}" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
+                + Új termék
             </a>
         </div>
     </x-slot>
@@ -36,6 +56,7 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                <!-- Termékek listázása -->
                                 @foreach($products as $product)
                                 <tr class="bg-white border-b hover:bg-gray-50">
                                     <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
@@ -57,6 +78,10 @@
                                 @endforeach
                             </tbody>
                         </table>
+                    </div>
+                    <!-- Lapozó gombok -->
+                    <div class="mt-4">
+                        {{ $products->appends(['search' => $search, 'per_page' => $perPage])->links() }}
                     </div>
 
                 </div>

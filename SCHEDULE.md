@@ -6,12 +6,12 @@
 - 2026-03-08: Biztonság és Autentikáció (RBAC) (4. hét) - [KÉSZ]
 - 2026-03-15: Törzsadatok I. (Kategóriák és Termékek CRUD) (5. hét) - [KÉSZ]
 - 2026-03-22: Törzsadatok II. (Raktárak és Partnerek) (6. hét) - [KÉSZ]
-- 2026-03-29: Készletmozgások és Proof of Concept (PoC) (7. hét) - [FOLYAMATBAN]
-- 2026-04-05: Raktárközi Átmozgatások Indítása (8. hét)
-- 2026-04-12: Raktárközi Átmozgatások Jóváhagyása (9. hét)
-- 2026-04-19: Vezérlőpult (Dashboard) és Riasztások (10. hét)
-- 2026-04-26: Admin Panel és Adatintegritás (11. hét)
-- 2026-05-03: UX/UI Finomhangolás és Hibakezelés (12. hét)
+- 2026-03-29: Készletmozgások és Proof of Concept (PoC) (7. hét) - [KÉSZ]
+- 2026-04-05: Raktárközi Átmozgatások Indítása (8. hét) - [KÉSZ]
+- 2026-04-12: Raktárközi Átmozgatások Jóváhagyása (9. hét) - [KÉSZ]
+- 2026-04-19: Vezérlőpult (Dashboard) és Riasztások (10. hét) - [KÉSZ]
+- 2026-04-26: Admin Panel és Adatintegritás (11. hét) - [FOLYAMATBAN]
+- 2026-05-03: UX/UI Finomhangolás és Hibakezelés (12. hét) - [FOLYAMATBAN]
 - 2026-05-10: Minimum Viable Product (MVP) és Dokumentáció (13. hét)
 
 ## Projekt Setup és Laragon környezet (1. hét)

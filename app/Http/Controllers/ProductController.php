@@ -11,24 +11,32 @@ class ProductController extends Controller
      */
     public function index(Request $request)
     {
-        // 1. Elmentjük a keresőszót, ha van
         $search = $request->input('search');
-
-        // Elmentjük, mennyit kért a felhasználó, alapértelmezett a 10
         $perPage = $request->input('per_page', 10);
 
-        // 2. Lekérdezzük a termékeket (kapcsolatokkal együtt)
+        // 1. Rendezési paraméterek (Alapértelmezetten a legújabb elöl, ahogy eddig)
+        $sortBy = $request->input('sort_by', 'created_at'); 
+        $sortDir = $request->input('sort_dir', 'desc');
+
+        // Biztonsági ellenőrzés: Csak ezekre az oszlopokra engedünk rendezni
+        $allowedSorts = ['product_name', 'sku', 'price', 'created_at'];
+        if (!in_array($sortBy, $allowedSorts)) {
+            $sortBy = 'created_at';
+        }
+        // Az irány csak asc (növekvő) vagy desc (csökkenő) lehet
+        $sortDir = $sortDir === 'asc' ? 'asc' : 'desc';
+
+        // 2. Lekérdezés
         $products = \App\Models\Product::with('category')
             ->when($search, function ($query, $search) {
-                // Ha van keresőszó, szűrünk a névre vagy a cikkszámra
                 return $query->where('product_name', 'like', "%{$search}%")
                             ->orWhere('sku', 'like', "%{$search}%");
             })
-            ->latest()
-            ->paginate($perPage); // $perPage darab termék jut egy oldalra
+            ->orderBy($sortBy, $sortDir)
+            ->paginate($perPage);
 
-        // 3. Átadjuk az adatokat a nézetnek
-        return view('products.index', compact('products', 'search', 'perPage'));
+        // 3. Változók átadása a nézetnek
+        return view('products.index', compact('products', 'search', 'perPage', 'sortBy', 'sortDir'));
     }
 
     /**

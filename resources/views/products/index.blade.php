@@ -28,8 +28,10 @@
                     </select>
                 </div>
 
-                @if($search)
-                    <a href="{{ route('products.index') }}" class="text-sm text-gray-500 hover:text-red-500">Szűrők törlése</a>
+                @if($search || $sortBy != 'created_at' || $sortDir != 'desc')
+                    <a href="{{ route('products.index') }}" class="text-sm text-gray-500 hover:text-red-500 underline decoration-dotted underline-offset-4">
+                        Rendezés / Szűrők törlése
+                    </a>
                 @endif
             </form>
 
@@ -48,10 +50,41 @@
                         <table class="w-full text-sm text-left text-gray-500">
                             <thead class="text-xs text-gray-700 uppercase bg-gray-100">
                                 <tr>
-                                    <th scope="col" class="px-6 py-3">Cikkszám (SKU)</th>
-                                    <th scope="col" class="px-6 py-3">Terméknév</th>
+                                    <th scope="col" class="px-6 py-3">
+                                        <a href="{{ request()->fullUrlWithQuery(['sort_by' => 'sku', 'sort_dir' => ($sortBy == 'sku' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                                            Cikkszám (SKU)
+                                            @if($sortBy == 'sku')
+                                                <span class="text-blue-600 font-bold text-sm">{{ $sortDir == 'asc' ? '↑' : '↓' }}</span>
+                                            @else
+                                                <span class="text-gray-400 text-sm">↕</span>
+                                            @endif
+                                        </a>
+                                    </th>
+
+                                    <th scope="col" class="px-6 py-3">
+                                        <a href="{{ request()->fullUrlWithQuery(['sort_by' => 'product_name', 'sort_dir' => ($sortBy == 'product_name' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                                            Terméknév
+                                            @if($sortBy == 'product_name')
+                                                <span class="text-blue-600 font-bold text-sm">{{ $sortDir == 'asc' ? '↑' : '↓' }}</span>
+                                            @else
+                                                <span class="text-gray-400 text-sm">↕</span>
+                                            @endif
+                                        </a>
+                                    </th>
+
                                     <th scope="col" class="px-6 py-3">Kategória</th>
-                                    <th scope="col" class="px-6 py-3">Ár</th>
+
+                                    <th scope="col" class="px-6 py-3">
+                                        <a href="{{ request()->fullUrlWithQuery(['sort_by' => 'price', 'sort_dir' => ($sortBy == 'price' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                                            Ár
+                                            @if($sortBy == 'price')
+                                                <span class="text-blue-600 font-bold text-sm">{{ $sortDir == 'asc' ? '↑' : '↓' }}</span>
+                                            @else
+                                                <span class="text-gray-400 text-sm">↕</span>
+                                            @endif
+                                        </a>
+                                    </th>
+
                                     <th scope="col" class="px-6 py-3 text-right">Műveletek</th>
                                 </tr>
                             </thead>
@@ -81,7 +114,7 @@
                     </div>
                     <!-- Lapozó gombok -->
                     <div class="mt-4">
-                        {{ $products->appends(['search' => $search, 'per_page' => $perPage])->links() }}
+                        {{ $products->appends(request()->query())->links() }}
                     </div>
 
                 </div>

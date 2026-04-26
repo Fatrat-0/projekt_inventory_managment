@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\Warehouse;
 use App\Models\Stock;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class InventoryTransferController extends Controller
 {
@@ -64,21 +65,32 @@ class InventoryTransferController extends Controller
             return back()->withErrors(['Hibás művelet: Ez a szállítmány már megérkezett vagy törölve lett.']);
         }
 
-        // 2. Megkeressük (vagy létrehozzuk) a készletet a célraktárban
-        $destinationStock = Stock::firstOrNew([
-            'product_id' => $transfer->product_id,
-            'warehouse_id' => $transfer->to_warehouse_id,
-        ]);
+        try {
+            // Itt kezdődik a Védőburok (Tranzakció)
+            DB::transaction(function () use ($transfer) {
+                
+                // 2. Megkeressük (vagy létrehozzuk) a készletet a célraktárban
+                $destinationStock = Stock::firstOrNew([
+                    'product_id' => $transfer->product_id,
+                    'warehouse_id' => $transfer->to_warehouse_id,
+                ]);
 
-        // 3. Hozzáadjuk a beérkezett mennyiséget a polchoz
-        $destinationStock->quantity += $transfer->quantity;
-        $destinationStock->save();
+                // 3. Hozzáadjuk a beérkezett mennyiséget a polchoz
+                $destinationStock->quantity += $transfer->quantity;
+                $destinationStock->save();
 
-        // 4. Átállítjuk a szállítmány státuszát készre (completed)
-        $transfer->update(['status' => 'completed']);
+                // 4. Átállítjuk a szállítmány státuszát készre (completed)
+                $transfer->update(['status' => 'completed']);
+            });
 
-        // 5. Vissza a listához egy siker-üzenettel
-        return redirect()->route('transfers.index')->with('success', 'A szállítmány sikeresen megérkezett és a készlet frissült!');
+            // 5. Vissza a listához egy siker-üzenettel
+            return redirect()->route('transfers.index')->with('success', 'A szállítmány sikeresen megérkezett és a készlet frissült!');
+
+        } catch (\Exception $e) {
+            // Ha bármi hiba történik, visszagörgetjük a tranzakciót
+            return back()->withErrors(['Kritikus hiba történt az adatbázis mentésekor. A művelet megszakítva.']);
+        }
+        
     }
 
     public function cancel(InventoryTransfer $transfer)
@@ -88,28 +100,38 @@ class InventoryTransferController extends Controller
             return back()->withErrors(['Hibás művelet: Csak úton lévő átmozgatást lehet visszavonni.']);
         }
 
-        // 2. Megkeressük a készletet a FORRÁSraktárban (ahonnan elindult)
-        $sourceStock = Stock::where('product_id', $transfer->product_id)
-                            ->where('warehouse_id', $transfer->from_warehouse_id)
-                            ->first();
+        try {
+            DB::transaction(function () use ($transfer) {
 
-        // 3. Visszaadjuk a levont mennyiséget a polcra
-        if ($sourceStock) {
-            $sourceStock->increment('quantity', $transfer->quantity);
-        } else {
-            // Ha valamiért időközben törlődött volna a sor, újra létrehozzuk
-            Stock::create([
-                'product_id' => $transfer->product_id,
-                'warehouse_id' => $transfer->from_warehouse_id,
-                'quantity' => $transfer->quantity
-            ]);
+                // 2. Megkeressük a készletet a FORRÁSraktárban (ahonnan elindult)
+                $sourceStock = Stock::where('product_id', $transfer->product_id)
+                                    ->where('warehouse_id', $transfer->from_warehouse_id)
+                                    ->first();
+
+                // 3. Visszaadjuk a levont mennyiséget a polcra
+                if ($sourceStock) {
+                    $sourceStock->increment('quantity', $transfer->quantity);
+                } else {
+                    // Ha valamiért időközben törlődött volna a sor, újra létrehozzuk
+                    Stock::create([
+                        'product_id' => $transfer->product_id,
+                        'warehouse_id' => $transfer->from_warehouse_id,
+                        'quantity' => $transfer->quantity
+                    ]);
+                }
+
+                // 4. Átállítjuk a szállítmány státuszát törölt/visszavontra
+                $transfer->update(['status' => 'cancelled']);
+            });
+
+            // 5. Vissza a listához
+            return redirect()->route('transfers.index')->with('success', 'Átmozgatás visszavonva! A termékek visszakerültek a forrásraktárba.');
+
+        } catch (\Exception $e) {
+            // Ha bármi hiba történik, visszagörgetjük a tranzakciót
+            return back()->withErrors(['Kritikus hiba történt a visszavonáskor. Rendszerhiba.']);
         }
 
-        // 4. Átállítjuk a szállítmány státuszát törölt/visszavontra
-        $transfer->update(['status' => 'cancelled']);
-
-        // 5. Vissza a listához
-        return redirect()->route('transfers.index')->with('success', 'Átmozgatás visszavonva! A termékek visszakerültek a forrásraktárba.');
     }
     
 

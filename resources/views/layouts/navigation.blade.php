@@ -36,6 +36,9 @@
                     <x-nav-link :href="route('transfers.index')" :active="request()->routeIs('transfers.*')">
                         Átmozgatások
                     </x-nav-link>
+                    <x-nav-link :href="route('users.index')" :active="request()->routeIs('users.*')">
+                        Felhasználók
+                    </x-nav-link>
                 </div>
             </div>
 

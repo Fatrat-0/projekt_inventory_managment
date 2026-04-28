@@ -10,6 +10,7 @@ use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\UserController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -42,6 +43,7 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager'])->group(function () {
         Route::resource('categories', CategoryController::class);
         Route::resource('warehouses', WarehouseController::class);
+        Route::resource('users', UserController::class)->except(['show', 'edit', 'update']);
     });
 
 });

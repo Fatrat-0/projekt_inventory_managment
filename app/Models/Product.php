@@ -10,13 +10,7 @@ class Product extends Model
     use HasFactory;
 
     protected $primaryKey = 'product_id';
-    protected $fillable = [
-        'product_name',
-        'sku',
-        'category_id',
-        // ide jöhetnek a korábbi oszlopaid (pl. price, stb.)
-        'min_stock_override', // Ezt az egy sort add hozzá!
-    ];
+    protected $fillable = ['product_name', 'sku', 'price', 'category_id', 'min_stock_override'];
 
     // Egy termék EGY kategóriához tartozik
     public function category()

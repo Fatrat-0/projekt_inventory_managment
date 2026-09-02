@@ -60,6 +60,7 @@ class ProductController extends Controller
             'sku' => 'required|unique:products,sku|max:50',
             'price' => 'required|numeric|min:0',
             'category_id' => 'required|exists:categories,category_id',
+            'min_stock_override' => 'nullable|integer|min:0',
         ]);
 
         // 2. Mentés az adatbázisba
@@ -106,6 +107,7 @@ class ProductController extends Controller
             'sku' => 'required|max:50|unique:products,sku,' . $product->product_id . ',product_id',
             'price' => 'required|numeric|min:0',
             'category_id' => 'required|exists:categories,category_id',
+            'min_stock_override' => 'nullable|integer|min:0',
         ]);
 
         // 3. Frissítjük az adatbázist

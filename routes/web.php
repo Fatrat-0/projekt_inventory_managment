@@ -11,6 +11,7 @@ use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\ExportController;
 
 Route::get('/', function () {
     return view('welcome');
@@ -37,6 +38,7 @@ Route::middleware(['auth'])->group(function () {
         Route::resource('transfers', InventoryTransferController::class);
         Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');
         Route::patch('/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->name('transfers.cancel');
+        Route::get('/export-inventory', [ExportController::class, 'inventoryPdf'])->name('export.inventory');
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja

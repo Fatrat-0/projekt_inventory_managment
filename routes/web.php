@@ -39,6 +39,8 @@ Route::middleware(['auth'])->group(function () {
         Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');
         Route::patch('/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->name('transfers.cancel');
         Route::get('/export-inventory', [ExportController::class, 'inventoryPdf'])->name('export.inventory');
+        Route::get('/export-movements', [ExportController::class, 'movementsPdf'])->name('export.movements');
+        Route::get('/transfers/{transfer}/pdf', [ExportController::class, 'transferPdf'])->name('export.transfer');
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja

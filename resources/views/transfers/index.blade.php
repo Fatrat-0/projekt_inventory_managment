@@ -73,6 +73,11 @@
                                     </span>
                                 @endif
                             </td>
+                            <td>
+                                <a href="{{ route('export.transfer', ['transfer' => $transfer->getKey(), 'preview' => 1]) }}" target="_blank" class="bg-gray-700 hover:bg-gray-800 text-white text-xs font-bold py-1.5 px-3 rounded shadow inline-flex items-center gap-1 transition" title="Szállítólevél megnyitása">
+                                    <span>🖨️</span> Szállítólevél
+                                </a>
+                            </td>
                         </tr>
                         @endforeach
                         

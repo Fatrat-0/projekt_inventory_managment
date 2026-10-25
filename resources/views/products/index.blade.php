@@ -59,7 +59,7 @@
                             </div>
 
                             <!-- 2. LENYITHATÓ SZŰRŐPANEL -->
-                            <div id="product-filter-panel" x-show="filtersOpen" x-transition style="display: none;" class="mt-3 pt-3 border-t border-gray-200 bg-gray-50 p-3.5 rounded-md grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div id="product-filter-panel" x-show="filtersOpen" x-transition style="display: none;" class="mt-3 pt-3 border-t border-gray-200 bg-gray-50 p-3.5 rounded-md grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div>
                                     <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Kategória</label>
                                     <select name="category_id" title="A kiválasztott kategória összes alkategóriájában is keres." aria-describedby="product-category-help" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
@@ -95,15 +95,6 @@
                                     </select>
                                 </div>
 
-                                <div>
-                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Sorok száma</label>
-                                    <select name="per_page" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
-                                        <option value="10" {{ $perPage == 10 ? 'selected' : '' }}>10 / oldal</option>
-                                        <option value="25" {{ $perPage == 25 ? 'selected' : '' }}>25 / oldal</option>
-                                        <option value="50" {{ $perPage == 50 ? 'selected' : '' }}>50 / oldal</option>
-                                        <option value="100" {{ $perPage == 100 ? 'selected' : '' }}>100 / oldal</option>
-                                    </select>
-                                </div>
                             </div>
                         </form>
                     </div>
@@ -556,9 +547,18 @@
                     @endforelse
                 </div>
 
-                <!-- Lapozó gombok -->
-                <div class="mt-4">
-                    {{ $products->appends(request()->query())->links('pagination.inventory') }}
+                <!-- Közös lábléc a táblázatos és kártyás nézethez; egyetlen oldalnál is látható. -->
+                <div id="product-list-footer" class="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <div class="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                        <p aria-live="polite">{{ $products->firstItem() ?? 0 }}–{{ $products->lastItem() ?? 0 }} / {{ $products->total() }} találat</p>
+                        <label for="product-per-page" class="sr-only">Találatok oldalanként</label>
+                        <select id="product-per-page" name="per_page" form="product-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            @foreach([10, 25, 50, 100] as $size)
+                                <option value="{{ $size }}" @selected($perPage === $size)>{{ $size }} / oldal</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    {{ $products->onEachSide(1)->links('pagination.inventory') }}
                 </div>
 
             </div>

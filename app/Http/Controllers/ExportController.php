@@ -11,34 +11,13 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class ExportController extends Controller
 {
-    // 1. HIVATALOS LELTÁRÍV PDF
+    // 1. HIVATALOS LELTÁRÍV PDF (Szinkronizálva az intelligens szűrőkkel és rendezéssel)
     public function inventoryPdf(Request $request)
     {
-        $query = Product::with(['category', 'stocks.warehouse']);
-
-        if ($request->filled('search')) {
-            $search = $request->input('search');
-            $query->where(function($q) use ($search) {
-                $q->where('product_name', 'like', "%{$search}%")
-                  ->orWhere('sku', 'like', "%{$search}%");
-            });
-        }
-
-        $selectedCategory = null;
-        if ($request->filled('category_id')) {
-            $query->where('category_id', $request->input('category_id'));
-            $selectedCategory = Category::find($request->input('category_id'));
-        }
-
-        $products = $query->orderBy('product_name')->get();
-
-        $filterInfo = [];
-        if ($selectedCategory) {
-            $filterInfo[] = 'Kategória: ' . $selectedCategory->category_name;
-        }
-        if ($request->filled('search')) {
-            $filterInfo[] = 'Keresőszó: "' . $request->input('search') . '"';
-        }
+        $request->validate(['orientation' => ['nullable', 'in:portrait,landscape']]);
+        $listing = new \App\Queries\ProductListing($request);
+        $products = $listing->query()->get();
+        $filterInfo = $listing->filterInfo();
 
         $options = [
             'show_filters'    => $request->boolean('show_filters'),
@@ -62,7 +41,6 @@ class ExportController extends Controller
         return $pdf->download('leltariv_' . date('Y-m-d') . '.pdf');
     }
 
-    // 2. KÉSZLETMOZGÁSOK (FORGALMI NAPLÓ) PDF
     public function movementsPdf(Request $request)
     {
         $query = InventoryMovement::with(['product', 'warehouse', 'user'])->latest();

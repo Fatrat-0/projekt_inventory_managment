@@ -16,7 +16,7 @@
                     <!-- Bal oldal: Oldalcím és találatszám -->
                     <div class="flex items-center gap-3">
                         <h2 class="font-bold text-xl text-gray-800 leading-tight">
-                            📦 Termékek
+                            <span class="inline-flex items-center gap-2"><x-icon name="box" class="w-5 h-5 text-indigo-600" /> Termékek</span>
                         </h2>
                         <span class="bg-gray-100 text-gray-700 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-300">
                             {{ $products->total() }} tétel
@@ -34,21 +34,21 @@
                                     @focusin="searchHelpOpen = true" @focusout="searchHelpOpen = false"
                                     @keydown.escape.stop="searchHelpOpen = false" @input="searchHelpOpen = false">
                                     <input type="search" aria-label="Termékek keresése" aria-describedby="product-search-help" maxlength="200" name="search" value="{{ $search ?? '' }}"
-                                        placeholder="Keresés név, cikkszám (SKU) vagy kategória alapján..."
+                                        placeholder="Termék keresése…"
                                         class="w-full pl-3 pr-10 py-2 border-gray-300 rounded-md shadow-sm text-sm focus:border-indigo-500 focus:ring-indigo-500">
                                     <div id="product-search-help" role="tooltip" x-show="searchHelpOpen" style="display: none;"
                                         class="absolute left-0 top-full z-30 w-full rounded-lg bg-gray-800 px-3 py-2 text-xs leading-relaxed text-white shadow-lg">
                                         Több szóval is kereshetsz név, SKU vagy kategória alapján. Minden szónak egyeznie kell.
                                     </div>
                                     <button type="submit" class="absolute right-2 text-gray-400 hover:text-indigo-600 transition" title="Keresés indítása">
-                                        🔍
+                                        <x-icon name="search" />
                                     </button>
                                 </div>
 
                                 <button type="button" @click="filtersOpen = !filtersOpen" :aria-expanded="filtersOpen" aria-controls="product-filter-panel"
                                     :class="(filtersOpen || {{ $activeFilterCount }} > 0) ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'"
                                     class="inline-flex items-center gap-2 px-3.5 py-2 border rounded-md text-sm font-semibold shadow-sm transition whitespace-nowrap">
-                                    <span>🌪️ Szűrők</span>
+                                    <x-icon name="filter" /><span>Szűrők</span>
                                     @if($activeFilterCount > 0)
                                         <span class="bg-indigo-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
                                             {{ $activeFilterCount }}
@@ -61,7 +61,7 @@
                             <!-- 2. LENYITHATÓ SZŰRŐPANEL -->
                             <div id="product-filter-panel" x-show="filtersOpen" x-transition style="display: none;" class="mt-3 pt-3 border-t border-gray-200 bg-gray-50 p-3.5 rounded-md grid grid-cols-1 md:grid-cols-4 gap-3">
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">📁 Kategória</label>
+                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Kategória</label>
                                     <select name="category_id" title="A kiválasztott kategória összes alkategóriájában is keres." aria-describedby="product-category-help" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
                                         <option value="">Összes kategória</option>
                                         @foreach($categoryOptions as $option)
@@ -74,7 +74,7 @@
                                 </div>
 
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">🏭 Készleten itt</label>
+                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Készleten itt</label>
                                     <select name="warehouse_id" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
                                         <option value="">Minden raktár</option>
                                         @foreach($warehouses as $wh)
@@ -86,17 +86,17 @@
                                 </div>
 
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">📊 Összkészlet állapota</label>
+                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Összkészlet állapota</label>
                                     <select name="stock_status" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
                                         <option value="">Minden állapot</option>
-                                        <option value="low" {{ $stockStatus === 'low' ? 'selected' : '' }}>⚠️ Kritikus (Minimum alatt)</option>
-                                        <option value="out" {{ $stockStatus === 'out' ? 'selected' : '' }}>❌ Kifogyott (0 db)</option>
-                                        <option value="ok" {{ $stockStatus === 'ok' ? 'selected' : '' }}>✅ Megfelelő készlet</option>
+                                        <option value="low" {{ $stockStatus === 'low' ? 'selected' : '' }}>Minimum alatt</option>
+                                        <option value="out" {{ $stockStatus === 'out' ? 'selected' : '' }}>Kifogyott (0 db)</option>
+                                        <option value="ok" {{ $stockStatus === 'ok' ? 'selected' : '' }}>Megfelelő készlet</option>
                                     </select>
                                 </div>
 
                                 <div>
-                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">📄 Sorok száma</label>
+                                    <label class="block text-xs font-bold text-gray-600 uppercase mb-1">Sorok száma</label>
                                     <select name="per_page" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
                                         <option value="10" {{ $perPage == 10 ? 'selected' : '' }}>10 / oldal</option>
                                         <option value="25" {{ $perPage == 25 ? 'selected' : '' }}>25 / oldal</option>
@@ -110,7 +110,7 @@
 
                     <!-- Jobb oldal: Új termék + PDF Leltárív + Odoo Nézetváltó (Lista / Kanban) -->
                     <div class="flex items-center gap-2">
-                        <a href="{{ route('products.create') }}" class="bg-blue-600 text-white font-semibold text-sm px-4 py-2 rounded-md hover:bg-blue-700 shadow-sm transition whitespace-nowrap">
+                        <a href="{{ route('products.create') }}" class="bg-indigo-600 text-white font-semibold text-sm px-4 py-2 rounded-md hover:bg-indigo-700 shadow-sm transition whitespace-nowrap">
                             + Új termék
                         </a>
 
@@ -150,8 +150,8 @@
                             }
                         }" class="inline-block">
 
-                            <button @click="open = true" type="button" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold py-2 px-3.5 rounded-md shadow-sm inline-flex items-center gap-1.5 transition whitespace-nowrap">
-                                <span>📄</span> PDF Leltárív
+                            <button @click="open = true" type="button" class="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 text-sm font-semibold py-2 px-3.5 rounded-md shadow-sm inline-flex items-center gap-1.5 transition whitespace-nowrap">
+                                <x-icon name="document" /> PDF-leltárív
                             </button>
 
                             <div x-show="open" style="display: none;" class="fixed inset-0 z-50 overflow-y-auto bg-gray-900 bg-opacity-60 flex items-center justify-center p-4">
@@ -211,20 +211,20 @@
                         <div class="inline-flex rounded-md shadow-sm border border-gray-300 bg-white overflow-hidden">
                             <button type="button" @click="setView('list')"
                                 :class="viewMode === 'list' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'"
-                                class="px-3 py-2 text-sm font-bold transition" title="Táblázatos (Lista) nézet">
-                                ☰
+                                class="px-3 py-2 text-sm font-bold transition" title="Táblázatos nézet" aria-label="Táblázatos nézet" :aria-pressed="viewMode === 'list'">
+                                <x-icon name="list" />
                             </button>
                             <button type="button" @click="setView('kanban')"
                                 :class="viewMode === 'kanban' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'"
-                                class="px-3 py-2 text-sm font-bold border-l border-gray-300 transition" title="Kártyás (Kanban) nézet">
-                                ⊞
+                                class="px-3 py-2 text-sm font-bold border-l border-gray-300 transition" title="Kártyás nézet" aria-label="Kártyás nézet" :aria-pressed="viewMode === 'kanban'">
+                                <x-icon name="grid" />
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div x-show="viewMode === 'kanban'" style="display: none;" class="flex flex-wrap items-center gap-3 border-t border-gray-100 pt-3 text-sm">
-                    <label for="product-sort" class="text-gray-500">Rendezés</label>
+                <div x-show="viewMode === 'kanban'" style="display: none;" class="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 border-t border-gray-100 pt-3 text-sm">
+                    <label for="product-sort" class="col-span-2 sm:col-span-1 text-gray-500">Rendezés</label>
                     <select id="product-sort" name="sort_by" form="product-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">
                         @foreach($sortOptions as $key => $label)
                             <option value="{{ $key }}" @selected($sortBy === $key)>{{ $label }}</option>
@@ -243,7 +243,7 @@
                 @endif
 
                 <!-- 3. ODOO-STÍLUSÚ AKTÍV SZŰRŐ CÍMKÉK (Search Facets) -->
-                @if($search || $categoryId || $warehouseId || $stockStatus || $sortBy != 'created_at' || $sortDir != 'desc')
+                @if($search || $categoryId || $warehouseId || $stockStatus)
                     <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100 text-xs">
                         <div class="flex flex-wrap items-center gap-1.5">
                             <span class="text-gray-400 font-semibold mr-1">Aktív szűrők:</span>
@@ -257,21 +257,21 @@
 
                             @if($selectedCategoryObj)
                                 <span class="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-800 px-2.5 py-1 rounded-md border border-indigo-200 font-medium">
-                                    📁 {{ $selectedCategoryObj->category_name }}
+                                    {{ $selectedCategoryObj->category_name }}
                                     <a href="{{ request()->fullUrlWithQuery(['page' => null, 'category_id' => null]) }}" class="text-indigo-500 hover:text-red-600 font-bold">✕</a>
                                 </span>
                             @endif
 
                             @if($selectedWarehouseObj)
                                 <span class="inline-flex items-center gap-1.5 bg-blue-50 text-blue-800 px-2.5 py-1 rounded-md border border-blue-200 font-medium">
-                                    🏭 {{ $selectedWarehouseObj->warehouse_name }}
+                                    {{ $selectedWarehouseObj->warehouse_name }}
                                     <a href="{{ request()->fullUrlWithQuery(['page' => null, 'warehouse_id' => null]) }}" class="text-blue-500 hover:text-red-600 font-bold">✕</a>
                                 </span>
                             @endif
 
                             @if($stockStatus)
                                 <span class="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
-                                    📊 {{ $stockStatus === 'low' ? 'Kritikus hiány' : ($stockStatus === 'out' ? 'Kifogyott (0 db)' : 'Megfelelő készlet') }}
+                                    {{ $stockStatus === 'low' ? 'Kritikus hiány' : ($stockStatus === 'out' ? 'Kifogyott (0 db)' : 'Megfelelő készlet') }}
                                     <a href="{{ request()->fullUrlWithQuery(['page' => null, 'stock_status' => null]) }}" class="text-amber-600 hover:text-red-600 font-bold">✕</a>
                                 </span>
                             @endif
@@ -287,7 +287,7 @@
 
         <!-- TARTALMI RÉSZ -->
         <div class="py-6">
-            <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
                 @php
                     $pageTotalQty = 0;
@@ -352,15 +352,17 @@
                                     </th>
 
                                     <th x-show="cols.value" scope="col" class="px-5 py-3.5 text-right">
-                                        Készletérték
+                                        <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'stock_value', 'sort_dir' => ($sortBy === 'stock_value' && $sortDir === 'asc') ? 'desc' : 'asc']) }}" class="inline-flex items-center gap-1 hover:text-gray-900">
+                                            Készletérték <span class="{{ $sortBy === 'stock_value' ? 'text-indigo-600' : 'text-gray-400' }}">{{ $sortBy === 'stock_value' ? ($sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
+                                        </a>
                                     </th>
 
                                     <!-- Műveletek + Odoo Oszlopválasztó Gomb (⚙️) -->
                                     <th scope="col" class="px-5 py-3.5 text-right relative">
                                         <div class="inline-flex items-center justify-end gap-2">
                                             <span>Műveletek</span>
-                                            <button type="button" @click="colMenuOpen = !colMenuOpen" class="p-1 rounded hover:bg-gray-200 text-gray-600 transition" title="Oszlopok testreszabása">
-                                                ⚙️
+                                            <button type="button" @click="colMenuOpen = !colMenuOpen" class="p-1 rounded hover:bg-gray-200 text-gray-600 transition" title="Oszlopok testreszabása" aria-label="Látható oszlopok" :aria-expanded="colMenuOpen">
+                                                <x-icon name="columns" />
                                             </button>
                                         </div>
 
@@ -400,7 +402,7 @@
                                         $pageTotalValue += $stockValue;
                                     @endphp
                                     <tr class="bg-white border-b hover:bg-indigo-50/40 transition">
-                                        <td x-show="cols.sku" class="px-5 py-3.5 font-mono font-semibold text-gray-900 whitespace-nowrap">
+                                        <td x-show="cols.sku" class="px-5 py-3.5 font-mono font-normal text-gray-600 whitespace-nowrap">
                                             {{ $product->sku }}
                                         </td>
                                         <td class="px-5 py-3.5 font-semibold text-gray-900">
@@ -418,7 +420,7 @@
                                             <button type="button" @click="stockOpen = !stockOpen"
                                                 class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded border transition shadow-sm {{ $stockWarning ? 'bg-red-100 text-red-800 border-red-300 hover:bg-red-200' : 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100' }}"
                                                 title="Kattints a raktárankénti eloszlás megtekintéséhez!">
-                                                <span>{{ $totalStock === 0 ? '❌' : ($isLow ? '⚠️' : '✅') }} {{ $totalStock }} db</span>
+                                                <span>{{ $totalStock === 0 ? 'Kifogyott ·' : ($isLow ? 'Hiány ·' : '') }} {{ $totalStock }} db</span>
                                                 <span class="font-normal opacity-75">(Min: {{ $effectiveMin }})</span>
                                                 <span class="text-[10px] opacity-60">▼</span>
                                             </button>
@@ -427,7 +429,7 @@
                                             <div x-show="stockOpen" @click.away="stockOpen = false" x-transition style="display: none;"
                                                 class="absolute left-5 top-12 z-20 w-64 bg-white rounded-lg shadow-xl border border-gray-200 p-3 text-xs">
                                                 <div class="font-bold text-gray-800 border-b pb-1.5 mb-2 flex justify-between items-center">
-                                                    <span>🏭 Raktári eloszlás</span>
+                                                    <span>Raktári eloszlás</span>
                                                     <span class="text-[11px] font-normal text-gray-500">
                                                         {{ !is_null($product->min_stock_override) ? 'Egyedi min.' : 'Kategória min.' }}
                                                     </span>
@@ -449,7 +451,7 @@
                                             {{ number_format($product->price, 0, ',', ' ') }} Ft
                                         </td>
 
-                                        <td x-show="cols.value" class="px-5 py-3.5 whitespace-nowrap text-right font-bold text-gray-900">
+                                        <td x-show="cols.value" class="px-5 py-3.5 whitespace-nowrap text-right font-semibold text-gray-900">
                                             {{ number_format($stockValue, 0, ',', ' ') }} Ft
                                         </td>
 
@@ -503,23 +505,23 @@
                         @endphp
                         <div class="bg-white rounded-lg shadow-sm border {{ $stockWarning ? 'border-l-4 border-l-red-500 border-gray-200' : 'border-gray-200' }} p-4 flex flex-col justify-between hover:shadow-md transition">
                             <div>
-                                <div class="flex justify-between items-start gap-2 mb-2">
+                                <div class="flex flex-wrap justify-between items-start gap-2 mb-2">
                                     <span class="font-mono text-xs font-bold bg-gray-100 text-gray-800 px-2 py-0.5 rounded border">
                                         {{ $product->sku }}
                                     </span>
                                     <span class="text-xs font-bold px-2 py-0.5 rounded {{ $stockWarning ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800' }}">
-                                        {{ $totalStock === 0 ? '❌ Kifogyott: ' : ($isLow ? '⚠️ Kritikus: ' : '✅ Készlet: ') }}{{ $totalStock }} db (Min: {{ $effectiveMin }})
+                                        {{ $totalStock === 0 ? 'Kifogyott: ' : ($isLow ? 'Minimum alatt: ' : 'Készlet: ') }}{{ $totalStock }} db (Min: {{ $effectiveMin }})
                                     </span>
                                 </div>
 
-                                <h3 class="font-bold text-gray-900 text-base mb-1">{{ $product->product_name }}</h3>
-                                <p class="text-xs text-gray-500 mb-3">
-                                    📁 {{ optional(optional($product->category)->parent)->category_name ? $product->category->parent->category_name . ' ➔ ' : '' }}{{ optional($product->category)->category_name }}
+                                <h3 class="font-semibold text-gray-900 text-base mb-1">{{ $product->product_name }}</h3>
+                                <p class="text-xs text-gray-500 mb-3 leading-relaxed">
+                                    {{ optional(optional($product->category)->parent)->category_name ? $product->category->parent->category_name . ' ➔ ' : '' }}{{ optional($product->category)->category_name }}
                                 </p>
 
                                 <!-- Raktári bontás a kártyán -->
-                                <div class="bg-gray-50 rounded p-2 text-xs space-y-1 border border-gray-100 mb-3">
-                                    <div class="font-semibold text-gray-500 uppercase text-[10px]">Raktári eloszlás:</div>
+                                <details class="bg-gray-50 rounded-md p-2.5 text-xs space-y-2 border border-gray-100 mb-3">
+                                    <summary class="cursor-pointer font-medium text-gray-600">Raktári eloszlás · {{ $product->stocks->count() }} raktár</summary>
                                     @forelse($product->stocks as $st)
                                         <div class="flex justify-between text-gray-700">
                                             <span>{{ optional($st->warehouse)->warehouse_name }}</span>
@@ -528,7 +530,7 @@
                                     @empty
                                         <div class="text-gray-400 italic">0 db készleten</div>
                                     @endforelse
-                                </div>
+                                </details>
                             </div>
 
                             <div class="flex items-center justify-between pt-3 border-t border-gray-100">
@@ -556,7 +558,7 @@
 
                 <!-- Lapozó gombok -->
                 <div class="mt-4">
-                    {{ $products->appends(request()->query())->links() }}
+                    {{ $products->appends(request()->query())->links('pagination.inventory') }}
                 </div>
 
             </div>

@@ -7,6 +7,12 @@
 
     <div class="py-12">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
+            @if($errors->any())
+                <div role="alert" class="mb-4 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                    <ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul>
+                </div>
+            @endif
+
             <div class="bg-white p-6 shadow-sm sm:rounded-lg">
                 <form action="{{ route('movements.store') }}" method="POST" class="grid grid-cols-1 gap-6">
                     @csrf
@@ -14,8 +20,8 @@
                     <div>
                         <label class="block font-medium text-sm text-gray-700">Mozgás Típusa</label>
                         <select name="type" class="w-full border-gray-300 rounded-md shadow-sm mt-1" required>
-                            <option value="in">Bevételezés (IN) - Készlet növelése</option>
-                            <option value="out">Kiadás (OUT) - Készlet csökkentése</option>
+                            <option value="in" @selected(old('type', 'in') === 'in')>Bevételezés (IN) - Készlet növelése</option>
+                            <option value="out" @selected(old('type') === 'out')>Kiadás (OUT) - Készlet csökkentése</option>
                         </select>
                     </div>
 
@@ -23,7 +29,7 @@
                         <label class="block font-medium text-sm text-gray-700">Termék</label>
                         <select name="product_id" class="w-full border-gray-300 rounded-md shadow-sm mt-1" required>
                             @foreach($products as $product)
-                                <option value="{{ $product->product_id }}">{{ $product->product_name }} ({{ $product->sku }})</option>
+                                <option value="{{ $product->product_id }}" @selected((string) old('product_id') === (string) $product->product_id)>{{ $product->product_name }} ({{ $product->sku }})</option>
                             @endforeach
                         </select>
                     </div>
@@ -32,14 +38,14 @@
                         <label class="block font-medium text-sm text-gray-700">Raktár</label>
                         <select name="warehouse_id" class="w-full border-gray-300 rounded-md shadow-sm mt-1" required>
                             @foreach($warehouses as $warehouse)
-                                <option value="{{ $warehouse->warehouse_id }}">{{ $warehouse->warehouse_name }}</option>
+                                <option value="{{ $warehouse->warehouse_id }}" @selected((string) old('warehouse_id') === (string) $warehouse->warehouse_id)>{{ $warehouse->warehouse_name }}</option>
                             @endforeach
                         </select>
                     </div>
 
                     <div>
                         <label class="block font-medium text-sm text-gray-700">Mennyiség (db)</label>
-                        <input type="number" name="quantity" min="1" value="1" class="w-full border-gray-300 rounded-md shadow-sm mt-1" required>
+                        <input type="number" name="quantity" min="1" max="2147483647" step="1" value="{{ old('quantity', 1) }}" class="w-full border-gray-300 rounded-md shadow-sm mt-1" required>
                     </div>
 
                     <div class="flex justify-end mt-4">

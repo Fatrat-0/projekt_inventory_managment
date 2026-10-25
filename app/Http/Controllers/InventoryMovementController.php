@@ -6,6 +6,7 @@ use App\Models\InventoryMovement;
 use App\Models\Product;
 use App\Models\Warehouse;
 use Illuminate\Http\Request;
+use App\Services\InventoryService;
 
 class InventoryMovementController extends Controller
 {
@@ -23,21 +24,21 @@ class InventoryMovementController extends Controller
         return view('movements.create', compact('products', 'warehouses'));
     }
 
-    public function store(Request $request)
+    public function store(Request $request, InventoryService $inventory)
     {
         $validated = $request->validate([
             'product_id' => 'required|exists:products,product_id',
             'warehouse_id' => 'required|exists:warehouses,warehouse_id',
             'type' => 'required|in:in,out',
-            'quantity' => 'required|integer|min:1',
+            'quantity' => 'required|integer|min:1|max:2147483647',
             'reference' => 'nullable|string|max:255',
         ]);
 
         // Hozzáadjuk a bejelentkezett felhasználó ID-ját, aki a mozgást rögzítette
         $validated['user_id'] = auth()->id();
 
-        // Mentjük a mozgást (EKKOR LÉP AKCIÓBA AZ OBSERVER A HÁTTÉRBEN!)
-        InventoryMovement::create($validated);
+        // A készletváltozás és a naplóbejegyzés egyetlen tranzakció.
+        $inventory->recordMovement($validated);
 
         return redirect()->route('movements.index')->with('success', 'Mozgás sikeresen rögzítve!');
     }

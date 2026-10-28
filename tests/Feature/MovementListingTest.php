@@ -199,4 +199,134 @@ class MovementListingTest extends TestCase
         }
         $this->assertStringContainsString('search=Alpha', $response->viewData('returnUrl'));
     }
+
+    public static function movementNumberSearches(): array
+    {
+        return [
+            'displayed number' => ['MOZ-000001', true],
+            'case insensitive' => ['moz-000001', true],
+            'unpadded number' => ['MOZ-1', true],
+            'combined words' => ['MOZ-000001 Alpha ABC-01', true],
+            'all words required' => ['MOZ-000001 Zeta', false],
+            'unknown number' => ['MOZ-999999', false],
+            'overflow cannot match a different ID' => ['MOZ-999999999999999999999999999999', false],
+            'wildcard is literal' => ['MOZ-00000%', false],
+        ];
+    }
+
+    #[DataProvider('movementNumberSearches')]
+    public function test_movement_number_search_matches_exact_id_in_list_and_pdf(string $search, bool $matches): void
+    {
+        $wanted = $this->movement();
+        // A prefix match must not accidentally include movement 10.
+        $other = $this->movement();
+        $other->forceFill(['id' => 10])->save();
+        $params = ['search' => $search];
+        $expected = $matches ? [$wanted->id] : [];
+        $list = $this->get(route('movements.index', $params))->assertOk();
+        $this->assertSame($expected, $list->viewData('movements')->pluck('id')->all());
+        $this->assertSame($matches ? 5 : 0, $list->viewData('totalIn'));
+        Pdf::shouldReceive('loadView')->once()->withArgs(fn ($view, $data) => $data['movements']->pluck('id')->all() === $expected)->andReturnSelf();
+        Pdf::shouldReceive('setPaper')->once()->andReturnSelf();
+        Pdf::shouldReceive('download')->once()->andReturn(response('pdf'));
+        $this->get(route('export.movements', $params))->assertOk();
+    }
+
+    public static function datePresetRanges(): array
+    {
+        return [
+            'today' => ['today', '2026-03-01', '2026-03-01'],
+            'seven calendar days across month boundary' => ['last7', '2026-02-23', '2026-03-01'],
+            'thirty calendar days across month boundary' => ['last30', '2026-01-31', '2026-03-01'],
+            'current calendar month' => ['month', '2026-03-01', '2026-03-31'],
+        ];
+    }
+
+    #[DataProvider('datePresetRanges')]
+    public function test_date_presets_preserve_filters_reset_page_and_include_full_boundary_days(string $key, string $from, string $to): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-03-01 00:30:00'));
+        $params = ['search' => 'Alpha', 'type' => 'in', 'product_id' => $this->product->product_id,
+            'warehouse_id' => $this->warehouse->warehouse_id, 'user_id' => $this->user->id,
+            'sort_by' => 'quantity', 'sort_dir' => 'asc', 'per_page' => 25, 'page' => 3,
+            'date_from' => '2025-01-01', 'date_to' => '2025-01-31'];
+        $list = $this->get(route('movements.index', $params))->assertOk();
+        $preset = $list->viewData('datePresets')[$key];
+        $this->assertFalse($preset['active']);
+        parse_str(parse_url($preset['url'], PHP_URL_QUERY), $query);
+        $this->assertSame($from, $query['date_from']);
+        $this->assertSame($to, $query['date_to']);
+        $this->assertArrayNotHasKey('page', $query);
+        foreach (array_diff_key($params, array_flip(['date_from', 'date_to', 'page'])) as $field => $value) {
+            $this->assertEquals($value, $query[$field]);
+        }
+        $this->movement([], \Illuminate\Support\Carbon::parse($from)->subSecond()->toDateTimeString());
+        $first = $this->movement([], $from.' 00:00:00');
+        $last = $this->movement([], $to.' 23:59:59');
+        $this->movement([], \Illuminate\Support\Carbon::parse($to)->addDay()->toDateTimeString());
+        $selected = $this->get($preset['url'])->assertOk();
+        $expected = [$first->id, $last->id];
+        $this->assertSame($expected, $selected->viewData('movements')->pluck('id')->all());
+        $this->assertTrue($selected->viewData('datePresets')[$key]['active']);
+        $this->assertSame(10, $selected->viewData('totalIn'));
+        Pdf::shouldReceive('loadView')->once()->withArgs(fn ($view, $data) => $data['movements']->pluck('id')->all() === $expected)->andReturnSelf();
+        Pdf::shouldReceive('setPaper')->once()->andReturnSelf();
+        Pdf::shouldReceive('download')->once()->andReturn(response('pdf'));
+        $this->get(route('export.movements', $query))->assertOk();
+    }
+
+    public function test_detail_product_history_link_opens_all_product_movements_without_inherited_filters(): void
+    {
+        $first = $this->movement();
+        $second = $this->movement(['type' => 'out'], '2026-04-11 12:00:00');
+        $other = Product::create(['category_id' => $this->product->category_id, 'product_name' => 'Másik', 'sku' => 'OTHER', 'price' => 100]);
+        $this->movement(['product_id' => $other->product_id]);
+        $context = \App\Support\MovementListContext::encode(['search' => 'BEV', 'type' => 'in', 'page' => 2]);
+        $url = route('movements.index', ['product_id' => $this->product->product_id]);
+        $details = $this->get(route('movements.show', ['movement' => $first, 'context' => $context]))->assertOk()
+            ->assertSee('Termék mozgásai')->assertSee('href="'.$url.'"', false);
+        $this->assertStringContainsString('page=2', $details->viewData('returnUrl'));
+        $list = $this->get($url)->assertOk();
+        $this->assertSame([$second->id, $first->id], $list->viewData('movements')->pluck('id')->all());
+    }
+
+    public static function calendarBoundaries(): array
+    {
+        return [
+            'leap February' => ['2024-02-29 23:59:59', 'month', '2024-02-01', '2024-02-29'],
+            'seven days across year boundary' => ['2026-01-01 00:00:00', 'last7', '2025-12-26', '2026-01-01'],
+            'thirty days include leap day' => ['2024-03-01 12:00:00', 'last30', '2024-02-01', '2024-03-01'],
+        ];
+    }
+
+    public function test_exact_product_selection_separates_products_with_identical_names_in_list_and_export(): void
+    {
+        $wanted = $this->movement();
+        $other = Product::create(['category_id' => $this->product->category_id, 'product_name' => $this->product->product_name, 'sku' => 'ABC-02', 'price' => 100]);
+        $this->movement(['product_id' => $other->product_id, 'quantity' => 20]);
+        $params = ['product_id' => $this->product->product_id];
+        $list = $this->get(route('movements.index', $params))->assertOk();
+        $this->assertSame([$wanted->id], $list->viewData('movements')->pluck('id')->all());
+        $this->assertSame(5, $list->viewData('totalIn'));
+        Pdf::shouldReceive('loadView')->once()->withArgs(fn ($view, $data) => $data['movements']->pluck('id')->all() === [$wanted->id])->andReturnSelf();
+        Pdf::shouldReceive('setPaper')->once()->andReturnSelf();
+        Pdf::shouldReceive('download')->once()->andReturn(response('pdf'));
+        $this->get(route('export.movements', $params))->assertOk();
+    }
+
+    #[DataProvider('calendarBoundaries')]
+    public function test_quick_date_ranges_handle_calendar_boundaries_and_remain_fixed_in_return_context(string $now, string $key, string $from, string $to): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse($now));
+        $presets = $this->get(route('movements.index'))->assertOk()->viewData('datePresets');
+        parse_str(parse_url($presets[$key]['url'], PHP_URL_QUERY), $query);
+        $this->assertSame($from, $query['date_from']);
+        $this->assertSame($to, $query['date_to']);
+        $list = $this->get($presets[$key]['url'])->assertOk();
+        $this->travel(2)->days();
+        $form = $this->get($list->viewData('createUrl'))->assertOk();
+        parse_str(parse_url($form->viewData('returnUrl'), PHP_URL_QUERY), $returned);
+        $this->assertSame($from, $returned['date_from']);
+        $this->assertSame($to, $returned['date_to']);
+    }
 }

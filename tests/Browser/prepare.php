@@ -20,6 +20,10 @@ $user = User::factory()->create(['email' => 'browser@example.test', 'password' =
 $category = Category::create(['category_name' => 'Browser']);
 $a = Product::create(['category_id' => $category->category_id, 'product_name' => 'Alpha teszttermék', 'sku' => 'ALPHA-001', 'price' => 100]);
 $b = Product::create(['category_id' => $category->category_id, 'product_name' => 'Zeta teszttermék', 'sku' => 'ZETA-002', 'price' => 100]);
+for ($i = 1; $i <= 10; $i++) {
+    Product::create(['category_id' => $category->category_id, 'product_name' => 'Ékezetes teszttermék '.str_pad((string)$i, 2, '0', STR_PAD_LEFT),
+        'sku' => 'DEMO-'.str_pad((string)$i, 3, '0', STR_PAD_LEFT), 'price' => 100]);
+}
 $warehouse = Warehouse::create(['warehouse_name' => 'Teszt raktár', 'location' => 'Test']);
 foreach ([[$a, 20], [$b, 7]] as [$product, $quantity]) {
     Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => $quantity]);

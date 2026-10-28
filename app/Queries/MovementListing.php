@@ -48,11 +48,21 @@ class MovementListing
         }
         foreach (preg_split('/\s+/u', $f['search'], -1, PREG_SPLIT_NO_EMPTY) as $token) {
             $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $token).'%';
-            $query->where(function (Builder $q) use ($pattern) {
+            $movementId = null;
+            if (preg_match('/^MOZ-([0-9]+)$/i', $token, $matches)) {
+                $digits = ltrim($matches[1], '0');
+                $max = (string) PHP_INT_MAX;
+                if ($digits !== '' && (strlen($digits) < strlen($max)
+                    || (strlen($digits) === strlen($max) && strcmp($digits, $max) <= 0))) {
+                    $movementId = (int) $digits;
+                }
+            }
+            $query->where(function (Builder $q) use ($pattern, $movementId) {
                 $q->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])
                     ->orWhereHas('product', fn (Builder $p) => $p->where(function (Builder $p) use ($pattern) {
                         $p->whereRaw("product_name LIKE ? ESCAPE '!'", [$pattern])->orWhereRaw("sku LIKE ? ESCAPE '!'", [$pattern]);
                     }));
+                if ($movementId !== null) $q->orWhere('inventory_movements.id', $movementId);
             });
         }
         if ($f['date_from']) $query->where('inventory_movements.created_at', '>=', Carbon::createFromFormat('!Y-m-d', $f['date_from']));
@@ -65,6 +75,29 @@ class MovementListing
         };
         $query->orderBy($related ?? 'inventory_movements.'.$f['sort_by'], $f['sort_dir']);
         return $query->orderBy('inventory_movements.id', $f['sort_dir']);
+    }
+
+    public function datePresets(): array
+    {
+        $today = Carbon::today();
+        $ranges = [
+            'today' => ['Ma', $today, $today],
+            'last7' => ['Elmúlt 7 nap', $today->copy()->subDays(6), $today],
+            'last30' => ['Elmúlt 30 nap', $today->copy()->subDays(29), $today],
+            'month' => ['Ez a hónap', $today->copy()->startOfMonth(), $today->copy()->endOfMonth()],
+        ];
+        $presets = [];
+        foreach ($ranges as $key => [$label, $from, $to]) {
+            $from = $from->toDateString();
+            $to = $to->toDateString();
+            $presets[$key] = [
+                'label' => $label,
+                'from' => $from, 'to' => $to,
+                'url' => route('movements.index', array_replace($this->filters, ['date_from' => $from, 'date_to' => $to])),
+                'active' => $this->filters['date_from'] === $from && $this->filters['date_to'] === $to,
+            ];
+        }
+        return $presets;
     }
 
     public function labels(): array

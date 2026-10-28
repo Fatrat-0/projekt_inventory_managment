@@ -19,6 +19,7 @@ class InventoryMovementController extends Controller
         return view('movements.index', [
             'movements' => $listing->query()->paginate($filters['per_page'])->withQueryString(),
             'filters' => $filters, 'filterLabels' => $listing->labels(),
+            'datePresets' => $listing->datePresets(),
             'listContext' => $context,
             'createUrl' => route('movements.create', ['context' => $context]),
             'sortOptions' => \App\Queries\MovementListing::SORTS,

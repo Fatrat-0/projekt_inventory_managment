@@ -4,14 +4,11 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-3">
                 <div class="flex flex-col lg:flex-row lg:items-center gap-3">
                     <h2 class="text-xl font-bold text-gray-800 whitespace-nowrap">Készletmozgások <span class="text-xs font-medium text-gray-500">{{ $movements->total() }} tétel</span></h2>
-                    <form id="movement-filters" method="GET" action="{{ route('movements.index') }}" class="flex-1">
+                    <form id="movement-filters" x-ref="filtersForm" method="GET" action="{{ route('movements.index') }}" class="flex-1">
                         <input type="hidden" name="sort_by" value="{{ $filters['sort_by'] }}">
                         <input type="hidden" name="sort_dir" value="{{ $filters['sort_dir'] }}">
                         <div class="flex items-center gap-2">
-                            <div class="relative flex-1">
-                                <input type="search" name="search" aria-label="Mozgások keresése" maxlength="200" value="{{ $filters['search'] }}" placeholder="Termék, SKU vagy hivatkozás…" class="w-full rounded-md border-gray-300 text-sm pr-10 focus:border-indigo-500 focus:ring-indigo-500">
-                                <button type="submit" aria-label="Keresés" class="absolute right-3 top-3 text-gray-500"><x-icon name="search" /></button>
-                            </div>
+                            <x-movement-search :products="$products" :query="$filters['search']" />
                             <button type="button" @click="filtersOpen = !filtersOpen" :aria-expanded="filtersOpen" aria-controls="movement-filter-panel" class="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"><x-icon name="filter" /> Szűrők</button>
                         </div>
                     </form>
@@ -21,6 +18,12 @@
                     </div>
                 </div>
                 <div id="movement-filter-panel" x-show="filtersOpen" @if(!count($filterLabels)) style="display: none;" @endif class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
+                    <div class="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-2" role="group" aria-label="Gyors dátumszűrők">
+                        <span class="text-xs font-medium text-gray-600">Időszak:</span>
+                        @foreach($datePresets as $preset)
+                            <a href="{{ $preset['url'] }}" @click="if (!$event.ctrlKey && !$event.metaKey && !$event.shiftKey && !$event.altKey) { $event.preventDefault(); $refs.dateFrom.value = '{{ $preset['from'] }}'; $refs.dateTo.value = '{{ $preset['to'] }}'; $refs.filtersForm.requestSubmit(); }" @if($preset['active']) aria-current="true" @endif class="rounded-md border px-3 py-1.5 text-xs font-medium {{ $preset['active'] ? 'border-indigo-200 bg-indigo-50 text-indigo-800' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50' }}">{{ $preset['label'] }}</a>
+                        @endforeach
+                    </div>
                     @foreach(['type' => 'Mozgás típusa', 'product_id' => 'Termék', 'warehouse_id' => 'Raktár', 'user_id' => 'Rögzítette'] as $key => $label)
                         <div>
                             <label for="movement-{{ $key }}" class="block text-xs font-medium text-gray-600 mb-1">{{ $label }}</label>
@@ -44,8 +47,8 @@
                             @endif
                         </div>
                     @endforeach
-                    <div><label for="movement-date-from" class="block text-xs font-medium text-gray-600 mb-1">Dátumtól</label><input id="movement-date-from" type="date" name="date_from" form="movement-filters" value="{{ $filters['date_from'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
-                    <div><label for="movement-date-to" class="block text-xs font-medium text-gray-600 mb-1">Dátumig (beleértve)</label><input id="movement-date-to" type="date" name="date_to" form="movement-filters" value="{{ $filters['date_to'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
+                    <div><label for="movement-date-from" class="block text-xs font-medium text-gray-600 mb-1">Dátumtól</label><input id="movement-date-from" x-ref="dateFrom" type="date" name="date_from" form="movement-filters" value="{{ $filters['date_from'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
+                    <div><label for="movement-date-to" class="block text-xs font-medium text-gray-600 mb-1">Dátumig (beleértve)</label><input id="movement-date-to" x-ref="dateTo" type="date" name="date_to" form="movement-filters" value="{{ $filters['date_to'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
                     <button type="submit" form="movement-filters" class="justify-self-start rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Szűrés alkalmazása</button>
                 </div>
                 @if($filterLabels)
@@ -67,6 +70,7 @@
                 <span>Kiadás <strong class="text-red-700">−{{ number_format($totalOut, 0, ',', ' ') }} db</strong></span>
             </div>
             <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                @if($movements->isNotEmpty())
                 <table class="w-full text-sm text-left text-gray-600">
                     <thead class="bg-gray-50 text-xs uppercase text-gray-600 border-b">
                         <tr>
@@ -79,7 +83,7 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        @forelse($movements as $movement)
+                        @foreach($movements as $movement)
                             <tr class="hover:bg-indigo-50/30">
                                 <td class="px-4 py-3 whitespace-nowrap">{{ $movement->created_at->format('Y.m.d H:i') }}</td>
                                 <td class="px-4 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span></td>
@@ -90,11 +94,12 @@
                                 <td class="px-4 py-3">{{ $movement->user->name }}</td>
                                 <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference ?: '—' }}</td>
                             </tr>
-                        @empty
-                            <tr><td colspan="7" class="px-4 py-12 text-center">Nincs a feltételeknek megfelelő készletmozgás. @if($filterLabels)<a href="{{ route('movements.index') }}" class="block mt-2 text-indigo-600 underline">Szűrők törlése</a>@endif</td></tr>
-                        @endforelse
+                        @endforeach
                     </tbody>
                 </table>
+                @else
+                    <div class="px-4 py-12 text-center text-sm text-gray-600" role="status">Nincs a feltételeknek megfelelő készletmozgás. @if($filterLabels)<a href="{{ route('movements.index') }}" class="block mt-2 text-indigo-600 underline">Szűrők törlése</a>@endif</div>
+                @endif
             </div>
             <div class="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:items-center sm:justify-between">
                 <div class="flex items-center gap-3 text-sm text-gray-600">

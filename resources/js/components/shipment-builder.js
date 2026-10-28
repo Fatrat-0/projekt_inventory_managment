@@ -5,7 +5,15 @@ export default (initial) => ({
             items: stop.items.map(item => ({ ...item, key: ++this.counter })) }));
     },
     addStop() {
-        if (this.stops.length < 20) this.stops.push({ key: ++this.counter, warehouse_id: '', items: [{ key: ++this.counter, product_id: '', quantity: 1 }] });
+        if (this.canAddStop) this.stops.push({ key: ++this.counter, warehouse_id: '', items: [{ key: ++this.counter, product_id: '', quantity: 1 }] });
+    },
+    get canAddStop() {
+        const destinations = this.warehouses.filter(warehouse => String(warehouse.value) !== String(this.origin)).length;
+        return this.stops.length < Math.min(20, destinations);
+    },
+    destinationUnavailable(value, stop) {
+        const id = String(value);
+        return id === String(this.origin) || this.stops.some(other => other.key !== stop.key && String(other.warehouse_id) === id);
     },
     addItem(stop) { if (stop.items.length < 50) stop.items.push({ key: ++this.counter, product_id: '', quantity: 1 }); },
     move(index, direction) {

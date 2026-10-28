@@ -5,6 +5,7 @@ import movementForm from './components/movement-form';
 import autocompletePicker from './components/autocomplete-picker';
 import movementSearch from './components/movement-search';
 import shipmentBuilder from './components/shipment-builder';
+import pdfPreview from './components/pdf-preview';
 
 window.Alpine = Alpine;
 
@@ -37,5 +38,6 @@ Alpine.data('movementForm', movementForm);
 Alpine.data('autocompletePicker', autocompletePicker);
 Alpine.data('movementSearch', movementSearch);
 Alpine.data('shipmentBuilder', shipmentBuilder);
+Alpine.data('pdfPreview', pdfPreview);
 
 Alpine.start();

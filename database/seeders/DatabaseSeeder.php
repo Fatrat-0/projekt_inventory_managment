@@ -261,6 +261,7 @@ class DatabaseSeeder extends Seeder
         }
         // 8. Új, valós szolgáltatáson át rögzített auditpéldák; a régi naplósorok megmaradnak.
         $this->call(MovementAuditDemoSeeder::class);
+        $this->call(ShipmentDemoSeeder::class);
     }
 
     private function warehouse(array $data): Warehouse

@@ -4,6 +4,7 @@ import Alpine from 'alpinejs';
 import movementForm from './components/movement-form';
 import autocompletePicker from './components/autocomplete-picker';
 import movementSearch from './components/movement-search';
+import shipmentBuilder from './components/shipment-builder';
 
 window.Alpine = Alpine;
 
@@ -35,5 +36,6 @@ Alpine.data('productListing', () => ({
 Alpine.data('movementForm', movementForm);
 Alpine.data('autocompletePicker', autocompletePicker);
 Alpine.data('movementSearch', movementSearch);
+Alpine.data('shipmentBuilder', shipmentBuilder);
 
 Alpine.start();

@@ -9,6 +9,11 @@ class InventoryTransfer extends Model
 {
     use HasFactory;
 
+    public const STATUSES = ['pending' => 'Úton', 'completed' => 'Megérkezett', 'cancelled' => 'Visszavonva'];
+    protected function casts(): array { return ['quantity' => 'integer']; }
+    public function shipmentItem() { return $this->hasOne(ShipmentItem::class, 'transfer_id'); }
+    public function getTransferNumberAttribute(): string { return 'ATM-'.str_pad((string)$this->id, 6, '0', STR_PAD_LEFT); }
+
     protected $fillable = [
         'product_id',
         'from_warehouse_id',

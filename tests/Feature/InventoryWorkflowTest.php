@@ -36,7 +36,7 @@ class InventoryWorkflowTest extends TestCase
 
     private function transfer(array $changes = []): array
     {
-        return array_merge(['product_id' => $this->product->product_id, 'from_warehouse_id' => $this->source->warehouse_id,
+        return array_merge(['request_key' => (string) \Illuminate\Support\Str::uuid(), 'product_id' => $this->product->product_id, 'from_warehouse_id' => $this->source->warehouse_id,
             'to_warehouse_id' => $this->destination->warehouse_id, 'quantity' => 4], $changes);
     }
 

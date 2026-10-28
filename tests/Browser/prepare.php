@@ -25,6 +25,7 @@ for ($i = 1; $i <= 10; $i++) {
         'sku' => 'DEMO-'.str_pad((string)$i, 3, '0', STR_PAD_LEFT), 'price' => 100]);
 }
 $warehouse = Warehouse::create(['warehouse_name' => 'Teszt raktár', 'location' => 'Test']);
+foreach (['Északi tesztraktár', 'Déli tesztraktár', 'Nyugati tesztraktár'] as $name) Warehouse::create(['warehouse_name' => $name, 'location' => 'Bemutató célállomás']);
 foreach ([[$a, 20], [$b, 7]] as [$product, $quantity]) {
     Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => $quantity]);
 }

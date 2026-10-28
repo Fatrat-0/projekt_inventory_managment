@@ -36,7 +36,12 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
         Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store', 'show']);
         Route::resource('partners', PartnerController::class)->only(['index', 'store', 'destroy']);
-        Route::resource('transfers', InventoryTransferController::class);
+        Route::resource('transfers', InventoryTransferController::class)->only(['index', 'create', 'store', 'show']);
+        Route::resource('shipments', \App\Http\Controllers\ShipmentController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update']);
+        Route::post('/shipments/{shipment}/start', [\App\Http\Controllers\ShipmentController::class, 'start'])->name('shipments.start');
+        Route::patch('/shipments/{shipment}/stops/{stop}/receive', [\App\Http\Controllers\ShipmentController::class, 'receive'])->name('shipments.receive');
+        Route::patch('/shipments/{shipment}/cancel', [\App\Http\Controllers\ShipmentController::class, 'cancel'])->name('shipments.cancel');
+        Route::get('/shipments/{shipment}/loading-plan', [\App\Http\Controllers\ShipmentController::class, 'pdf'])->name('shipments.pdf');
         Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');
         Route::patch('/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->name('transfers.cancel');
         Route::get('/export-inventory', [ExportController::class, 'inventoryPdf'])->name('export.inventory');

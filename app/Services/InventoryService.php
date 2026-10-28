@@ -54,19 +54,40 @@ class InventoryService
         }
     }
 
-    public function startTransfer(array $data): InventoryTransfer
+    public function startTransfer(array $data, ?string $requestKey = null): InventoryTransfer
     {
-        return DB::transaction(function () use ($data) {
-            $this->lockProduct((int) $data['product_id']);
-            $this->changeStock((int) $data['product_id'], (int) $data['from_warehouse_id'], -(int) $data['quantity']);
-
-            return InventoryTransfer::create(array_merge($data, ['status' => 'pending']));
-        }, 3);
+        $payload = ['product_id' => (int)$data['product_id'], 'from_warehouse_id' => (int)$data['from_warehouse_id'],
+            'to_warehouse_id' => (int)$data['to_warehouse_id'], 'quantity' => (int)$data['quantity'], 'user_id' => (int)$data['user_id']];
+        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
+        try {
+            return DB::transaction(function () use ($payload, $requestKey, $hash) {
+                $requestId = $requestKey === null ? null : DB::table('inventory_transfer_requests')->insertGetId([
+                    'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
+                ]);
+                $this->lockProduct($payload['product_id']);
+                $this->changeStock($payload['product_id'], $payload['from_warehouse_id'], -$payload['quantity']);
+                $transfer = InventoryTransfer::create(array_merge($payload, ['status' => 'pending']));
+                if ($requestId !== null) {
+                    DB::table('inventory_transfer_requests')->where('id', $requestId)->update(['transfer_id' => $transfer->id]);
+                }
+                return $transfer;
+            }, 3);
+        } catch (UniqueConstraintViolationException $e) {
+            if ($requestKey === null) throw $e;
+            $previous = DB::table('inventory_transfer_requests')->where('user_id', $payload['user_id'])->where('request_key', $requestKey)->first();
+            if (!$previous || !$previous->transfer_id) throw $e;
+            if (!hash_equals($previous->payload_hash, $hash)) throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új átmozgatáshoz nyiss új űrlapot.']);
+            return InventoryTransfer::findOrFail($previous->transfer_id);
+        }
     }
 
-    public function finalizeTransfer(InventoryTransfer $transfer, bool $complete): void
+    public function finalizeTransfer(InventoryTransfer $transfer, bool $complete, bool $shipmentManaged = false): void
     {
-        DB::transaction(function () use ($transfer, $complete) {
+        DB::transaction(function () use ($transfer, $complete, $shipmentManaged) {
+            if (!$shipmentManaged && \App\Models\ShipmentItem::where('transfer_id', $transfer->id)->exists()) {
+                throw ValidationException::withMessages(['transfer' => 'Ez a tétel szállítmányhoz tartozik. Az átvételt vagy visszavonást a szállítmány oldalán végezd.']);
+            }
             // Always lock product before transfer/stock to keep the lock order consistent.
             $this->lockProduct((int) $transfer->product_id);
             $locked = InventoryTransfer::whereKey($transfer->getKey())->lockForUpdate()->firstOrFail();

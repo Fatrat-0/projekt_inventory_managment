@@ -153,7 +153,7 @@ class MovementListingTest extends TestCase
     public function test_reference_is_saved_and_escaped_in_list(): void
     {
         $reference = '<script>alert(1)</script>';
-        $this->post(route('movements.store'), ['product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id, 'type' => 'in', 'quantity' => 1, 'reference' => $reference])->assertRedirect();
+        $this->post(route('movements.store'), ['request_key' => (string) \Illuminate\Support\Str::uuid(), 'product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id, 'type' => 'in', 'quantity' => 1, 'reference' => $reference])->assertRedirect();
         $this->assertDatabaseHas('inventory_movements', ['reference' => $reference]);
         $this->get(route('movements.index'))->assertOk()->assertSee($reference)->assertDontSee($reference, false);
     }
@@ -167,7 +167,7 @@ class MovementListingTest extends TestCase
         $form = $this->get($createUrl)->assertOk();
         parse_str(parse_url($form->viewData('returnUrl'), PHP_URL_QUERY), $returnQuery);
         foreach ($params as $key => $value) $this->assertEquals($value, $returnQuery[$key]);
-        $this->post(route('movements.store'), [
+        $this->post(route('movements.store'), ['request_key' => (string) \Illuminate\Support\Str::uuid(),
             'product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id,
             'type' => 'in', 'quantity' => 1, 'context' => $query['context'],
         ])->assertRedirect($form->viewData('returnUrl'));
@@ -178,7 +178,7 @@ class MovementListingTest extends TestCase
         foreach (['https://example.test', 'not-an-encrypted-context', ['bad']] as $context) {
             $form = $this->get(route('movements.create', ['context' => $context]))->assertOk();
             $this->assertSame(route('movements.index'), $form->viewData('returnUrl'));
-            $this->post(route('movements.store'), [
+            $this->post(route('movements.store'), ['request_key' => (string) \Illuminate\Support\Str::uuid(),
                 'product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id,
                 'type' => 'in', 'quantity' => 1, 'context' => $context,
             ])->assertRedirect(route('movements.index'));
@@ -189,7 +189,7 @@ class MovementListingTest extends TestCase
     {
         $context = \App\Support\MovementListContext::encode(['search' => 'Alpha', 'sort_by' => 'quantity']);
         $createUrl = route('movements.create', ['context' => $context]);
-        $this->from($createUrl)->post(route('movements.store'), [
+        $this->from($createUrl)->post(route('movements.store'), ['request_key' => (string) \Illuminate\Support\Str::uuid(),
             'product_id' => '', 'warehouse_id' => '', 'type' => 'bad', 'quantity' => -1,
             'reference' => str_repeat('a', 256), 'context' => $context,
         ])->assertRedirect($createUrl)->assertSessionHasErrors(['product_id','warehouse_id','type','quantity','reference']);

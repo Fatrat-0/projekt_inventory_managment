@@ -30,7 +30,7 @@ class InventoryWorkflowTest extends TestCase
 
     private function movement(array $changes = []): array
     {
-        return array_merge(['product_id' => $this->product->product_id, 'warehouse_id' => $this->source->warehouse_id,
+        return array_merge(['request_key' => (string) \Illuminate\Support\Str::uuid(), 'product_id' => $this->product->product_id, 'warehouse_id' => $this->source->warehouse_id,
             'type' => 'out', 'quantity' => 4, 'reference' => 'TESZT-001'], $changes);
     }
 

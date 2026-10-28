@@ -13,7 +13,19 @@ class InventoryMovement extends Model
         'type',
         'quantity',
         'reference',
+        'stock_before',
+        'stock_after',
     ];
+
+    protected function casts(): array
+    {
+        return ['quantity' => 'integer', 'stock_before' => 'integer', 'stock_after' => 'integer'];
+    }
+
+    public function getMovementNumberAttribute(): string
+    {
+        return 'MOZ-'.str_pad((string) $this->id, 6, '0', STR_PAD_LEFT);
+    }
 
     // Kapcsolat a Termékkel
     public function product()

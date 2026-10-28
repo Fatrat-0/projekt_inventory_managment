@@ -34,7 +34,7 @@ Route::middleware(['auth'])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
-        Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store']);
+        Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store', 'show']);
         Route::resource('partners', PartnerController::class)->only(['index', 'store', 'destroy']);
         Route::resource('transfers', InventoryTransferController::class);
         Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');

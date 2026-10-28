@@ -17,7 +17,7 @@ Az alkalmazás készletváltoztatásait az `App\Services\InventoryService` végz
 
 Minden művelet közös tranzakcióba foglalja a készlet és a mozgásnapló vagy átmozgatási rekord módosítását. A korábbi InventoryMovementObserver megszűnt: a modell közvetlen létrehozása önmagában nem módosít készletet. A demonstrációs seeder eleve kikapcsolt modell-eseményekkel, külön készlet- és naplóadatokat hoz létre, ezért a működése nem változik.
 
-A zárolási sorrend: termék, majd átmozgatás (ha van), majd készlet. A terméksor `FOR UPDATE` zárolása a még nem létező készletsor létrehozását is sorosítja. Így nem csak a meglévő készletsorokra támaszkodunk. Az átmozgatás állapotát a tranzakción belül, frissen zárolt rekordból ellenőrizzük; egy korábban betöltött modell állapota nem mérvadó.
+A készletzárolási sorrend: termék, majd átmozgatás (ha van), majd készlet. A beküldési kulccsal ellátott bevételezés/kiadás ezt megelőzően egyedi indexszel lefoglalja a beküldést; az ismétlések részletes működését a `keszletmozgas-biztonsag-es-reszletek.md` írja le. A terméksor `FOR UPDATE` zárolása a még nem létező készletsor létrehozását is sorosítja. Így nem csak a meglévő készletsorokra támaszkodunk. Az átmozgatás állapotát a tranzakción belül, frissen zárolt rekordból ellenőrizzük; egy korábban betöltött modell állapota nem mérvadó.
 
 Ez egyszerű, termékenként sorosított megoldás: eltérő termékek párhuzamosan kezelhetők, ugyanazon termék különböző raktári műveletei is egymásra várnak. Nagy forgalomnál ennek teljesítményét mérni kell. A tranzakció holtpont esetén legfeljebb három próbálkozást tesz.
 
@@ -73,6 +73,6 @@ A szkript bármely hibánál nem nulla kilépési kóddal fejeződik be. A kül�
 ## Még külön vizsgálandó területek
 
 - Nagy adatmennyiség és tartós párhuzamos terhelés teljesítménye.
-- Ugyanazon bevételezési/kiadási POST-kérés újraküldése: jelenleg új üzleti műveletnek számít, nincs kérésazonosító-alapú deduplikáció.
+- Ugyanazon bevételezési/kiadási POST-kérés újraküldését már védi a beküldési kulcs; részletek: `keszletmozgas-biztonsag-es-reszletek.md`. Két külön kulcs továbbra is két külön művelet.
 - Közvetlen adatbázis-írás vagy a szolgáltatást megkerülő későbbi kód nem részesül automatikusan a szolgáltatás zárolási védelmében.
 - Százalékos kódlefedettséghez Xdebug vagy PCOV szükséges; a tesztek száma nem kódlefedettségi százalék.

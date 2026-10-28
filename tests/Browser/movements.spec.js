@@ -173,5 +173,159 @@ test('replaying the same form creates one movement and details show its original
     await expect(balances.getByText((before+1)+' db', { exact: true })).toBeVisible();
     await page.screenshot({ path: 'tests/Browser/.runtime/movement-detail.png', fullPage: true });
     await page.getByRole('link', { name: '← Készletmozgások', exact: true }).click();
-    await expect(page.getByRole('searchbox', { name: 'Mozgások keresése' })).toHaveValue(reference);
+    await expect(page.getByRole('combobox', { name: 'Mozgások keresése' })).toHaveValue(reference);
+});
+
+test('movement number search opens details and the product link restores the full history', async ({ page }) => {
+    await page.goto('/movements');
+    const search = page.getByRole('combobox', { name: 'Mozgások keresése' });
+    await search.fill('moz-000001 Alpha');
+    await search.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Készletmozgások 1 tétel' })).toBeVisible();
+    await page.getByRole('link', { name: 'MOZ-000001', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'MOZ-000001', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Termék mozgásai', exact: true }).click();
+    const url = new URL(page.url());
+    expect(url.searchParams.get('product_id')).toBe('1');
+    expect(url.searchParams.has('search')).toBe(false);
+    await expect(page.getByRole('combobox', { name: 'Mozgások keresése' })).toHaveValue('');
+    await expect(page.getByRole('link', { name: /^MOZ-/ })).toHaveCount(10);
+});
+
+test('quick date filters preserve other filters, reset pagination and accept custom dates', async ({ page }) => {
+    await page.goto('/movements?search=Alpha&type=in&product_id=1&sort_by=quantity&sort_dir=asc&per_page=25&page=2');
+    const presets = page.getByRole('group', { name: 'Gyors dátumszűrők' });
+    await presets.getByRole('link', { name: 'Elmúlt 7 nap', exact: true }).click();
+    const params = new URL(page.url()).searchParams;
+    expect(params.has('page')).toBe(false);
+    for (const [key, value] of Object.entries({ search: 'Alpha', type: 'in', product_id: '1', sort_by: 'quantity', sort_dir: 'asc', per_page: '25' })) {
+        expect(params.get(key)).toBe(value);
+    }
+    await expect(presets.getByRole('link', { name: 'Elmúlt 7 nap', exact: true })).toHaveAttribute('aria-current', 'true');
+    const from = await page.getByLabel('Dátumtól', { exact: true }).inputValue();
+    const to = await page.getByLabel('Dátumig (beleértve)', { exact: true }).inputValue();
+    expect((Date.parse(to) - Date.parse(from)) / 86400000).toBe(6);
+    await expect(page.getByRole('link', { name: /^MOZ-/ })).toHaveCount(25);
+    await page.screenshot({ path: 'tests/Browser/.runtime/movement-quick-filters.png', fullPage: true });
+
+    await page.getByLabel('Dátumtól', { exact: true }).fill('2020-01-01');
+    await page.getByLabel('Dátumig (beleértve)', { exact: true }).fill('2020-01-02');
+    await page.getByRole('button', { name: 'Szűrés alkalmazása', exact: true }).click();
+    await expect(presets.locator('[aria-current]')).toHaveCount(0);
+    await expect(page.getByText('Nincs a feltételeknek megfelelő készletmozgás.')).toBeVisible();
+});
+
+test('quick date filters submit edited fields and respect product picker validation on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/movements?search=Alpha&type=in&product_id=1&per_page=25&page=2');
+    await page.getByRole('combobox', { name: 'Mozgások keresése' }).fill('Zeta');
+    await page.getByLabel('Mozgás típusa', { exact: true }).selectOption('out');
+    const product = page.getByRole('combobox', { name: 'Termék', exact: true });
+    await product.fill('nincsilyen');
+    const urlBefore = page.url();
+    const today = page.getByRole('group', { name: 'Gyors dátumszűrők' }).getByRole('link', { name: 'Ma', exact: true });
+    await today.click();
+    expect(await product.evaluate(element => element.checkValidity())).toBe(false);
+    expect(page.url()).toBe(urlBefore);
+    await chooseProduct(page, '2');
+    await today.click();
+    await expect(page.getByRole('combobox', { name: 'Mozgások keresése' })).toHaveValue('Zeta');
+    const params = new URL(page.url()).searchParams;
+    expect(params.get('search')).toBe('Zeta');
+    expect(params.get('type')).toBe('out');
+    expect(params.get('product_id')).toBe('2');
+    expect(params.get('per_page')).toBe('25');
+    expect(params.get('date_from')).toBe(params.get('date_to'));
+    expect(params.has('page')).toBe(false);
+    await expect(today).toHaveAttribute('aria-current', 'true');
+    const empty = page.getByRole('status').filter({ hasText: 'Nincs a feltételeknek megfelelő készletmozgás.' });
+    await expect(empty).toBeVisible();
+    const bounds = await empty.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+    await expect(page.getByRole('table')).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: 'tests/Browser/.runtime/movement-quick-filters-mobile.png', fullPage: true });
+});
+
+test('main search offers full product names and SKUs and mouse choice replaces the product filter', async ({ page }) => {
+    await page.goto('/movements?product_id=2&type=in&sort_by=quantity&sort_dir=asc&per_page=25&page=2');
+    await page.getByLabel('Mozgás típusa', { exact: true }).selectOption('out');
+    await page.getByLabel('Dátumtól', { exact: true }).fill('2020-01-01');
+    await page.getByLabel('Dátumig (beleértve)', { exact: true }).fill('2099-12-31');
+    const search = page.getByRole('combobox', { name: 'Mozgások keresése' });
+    await search.fill('alpha');
+    const suggestions = page.getByRole('listbox', { name: 'Kereső termékjavaslatai' });
+    const option = suggestions.getByRole('option', { name: 'Alpha teszttermék ALPHA-001', exact: true });
+    await expect(option).toBeVisible();
+    await expect(suggestions.getByRole('option')).toHaveCount(1);
+    await page.screenshot({ path: 'tests/Browser/.runtime/movement-search-suggestions.png', fullPage: true });
+    await option.click();
+    await expect(search).toHaveValue('');
+    const params = new URL(page.url()).searchParams;
+    for (const [key, value] of Object.entries({ product_id: '1', type: 'out', sort_by: 'quantity', sort_dir: 'asc', per_page: '25', date_from: '2020-01-01', date_to: '2099-12-31' })) {
+        expect(params.get(key)).toBe(value);
+    }
+    expect(params.has('page')).toBe(false);
+    expect(params.has('search')).toBe(false);
+    await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Alpha teszttermék (ALPHA-001)');
+});
+
+test('main search supports accent-insensitive multiword suggestions and keyboard selection', async ({ page }) => {
+    await page.goto('/movements');
+    const search = page.getByRole('combobox', { name: 'Mozgások keresése' });
+    await search.fill('ekezetes DEMO-003');
+    const option = page.getByRole('listbox', { name: 'Kereső termékjavaslatai' }).getByRole('option');
+    await expect(option).toContainText('Ékezetes teszttermék 03');
+    await expect(option).toContainText('DEMO-003');
+    await search.press('ArrowDown');
+    await expect(option).toHaveAttribute('aria-selected', 'true');
+    await expect(search).toHaveAttribute('aria-activedescendant', 'movement-search-option-0');
+    await search.press('Enter');
+    await expect(page).toHaveURL(/product_id=5/);
+    await expect(search).toHaveValue('');
+    expect(new URL(page.url()).searchParams.has('search')).toBe(false);
+});
+
+test('main search Enter remains free text unless a suggestion is selected and Escape closes suggestions', async ({ page }) => {
+    await page.goto('/movements');
+    const search = page.getByRole('combobox', { name: 'Mozgások keresése' });
+    await search.fill('Alpha');
+    await expect(search).toHaveAttribute('aria-expanded', 'true');
+    await search.press('Enter');
+    await expect(search).toHaveValue('Alpha');
+    expect(new URL(page.url()).searchParams.get('search')).toBe('Alpha');
+    expect(new URL(page.url()).searchParams.get('product_id')).toBe('');
+    await search.click();
+    await search.press('ArrowDown');
+    await search.press('Escape');
+    await expect(search).toHaveAttribute('aria-expanded', 'false');
+    await expect(search).toHaveValue('Alpha');
+    await search.fill('MOZ-000001');
+    await expect(page.getByText('Nincs egyező termékjavaslat. A megadott szövegre továbbra is kereshetsz.')).toBeVisible();
+    await search.press('Enter');
+    await expect(page.getByRole('heading', { name: 'Készletmozgások 1 tétel' })).toBeVisible();
+});
+
+test('main search limits suggestions, supports Tab and outside dismissal, and fits mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/movements');
+    const search = page.getByRole('combobox', { name: 'Mozgások keresése' });
+    await search.fill('ekezetes');
+    const suggestions = page.getByRole('listbox', { name: 'Kereső termékjavaslatai' });
+    await expect(suggestions.getByRole('option')).toHaveCount(8);
+    await expect(page.getByText('Az első 8 termék látható. Pontosítsd a keresést a további találatokhoz.')).toBeVisible();
+    const bounds = await suggestions.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+    await search.press('ArrowUp');
+    await expect(search).toHaveAttribute('aria-activedescendant', 'movement-search-option-7');
+    await search.press('Tab');
+    await expect(search).toHaveAttribute('aria-expanded', 'false');
+    await search.click();
+    await expect(search).toHaveAttribute('aria-expanded', 'true');
+    await page.getByRole('heading', { name: /^Készletmozgások/ }).click();
+    await expect(search).toHaveAttribute('aria-expanded', 'false');
+    await search.fill('');
+    await expect(search).toHaveAttribute('aria-expanded', 'false');
 });

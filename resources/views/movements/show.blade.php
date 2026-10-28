@@ -5,6 +5,7 @@
             <h2 class="text-xl font-bold text-gray-900">{{ $movement->movement_number }}</h2>
             <span class="rounded-md px-2.5 py-1 text-xs font-semibold {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span>
         </div>
+        <a href="{{ route('movements.index', ['product_id' => $movement->product_id]) }}" class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Termék mozgásai</a>
         <div class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-6">
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-sm">
                 <div><dt class="text-gray-500">Termék</dt><dd class="mt-1 font-semibold text-gray-900">{{ $movement->product->product_name }}</dd><dd class="mt-1 font-mono text-xs text-gray-500">{{ $movement->product->sku }}</dd></div>

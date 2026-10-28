@@ -37,6 +37,10 @@
         @endif
     </div>
 
+    @if(!empty($filterInfo))
+        <div class="filter-box"><strong>Alkalmazott szűrők:</strong> {{ implode(' | ', $filterInfo) }}</div>
+    @endif
+
     <table>
         <thead>
             <tr>

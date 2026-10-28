@@ -43,17 +43,13 @@ class ExportController extends Controller
 
     public function movementsPdf(Request $request)
     {
-        $query = InventoryMovement::with(['product', 'warehouse', 'user'])->latest();
-
-        // Szűrés mozgás típusára (in = bevételezés, out = kiadás)
-        if ($request->filled('type') && in_array($request->type, ['in', 'out'])) {
-            $query->where('type', $request->type);
-        }
-
-        $movements = $query->get();
+        $request->validate(['orientation' => ['nullable', 'in:portrait,landscape']]);
+        $listing = new \App\Queries\MovementListing($request);
+        $movements = $listing->query()->get();
+        $filterInfo = array_values($listing->labels());
 
         $options = [
-            'type_filter'     => $request->input('type', 'all'),
+            'type_filter'     => $listing->filters['type'] ?? 'all',
             'show_warehouse'  => $request->boolean('show_warehouse', true),
             'show_reference'  => $request->boolean('show_reference', true),
             'show_user'       => $request->boolean('show_user', true),
@@ -62,7 +58,7 @@ class ExportController extends Controller
             'orientation'     => $request->input('orientation', 'portrait'),
         ];
 
-        $pdf = Pdf::loadView('pdf.movements', compact('movements', 'options'))
+        $pdf = Pdf::loadView('pdf.movements', compact('movements', 'options', 'filterInfo'))
                   ->setPaper('a4', $options['orientation']);
 
         if ($request->boolean('preview')) {

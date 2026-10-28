@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+/tests/Browser/.runtime/
+/test-results/
+/playwright-report/

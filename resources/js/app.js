@@ -1,6 +1,8 @@
 import './bootstrap';
 
 import Alpine from 'alpinejs';
+import movementForm from './components/movement-form';
+import autocompletePicker from './components/autocomplete-picker';
 
 window.Alpine = Alpine;
 
@@ -28,5 +30,8 @@ Alpine.data('productListing', () => ({
         try { localStorage.setItem('productViewMode', mode); } catch {}
     },
 }));
+
+Alpine.data('movementForm', movementForm);
+Alpine.data('autocompletePicker', autocompletePicker);
 
 Alpine.start();

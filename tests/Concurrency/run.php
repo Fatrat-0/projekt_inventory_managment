@@ -33,7 +33,7 @@ if (($argv[1] ?? '') === '--worker') {
     try {
         $service = app(InventoryService::class);
         match ($job['action']) {
-            'movement' => $service->recordMovement($job['data']),
+            'movement' => $service->recordMovement($job['data'], $job['requestKey'] ?? null),
             'start' => $service->startTransfer($job['data']),
             'complete' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), true),
             'cancel' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), false),
@@ -55,12 +55,12 @@ function check(bool $condition, string $message): void
     }
 }
 
-function race(string $database, int $productId, array $jobs): array
+function race(string $database, int|array $productId, array $jobs): array
 {
     $processes = [];
     DB::beginTransaction();
     try {
-        Product::whereKey($productId)->lockForUpdate()->firstOrFail();
+        Product::whereIn('product_id', (array) $productId)->orderBy('product_id')->lockForUpdate()->get();
         foreach ($jobs as $job) {
             $process = new Process([PHP_BINARY, __FILE__, '--worker', $database, base64_encode(json_encode($job, JSON_THROW_ON_ERROR))], dirname(__DIR__, 2));
             $process->setTimeout(30);
@@ -112,8 +112,8 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?, ?, ?, ?)', [$database, 'products', 'stocks', 'inventory_movements', 'inventory_transfers']);
-    check(count($engines) === 4 && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === 4, 'Concurrency tests require InnoDB tables.');
+    $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (?, ?, ?, ?, ?)', [$database, 'products', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests']);
+    check(count($engines) === 5 && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === 5, 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
     $category = Category::create(['category_name' => 'Concurrency']);
     $service = app(InventoryService::class);
@@ -169,7 +169,35 @@ try {
         }
         echo 'PASS: '.$scenario.PHP_EOL;
     }
-    echo "8 MySQL concurrency scenarios passed.\n";
+    foreach (['same request replay', 'same key changed quantity', 'same key different products'] as $index => $scenario) {
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario, 'sku' => 'DEDUP-'.$index, 'price' => 100]);
+        $warehouse = Warehouse::create(['warehouse_name' => 'Dedup '.$index, 'location' => 'Test']);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 10]);
+        $data = ['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'user_id' => $user->id, 'type' => 'out', 'quantity' => 4];
+        $key = (string) \Illuminate\Support\Str::uuid();
+        $secondData = $data;
+        $ids = [$product->product_id];
+        if ($scenario === 'same key changed quantity') $secondData['quantity'] = 5;
+        if ($scenario === 'same key different products') {
+            $other = Product::create(['category_id' => $category->category_id, 'product_name' => 'Other', 'sku' => 'DEDUP-OTHER', 'price' => 100]);
+            Stock::create(['product_id' => $other->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 10]);
+            $secondData['product_id'] = $other->product_id;
+            $ids[] = $other->product_id;
+        }
+        $beforeCount = InventoryMovement::count();
+        $results = race($database, $ids, [
+            ['action' => 'movement', 'data' => $data, 'requestKey' => $key],
+            ['action' => 'movement', 'data' => $secondData, 'requestKey' => strtoupper($key)],
+        ]);
+        check($results === ($scenario === 'same request replay' ? ['OK', 'OK'] : ['OK', 'REJECTED']), $scenario.': incorrect request outcomes.');
+        check(InventoryMovement::count() === $beforeCount + 1, $scenario.': duplicate movement.');
+        $movement = InventoryMovement::latest('id')->firstOrFail();
+        check($movement->stock_before === 10 && $movement->stock_after === 10 - $movement->quantity, 'Incorrect concurrent audit balances.');
+        check((int) Stock::whereIn('product_id', $ids)->sum('quantity') === 10 * count($ids) - $movement->quantity, 'Request replay changed stock twice.');
+        check(DB::table('inventory_movement_requests')->where('request_key', $key)->count() === 1, 'Duplicate request record.');
+        echo 'PASS: '.$scenario.PHP_EOL;
+    }
+    echo "11 MySQL concurrency scenarios passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

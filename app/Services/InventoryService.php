@@ -5,19 +5,53 @@ namespace App\Services;
 use App\Models\{InventoryMovement, InventoryTransfer, Product, Stock};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
 {
-    public function recordMovement(array $data): InventoryMovement
+    public function recordMovement(array $data, ?string $requestKey = null): InventoryMovement
     {
-        return DB::transaction(function () use ($data) {
-            $this->lockProduct((int) $data['product_id']);
-            $this->changeStock((int) $data['product_id'], (int) $data['warehouse_id'],
-                $data['type'] === 'in' ? (int) $data['quantity'] : -(int) $data['quantity']);
-
-            return InventoryMovement::create($data);
-        }, 3);
+        $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
+        $payload = [
+            'product_id' => (int) $data['product_id'], 'warehouse_id' => (int) $data['warehouse_id'],
+            'user_id' => (int) $data['user_id'], 'type' => $data['type'], 'quantity' => (int) $data['quantity'],
+            'reference' => trim((string) ($data['reference'] ?? '')) === '' ? null : trim((string) $data['reference']),
+        ];
+        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        try {
+            return DB::transaction(function () use ($payload, $requestKey, $hash) {
+                $requestId = null;
+                if ($requestKey !== null) {
+                    // The unique insert serializes the SAME request even across different products.
+                    // This claim, the stock write, and the audit record commit or roll back together.
+                    $requestId = DB::table('inventory_movement_requests')->insertGetId([
+                        'user_id' => $payload['user_id'], 'request_key' => $requestKey,
+                        'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
+                    ]);
+                }
+                $this->lockProduct($payload['product_id']);
+                $balances = $this->changeStock($payload['product_id'], $payload['warehouse_id'],
+                    $payload['type'] === 'in' ? $payload['quantity'] : -$payload['quantity']);
+                $movement = InventoryMovement::create(array_merge($payload, $balances));
+                if ($requestId !== null) {
+                    DB::table('inventory_movement_requests')->where('id', $requestId)
+                        ->update(['movement_id' => $movement->id, 'updated_at' => now()]);
+                }
+                return $movement;
+            }, 3);
+        } catch (UniqueConstraintViolationException $e) {
+            if ($requestKey === null) throw $e;
+            // The conflicting transaction has committed by the time its unique insert fails.
+            // Read outside the rolled-back transaction to see that committed request.
+            $previous = DB::table('inventory_movement_requests')->where('user_id', $payload['user_id'])
+                ->where('request_key', $requestKey)->first();
+            if (!$previous || !$previous->movement_id) throw $e;
+            if (!hash_equals($previous->payload_hash, $hash)) {
+                throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új művelethez nyiss új készletmozgás-űrlapot.']);
+            }
+            return InventoryMovement::findOrFail($previous->movement_id);
+        }
     }
 
     public function startTransfer(array $data): InventoryTransfer
@@ -52,11 +86,12 @@ class InventoryService
         Product::whereKey($productId)->lockForUpdate()->firstOrFail();
     }
 
-    private function changeStock(int $productId, int $warehouseId, int $delta): void
+    private function changeStock(int $productId, int $warehouseId, int $delta): array
     {
         $stock = Stock::where('product_id', $productId)->where('warehouse_id', $warehouseId)
             ->lockForUpdate()->first();
-        $quantity = (int) ($stock?->quantity ?? 0) + $delta;
+        $before = (int) ($stock?->quantity ?? 0);
+        $quantity = $before + $delta;
         if ($quantity < 0) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő készlet a kiválasztott raktárban.']);
         }
@@ -68,5 +103,6 @@ class InventoryService
         } else {
             Stock::create(['product_id' => $productId, 'warehouse_id' => $warehouseId, 'quantity' => $quantity]);
         }
+        return ['stock_before' => $before, 'stock_after' => $quantity];
     }
 }

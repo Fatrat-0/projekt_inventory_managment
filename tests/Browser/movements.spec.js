@@ -85,7 +85,7 @@ test('cancel and successful save retain the original list context', async ({ pag
     await page.getByLabel('Mennyiség (db)').fill('1');
     await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
     await expect(page).toHaveURL(new RegExp('search=Alpha.*page=2'));
-    await expect(page.getByRole('status')).toContainText('Mozgás sikeresen rögzítve');
+    await expect(page.getByRole('status')).toContainText('Mozgás rögzítve: MOZ-');
 });
 
 test('insufficient stock shows linked field errors and preserves the form', async ({ page }) => {
@@ -145,4 +145,33 @@ test('list product filter uses suggestions and clearing restores all products', 
     await page.getByRole('button', { name: 'Termék törlése a mezőből', exact: true }).click();
     await page.getByRole('button', { name: 'Szűrés alkalmazása', exact: true }).click();
     expect(new URL(page.url()).searchParams.get('product_id')).not.toBe('1');
+});
+
+test('replaying the same form creates one movement and details show its original balances', async ({ page }) => {
+    await openForm(page);
+    const reference = 'BROWSER-REPLAY';
+    await page.getByLabel('Bizonylatszám vagy megjegyzés (opcionális)').fill(reference);
+    const csrf = await page.getByRole('main').locator('input[name="_token"]').getAttribute('value');
+    const key = await page.locator('input[name="request_key"]').getAttribute('value');
+    const stockResponse = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
+    const before = (await stockResponse.json()).quantity;
+    const first = await page.request.post('/movements', { form: {
+        _token: csrf, request_key: key, product_id: '1', warehouse_id: '1', type: 'in', quantity: '1', reference,
+    }});
+    expect(first.ok()).toBe(true);
+    // The still-open original form submits exactly the same key and business payload.
+    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Mozgás rögzítve: MOZ-');
+    const after = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
+    expect((await after.json()).quantity).toBe(before + 1);
+    await page.goto('/movements?search='+reference);
+    await expect(page.getByRole('heading', { name: 'Készletmozgások 1 tétel' })).toBeVisible();
+    await page.getByRole('link', { name: /^MOZ-/ }).click();
+    await expect(page.getByRole('heading', { name: /^MOZ-/ })).toBeVisible();
+    const balances = page.getByRole('region', { name: 'Készletváltozás' });
+    await expect(balances.getByText(before+' db', { exact: true })).toBeVisible();
+    await expect(balances.getByText((before+1)+' db', { exact: true })).toBeVisible();
+    await page.screenshot({ path: 'tests/Browser/.runtime/movement-detail.png', fullPage: true });
+    await page.getByRole('link', { name: '← Készletmozgások', exact: true }).click();
+    await expect(page.getByRole('searchbox', { name: 'Mozgások keresése' })).toHaveValue(reference);
 });

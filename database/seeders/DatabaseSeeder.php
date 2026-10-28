@@ -10,9 +10,11 @@ use App\Models\Product;
 use App\Models\Stock;
 use App\Models\User;
 use App\Models\Warehouse;
+use App\Services\InventoryService;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
@@ -20,35 +22,40 @@ class DatabaseSeeder extends Seeder
 
     public function run(): void
     {
+        DB::transaction(fn () => $this->seedDemoData());
+    }
+
+    private function seedDemoData(): void
+    {
         // 1. FELHASZNÁLÓK (6 fő)
-        $admin = User::updateOrCreate(['email' => 'admin@raktar.hu'], [
+        $admin = User::firstOrCreate(['email' => 'admin@raktar.hu'], [
             'name' => 'Kovács János (Admin)', 'password' => Hash::make('admin123'), 'role' => 'admin',
         ]);
-        $manager = User::updateOrCreate(['email' => 'manager@raktar.hu'], [
+        $manager = User::firstOrCreate(['email' => 'manager@raktar.hu'], [
             'name' => 'Nagy Éva (Raktárvezető)', 'password' => Hash::make('manager123'), 'role' => 'manager',
         ]);
         $workers = [
-            User::updateOrCreate(['email' => 'worker@raktar.hu'], [
+            User::firstOrCreate(['email' => 'worker@raktar.hu'], [
                 'name' => 'Tóth Péter (Raktáros)', 'password' => Hash::make('worker123'), 'role' => 'worker',
             ]),
-            User::updateOrCreate(['email' => 'szabo.gabor@raktar.hu'], [
+            User::firstOrCreate(['email' => 'szabo.gabor@raktar.hu'], [
                 'name' => 'Szabó Gábor (Raktáros)', 'password' => Hash::make('worker123'), 'role' => 'worker',
             ]),
-            User::updateOrCreate(['email' => 'kiss.anna@raktar.hu'], [
+            User::firstOrCreate(['email' => 'kiss.anna@raktar.hu'], [
                 'name' => 'Kiss Anna (Raktáros)', 'password' => Hash::make('worker123'), 'role' => 'worker',
             ]),
-            User::updateOrCreate(['email' => 'varga.balazs@raktar.hu'], [
+            User::firstOrCreate(['email' => 'varga.balazs@raktar.hu'], [
                 'name' => 'Varga Balázs (Raktáros)', 'password' => Hash::make('worker123'), 'role' => 'worker',
             ]),
         ];
 
         // 2. RAKTÁRAK (5 telephely)
         $wh = [
-            'bp'   => Warehouse::create(['warehouse_name' => 'Központi Elosztó Raktár (Budapest)', 'location' => '1117 Budapest, Logisztikai park 4.']),
-            'pecs' => Warehouse::create(['warehouse_name' => 'Déli Regionális Telephely (Pécs)', 'location' => '7630 Pécs, Ipari út 12.']),
-            'gyor' => Warehouse::create(['warehouse_name' => 'Nyugati Logisztikai Központ (Győr)', 'location' => '9027 Győr, Gyárvárosi út 8.']),
-            'deb'  => Warehouse::create(['warehouse_name' => 'Keleti Tranzit Raktár (Debrecen)', 'location' => '4031 Debrecen, Határ út 19.']),
-            'szeg' => Warehouse::create(['warehouse_name' => 'Dél-Alföldi Depó (Szeged)', 'location' => '6728 Szeged, Dorozsmai út 35.']),
+            'bp'   => $this->warehouse(['warehouse_name' => 'Központi Elosztó Raktár (Budapest)', 'location' => '1117 Budapest, Logisztikai park 4.']),
+            'pecs' => $this->warehouse(['warehouse_name' => 'Déli Regionális Telephely (Pécs)', 'location' => '7630 Pécs, Ipari út 12.']),
+            'gyor' => $this->warehouse(['warehouse_name' => 'Nyugati Logisztikai Központ (Győr)', 'location' => '9027 Győr, Gyárvárosi út 8.']),
+            'deb'  => $this->warehouse(['warehouse_name' => 'Keleti Tranzit Raktár (Debrecen)', 'location' => '4031 Debrecen, Határ út 19.']),
+            'szeg' => $this->warehouse(['warehouse_name' => 'Dél-Alföldi Depó (Szeged)', 'location' => '6728 Szeged, Dorozsmai út 35.']),
         ];
 
         // 3. PARTNEREK (10 partner: 5 Beszállító és 5 Vevő)
@@ -65,30 +72,30 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Tisza-Ép Ipari Park Kft.', 'type' => 'customer', 'email' => 'megrendeles@tiszaep.hu', 'phone' => '+36 62 777 111'],
         ];
         foreach ($partners as $p) {
-            Partner::create($p);
+            Partner::firstOrCreate(['email' => $p['email']], $p);
         }
 
-        // 4. HIERARCHIKUS KATEGÓRIÁK (5 Főkategória + 9 Alkategória = 14 db)
-        $catPower = Category::create(['category_name' => 'Elektromos gépek', 'parent_id' => null, 'default_item_min_stock' => 8, 'aggregate_min_stock' => 60]);
-        $catHand  = Category::create(['category_name' => 'Kéziszerszámok', 'parent_id' => null, 'default_item_min_stock' => 15, 'aggregate_min_stock' => 80]);
-        $catSafe  = Category::create(['category_name' => 'Munkavédelmi felszerelések', 'parent_id' => null, 'default_item_min_stock' => 20, 'aggregate_min_stock' => 100]);
-        $catFast  = Category::create(['category_name' => 'Rögzítéstechnika és Segédanyagok', 'parent_id' => null, 'default_item_min_stock' => 40, 'aggregate_min_stock' => 200]);
-        $catElec  = Category::create(['category_name' => 'Villanyszerelési anyagok', 'parent_id' => null, 'default_item_min_stock' => 25, 'aggregate_min_stock' => 120]);
+        // 4. HIERARCHIKUS KATEGÓRIÁK (5 főkategória + 10 alkategória = 15 db)
+        $catPower = $this->category(['category_name' => 'Elektromos gépek', 'parent_id' => null, 'default_item_min_stock' => 8, 'aggregate_min_stock' => 60]);
+        $catHand  = $this->category(['category_name' => 'Kéziszerszámok', 'parent_id' => null, 'default_item_min_stock' => 15, 'aggregate_min_stock' => 80]);
+        $catSafe  = $this->category(['category_name' => 'Munkavédelmi felszerelések', 'parent_id' => null, 'default_item_min_stock' => 20, 'aggregate_min_stock' => 100]);
+        $catFast  = $this->category(['category_name' => 'Rögzítéstechnika és Segédanyagok', 'parent_id' => null, 'default_item_min_stock' => 40, 'aggregate_min_stock' => 200]);
+        $catElec  = $this->category(['category_name' => 'Villanyszerelési anyagok', 'parent_id' => null, 'default_item_min_stock' => 25, 'aggregate_min_stock' => 120]);
 
         $cats = [
             'power'   => $catPower,
-            'drills'  => Category::create(['category_name' => 'Fúrógépek és Csavarbehajtók', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 10, 'aggregate_min_stock' => 45]),
-            'grind'   => Category::create(['category_name' => 'Csiszolás és Vágástechnika', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 8, 'aggregate_min_stock' => 50]), // ÖSSZ-MINIMUM RIASZTÁS LESZ
-            'weld'    => Category::create(['category_name' => 'Hegesztéstechnika', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 5, 'aggregate_min_stock' => 20]),
+            'drills'  => $this->category(['category_name' => 'Fúrógépek és Csavarbehajtók', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 10, 'aggregate_min_stock' => 45]),
+            'grind'   => $this->category(['category_name' => 'Csiszolás és Vágástechnika', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 8, 'aggregate_min_stock' => 50]), // ÖSSZ-MINIMUM RIASZTÁS LESZ
+            'weld'    => $this->category(['category_name' => 'Hegesztéstechnika', 'parent_id' => $catPower->category_id, 'default_item_min_stock' => 5, 'aggregate_min_stock' => 20]),
             'hand'    => $catHand,
-            'screw'   => Category::create(['category_name' => 'Csavarhúzók és Bit készletek', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 20, 'aggregate_min_stock' => 70]),
-            'wrench'  => Category::create(['category_name' => 'Villáskulcsok és Nyomatékkulcsok', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 10, 'aggregate_min_stock' => 40]),
-            'pliers'  => Category::create(['category_name' => 'Fogók és Vágószerszámok', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 12, 'aggregate_min_stock' => 45]),
-            'foot'    => Category::create(['category_name' => 'Védőlábbelik és Ruházat', 'parent_id' => $catSafe->category_id, 'default_item_min_stock' => 12, 'aggregate_min_stock' => 60]), // ÖSSZ-MINIMUM RIASZTÁS LESZ
-            'gloves'  => Category::create(['category_name' => 'Védőkesztyűk és Fejvédelem', 'parent_id' => $catSafe->category_id, 'default_item_min_stock' => 30, 'aggregate_min_stock' => 120]),
+            'screw'   => $this->category(['category_name' => 'Csavarhúzók és Bit készletek', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 20, 'aggregate_min_stock' => 70]),
+            'wrench'  => $this->category(['category_name' => 'Villáskulcsok és Nyomatékkulcsok', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 10, 'aggregate_min_stock' => 40]),
+            'pliers'  => $this->category(['category_name' => 'Fogók és Vágószerszámok', 'parent_id' => $catHand->category_id, 'default_item_min_stock' => 12, 'aggregate_min_stock' => 45]),
+            'foot'    => $this->category(['category_name' => 'Védőlábbelik és Ruházat', 'parent_id' => $catSafe->category_id, 'default_item_min_stock' => 12, 'aggregate_min_stock' => 60]), // ÖSSZ-MINIMUM RIASZTÁS LESZ
+            'gloves'  => $this->category(['category_name' => 'Védőkesztyűk és Fejvédelem', 'parent_id' => $catSafe->category_id, 'default_item_min_stock' => 30, 'aggregate_min_stock' => 120]),
             'fast'    => $catFast,
-            'chem'    => Category::create(['category_name' => 'Ipari Vegyi Anyagok és Ragasztók', 'parent_id' => $catFast->category_id, 'default_item_min_stock' => 25, 'aggregate_min_stock' => 90]),
-            'cables'  => Category::create(['category_name' => 'Kábelek és Vezetékek', 'parent_id' => $catElec->category_id, 'default_item_min_stock' => 30, 'aggregate_min_stock' => 100]),
+            'chem'    => $this->category(['category_name' => 'Ipari Vegyi Anyagok és Ragasztók', 'parent_id' => $catFast->category_id, 'default_item_min_stock' => 25, 'aggregate_min_stock' => 90]),
+            'cables'  => $this->category(['category_name' => 'Kábelek és Vezetékek', 'parent_id' => $catElec->category_id, 'default_item_min_stock' => 30, 'aggregate_min_stock' => 100]),
         ];
 
         // 5. TERMÉKEK ÉS KÉSZLETEK (45 termék -> garantáltan 2-3 oldalas PDF leltárív)
@@ -164,8 +171,7 @@ class DatabaseSeeder extends Seeder
         $productsBySku = [];
 
         foreach ($catalog as [$sku, $name, $price, $catKey, $override, $whStocks]) {
-            $product = Product::create([
-                'sku' => $sku,
+            $product = Product::firstOrCreate(['sku' => $sku], [
                 'product_name' => $name,
                 'price' => $price,
                 'category_id' => $cats[$catKey]->category_id,
@@ -174,7 +180,9 @@ class DatabaseSeeder extends Seeder
 
             $productsBySku[$sku] = $product;
 
-            foreach ($whStocks as $whKey => $qty) {
+            // Opening stock is assigned only when this run creates the product.
+            // Existing products may have real stock movements; never restore their seed quantities.
+            foreach ($product->wasRecentlyCreated ? $whStocks : [] as $whKey => $qty) {
                 Stock::create([
                     'product_id' => $product->product_id,
                     'warehouse_id' => $wh[$whKey]->warehouse_id,
@@ -201,9 +209,11 @@ class DatabaseSeeder extends Seeder
                 ? "BEV-2026/{$docNum} (" . $supplierNames[$i % count($supplierNames)] . ")"
                 : "KIAD-2026/{$docNum} (" . $customerNames[$i % count($customerNames)] . ")";
 
-            $movement = InventoryMovement::create([
+            $movement = InventoryMovement::firstOrCreate([
+                'reference' => $ref,
                 'product_id' => $product->product_id,
                 'warehouse_id' => $warehouse->warehouse_id,
+            ], [
                 'type' => $isIn ? 'in' : 'out',
                 'quantity' => $qty,
                 'reference' => $ref,
@@ -211,8 +221,10 @@ class DatabaseSeeder extends Seeder
             ]);
 
             // Időbélyeg eltolása az elmúlt 25 napra, hogy életszerű dátumok legyenek a PDF-ben
-            $movement->created_at = now()->subDays(25 - intdiv($i, 2))->subHours($i % 12);
-            $movement->saveQuietly();
+            if ($movement->wasRecentlyCreated) {
+                $movement->created_at = now()->subDays(25 - intdiv($i, 2))->subHours($i % 12);
+                $movement->saveQuietly();
+            }
         }
 
         // 7. RAKTÁRKÖZI ÁTMOZGATÁSOK (10 tétel vegyes státusszal)
@@ -230,14 +242,34 @@ class DatabaseSeeder extends Seeder
         ];
 
         foreach ($transfersData as [$sku, $fromKey, $toKey, $qty, $userId, $status]) {
-            InventoryTransfer::create([
+            $identity = [
                 'product_id' => $productsBySku[$sku]->product_id,
                 'from_warehouse_id' => $wh[$fromKey]->warehouse_id,
                 'to_warehouse_id' => $wh[$toKey]->warehouse_id,
                 'quantity' => $qty,
                 'user_id' => $userId,
-                'status' => $status,
-            ]);
+            ];
+            if (InventoryTransfer::where($identity)->exists()) {
+                continue;
+            }
+            // Reserve stock just as the application does, including for pending examples.
+            $inventory = app(InventoryService::class);
+            $transfer = $inventory->startTransfer($identity);
+            if ($status !== 'pending') {
+                $inventory->finalizeTransfer($transfer, $status === 'completed');
+            }
         }
+        // 8. Új, valós szolgáltatáson át rögzített auditpéldák; a régi naplósorok megmaradnak.
+        $this->call(MovementAuditDemoSeeder::class);
+    }
+
+    private function warehouse(array $data): Warehouse
+    {
+        return Warehouse::firstOrCreate(['warehouse_name' => $data['warehouse_name']], $data);
+    }
+
+    private function category(array $data): Category
+    {
+        return Category::firstOrCreate(['category_name' => $data['category_name'], 'parent_id' => $data['parent_id'] ?? null], $data);
     }
 }

@@ -15,10 +15,12 @@ class InventoryMovementController extends Controller
         $listing = new \App\Queries\MovementListing($request);
         $filters = $listing->filters;
         $summary = $listing->query()->reorder()->selectRaw("type, SUM(quantity) as total")->groupBy('type')->pluck('total', 'type');
+        $context = \App\Support\MovementListContext::encode($filters + ['page' => $request->integer('page', 1)]);
         return view('movements.index', [
             'movements' => $listing->query()->paginate($filters['per_page'])->withQueryString(),
             'filters' => $filters, 'filterLabels' => $listing->labels(),
-            'createUrl' => route('movements.create', ['context' => \App\Support\MovementListContext::encode($filters + ['page' => $request->integer('page', 1)])]),
+            'listContext' => $context,
+            'createUrl' => route('movements.create', ['context' => $context]),
             'sortOptions' => \App\Queries\MovementListing::SORTS,
             'products' => Product::orderBy('product_name')->get(),
             'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
@@ -34,7 +36,16 @@ class InventoryMovementController extends Controller
         $context = $request->old('context', $request->query('context', ''));
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
         $returnUrl = \App\Support\MovementListContext::url($context);
-        return view('movements.create', compact('products', 'warehouses', 'context', 'returnUrl'));
+        $requestKey = $request->old('request_key');
+        if (!is_string($requestKey) || !\Illuminate\Support\Str::isUuid($requestKey)) $requestKey = (string) \Illuminate\Support\Str::uuid();
+        return view('movements.create', compact('products', 'warehouses', 'context', 'returnUrl', 'requestKey'));
+    }
+
+    public function show(Request $request, InventoryMovement $movement)
+    {
+        $movement->load(['product', 'warehouse', 'user']);
+        $returnUrl = \App\Support\MovementListContext::url($request->query('context'));
+        return view('movements.show', compact('movement', 'returnUrl'));
     }
 
     public function stock(Request $request)
@@ -51,6 +62,7 @@ class InventoryMovementController extends Controller
     public function store(Request $request, InventoryService $inventory)
     {
         $validated = $request->validate([
+            'request_key' => 'required|uuid',
             'product_id' => 'required|exists:products,product_id',
             'warehouse_id' => 'required|exists:warehouses,warehouse_id',
             'type' => 'required|in:in,out',
@@ -62,8 +74,10 @@ class InventoryMovementController extends Controller
         $validated['user_id'] = auth()->id();
 
         // A készletváltozás és a naplóbejegyzés egyetlen tranzakció.
-        $inventory->recordMovement($validated);
+        $requestKey = $validated['request_key'];
+        unset($validated['request_key']);
+        $movement = $inventory->recordMovement($validated, $requestKey);
 
-        return redirect()->to(\App\Support\MovementListContext::url($request->input('context')))->with('success', 'Mozgás sikeresen rögzítve!');
+        return redirect()->to(\App\Support\MovementListContext::url($request->input('context')))->with('success', 'Mozgás rögzítve: '.$movement->movement_number.'.');
     }
 }

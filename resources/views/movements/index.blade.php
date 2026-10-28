@@ -83,7 +83,8 @@
                             <tr class="hover:bg-indigo-50/30">
                                 <td class="px-4 py-3 whitespace-nowrap">{{ $movement->created_at->format('Y.m.d H:i') }}</td>
                                 <td class="px-4 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span></td>
-                                <td class="px-4 py-3 min-w-[180px]"><div class="font-semibold text-gray-900">{{ $movement->product->product_name }}</div><div class="text-xs font-mono text-gray-500">{{ $movement->product->sku }}</div></td>
+                                <td class="px-4 py-3 min-w-[180px]"><a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="block font-semibold text-gray-900 hover:text-indigo-600 hover:underline">{{ $movement->product->product_name }}</a>
+                                    <a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="text-xs font-mono text-indigo-600 hover:underline">{{ $movement->movement_number }}</a><div class="text-xs font-mono text-gray-500">{{ $movement->product->sku }}</div></td>
                                 <td class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
                                 <td class="px-4 py-3">{{ $movement->user->name }}</td>

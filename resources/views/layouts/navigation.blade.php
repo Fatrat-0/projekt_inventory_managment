@@ -26,7 +26,7 @@
                 <!-- Navigation Links -->
                 <div class="hidden xl:flex gap-5 -my-px ms-6">
                     @foreach($navigationItems as [$route, $label, $active])
-                        <x-nav-link :href="route($route)" :active="request()->routeIs($active)">{{ $label }}</x-nav-link>
+                        <x-nav-link :href="route($route)" :active="request()->routeIs($active) || ($route === 'transfers.index' && request()->routeIs('shipments.*'))">{{ $label }}</x-nav-link>
                     @endforeach
                 </div>
             </div>
@@ -81,7 +81,7 @@
     <div :class="{'block': open, 'hidden': ! open}" class="hidden xl:hidden">
         <div class="pt-2 pb-3 space-y-1">
             @foreach($navigationItems as [$route, $label, $active])
-                <x-responsive-nav-link :href="route($route)" :active="request()->routeIs($active)">{{ $label }}</x-responsive-nav-link>
+                <x-responsive-nav-link :href="route($route)" :active="request()->routeIs($active) || ($route === 'transfers.index' && request()->routeIs('shipments.*'))">{{ $label }}</x-responsive-nav-link>
             @endforeach
         </div>
 

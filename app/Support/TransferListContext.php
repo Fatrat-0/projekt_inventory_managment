@@ -14,7 +14,7 @@ class TransferListContext
         if (is_string($token) && strlen($token) <= 4096) {
             try {
                 $data = json_decode(Crypt::decryptString($token), true);
-                if (is_array($data)) foreach (['search', 'status', 'product_id', 'from_warehouse_id', 'to_warehouse_id', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
+                if (is_array($data)) foreach (['search', 'status', 'product_id', 'from_warehouse_id', 'to_warehouse_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
                     if (isset($data[$key]) && is_scalar($data[$key])) $filters[$key] = $data[$key];
                 }
             } catch (DecryptException $e) {}

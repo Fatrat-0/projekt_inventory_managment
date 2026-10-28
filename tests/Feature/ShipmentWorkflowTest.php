@@ -196,6 +196,17 @@ class ShipmentWorkflowTest extends TestCase
         $this->assertLessThan(strpos($html, '2. felrakodás · Cél A'), strpos($html, '1. felrakodás · Cél B'));
         $response = $this->get(route('shipments.pdf', $s))->assertOk()->assertHeader('content-type', 'application/pdf');
         $this->assertStringStartsWith('%PDF-', $response->getContent());
+        $this->assertStringStartsWith('attachment;', $response->headers->get('content-disposition'));
+        $stocks = Stock::orderBy('id')->get()->toArray();
+        $preview = $this->get(route('shipments.pdf', ['shipment'=>$s,'preview'=>1]))->assertOk()->assertHeader('content-type','application/pdf');
+        $this->assertStringStartsWith('inline;', $preview->headers->get('content-disposition'));
+        $this->assertStringStartsWith('%PDF-', $preview->getContent());
+        $this->assertSame($stocks, Stock::orderBy('id')->get()->toArray());
+    }
+    public function test_invalid_pdf_preview_parameter_is_rejected(): void
+    {
+        $s=$this->draft();
+        foreach (['bad', ['bad']] as $preview) $this->getJson(route('shipments.pdf',['shipment'=>$s,'preview'=>$preview]))->assertUnprocessable()->assertJsonValidationErrors('preview');
     }
     public function test_guest_and_unsupported_role_cannot_access_shipment_actions(): void
     {
@@ -205,6 +216,7 @@ class ShipmentWorkflowTest extends TestCase
             $status = $role ? 403 : 401;
             $this->getJson(route('shipments.show', $s))->assertStatus($status);
             $this->getJson(route('shipments.pdf', $s))->assertStatus($status);
+            $this->getJson(route('shipments.pdf', ['shipment'=>$s,'preview'=>1]))->assertStatus($status);
             $this->postJson(route('shipments.start', $s), ['version' => 1])->assertStatus($status);
             $this->patchJson(route('shipments.receive', [$s, $stop]))->assertStatus($status);
             $this->patchJson(route('shipments.cancel', $s))->assertStatus($status);

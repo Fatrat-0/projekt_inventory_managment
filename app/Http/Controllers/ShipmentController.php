@@ -7,25 +7,26 @@ use App\Models\{Product, Shipment, ShipmentStop, Warehouse};
 use App\Services\ShipmentService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
+use App\Queries\ShipmentListing;
+use App\Support\{ListingDates, ShipmentListContext};
 
 class ShipmentController extends Controller
 {
     public function index(Request $request)
     {
-        $filters = $request->validate(['search' => 'nullable|string|max:200', 'status' => ['nullable', Rule::in(array_keys(Shipment::STATUSES))], 'page' => 'nullable|integer|min:1']);
-        $query = Shipment::with(['origin', 'stops.warehouse'])->withCount('stops');
-        if ($filters['status'] ?? null) $query->where('status', $filters['status']);
-        foreach (preg_split('/\s+/u', trim($filters['search'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) as $word) {
-            $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $word).'%';
-            $query->where(fn($q) => $q->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])->orWhereRaw("vehicle_label LIKE ? ESCAPE '!'", [$pattern])
-                ->orWhereHas('origin', fn($w) => $w->whereRaw("warehouse_name LIKE ? ESCAPE '!'", [$pattern])));
-        }
-        return view('shipments.index', ['shipments' => $query->latest('id')->paginate(15)->withQueryString(), 'filters' => $filters]);
+        $listing = new ShipmentListing($request);
+        $filters = $listing->filters;
+        return view('shipments.index', [
+            'shipments' => $listing->query()->paginate($filters['per_page'])->withQueryString(), 'filters' => $filters,
+            'labels' => $listing->labels(), 'datePresets' => ListingDates::presets('shipments.index', $filters),
+            'context' => ShipmentListContext::encode($filters + ['page' => $request->integer('page', 1)]),
+            'statusCounts' => $listing->query(true)->reorder()->toBase()->select('shipments.status')->selectRaw('COUNT(*) as total')->groupBy('shipments.status')->pluck('total', 'status')->all(),
+            'products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
+        ]);
     }
-    public function create() { return $this->form(); }
-    public function edit(Shipment $shipment) { abort_unless($shipment->status === 'draft', 409, 'Csak tervezet szerkeszthető.'); return $this->form($shipment); }
-    private function form(?Shipment $shipment = null)
+    public function create(Request $request) { return $this->form($request); }
+    public function edit(Request $request, Shipment $shipment) { abort_unless($shipment->status === 'draft', 409, 'Csak tervezet szerkeszthető.'); return $this->form($request, $shipment); }
+    private function form(Request $request, ?Shipment $shipment = null)
     {
         $shipment?->load('stops.items');
         $defaults = $shipment?->stops->map(fn($stop) => ['warehouse_id' => $stop->warehouse_id,
@@ -44,43 +45,56 @@ class ShipmentController extends Controller
         }, $stops) ?: $defaults;
         $values = [];
         foreach (['reference', 'vehicle_label', 'note', 'origin_warehouse_id', 'version'] as $key) $values[$key] = $scalar(old($key, $shipment?->$key ?? ''));
+        $context = ShipmentListContext::token(old('context', $request->query('context', '')));
+        $returnUrl = $shipment ? route('shipments.show', ['shipment' => $shipment] + ($context !== '' ? ['context' => $context] : [])) : ShipmentListContext::url($context);
         return view('shipments.form', ['shipment' => $shipment, 'values' => $values, 'stops' => $stops,
+            'context' => $context, 'returnUrl' => $returnUrl,
             'products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get()]);
     }
     public function store(ShipmentRequest $request, ShipmentService $service)
     {
         $shipment = $service->save($request->validated(), $request->user()->id);
-        return redirect()->route('shipments.show', $shipment)->with('success', 'A tervezet elkészült. A készlet még nem változott.');
+        return $this->redirectToShow($request, $shipment)->with('success', 'A tervezet elkészült. A készlet még nem változott.');
     }
     public function update(ShipmentRequest $request, Shipment $shipment, ShipmentService $service)
     {
         $service->save($request->validated(), $request->user()->id, $shipment);
-        return redirect()->route('shipments.show', $shipment)->with('success', 'A rakodási terv frissült.');
+        return $this->redirectToShow($request, $shipment)->with('success', 'A rakodási terv frissült.');
     }
-    public function show(Shipment $shipment)
+    public function show(Request $request, Shipment $shipment)
     {
-        $shipment->load(['origin', 'user', 'stops.warehouse', 'stops.receiver', 'stops.items.product', 'stops.items.transfer']);
-        return view('shipments.show', compact('shipment'));
+        $shipment->load(['origin', 'user', 'stops.warehouse', 'stops.receiver', 'stops.items.product']);
+        $context = ShipmentListContext::token($request->query('context', ''));
+        $returnUrl = ShipmentListContext::url($context);
+        return view('shipments.show', compact('shipment', 'context', 'returnUrl'));
     }
     public function start(Request $request, Shipment $shipment, ShipmentService $service)
     {
         $data = $request->validate(['version' => 'required|integer|min:1']);
         $service->start($shipment, $request->user()->id, (int)$data['version']);
-        return redirect()->route('shipments.show', $shipment)->with('success', 'A szállítmány úton van. A forráskészlet levonása megtörtént.');
+        return $this->redirectToShow($request, $shipment)->with('success', 'A szállítmány úton van. A forráskészlet levonása megtörtént.');
     }
     public function receive(Request $request, Shipment $shipment, ShipmentStop $stop, ShipmentService $service)
     {
         $service->receive($shipment, $stop, $request->user()->id);
-        return redirect()->route('shipments.show', $shipment)->with('success', 'A megálló átvétele rögzítve.');
+        return $this->redirectToShow($request, $shipment)->with('success', 'A megálló átvétele rögzítve.');
     }
-    public function cancel(Shipment $shipment, ShipmentService $service)
+    public function cancel(Request $request, Shipment $shipment, ShipmentService $service)
     {
         $service->cancel($shipment);
-        return redirect()->route('shipments.show', $shipment)->with('success', 'A szállítmány visszavonva. A még át nem vett tételek visszakerültek a forrásraktárba.');
+        return $this->redirectToShow($request, $shipment)->with('success', 'A szállítmány visszavonva. A még át nem vett tételek visszakerültek a forrásraktárba.');
     }
-    public function pdf(Shipment $shipment)
+    public function pdf(Request $request, Shipment $shipment)
     {
+        $options = \App\Support\LoadingPlanPdfOptions::fromRequest($request);
         $shipment->load(['origin', 'stops.warehouse', 'stops.items.product']);
-        return Pdf::loadView('pdf.loading-plan', compact('shipment'))->setPaper('a4', 'portrait')->download($shipment->shipment_number.'-rakodasi-terv.pdf');
+        $pdf = Pdf::loadView('pdf.loading-plan', compact('shipment', 'options'))->setPaper('a4', $options['orientation']);
+        $filename = $shipment->shipment_number.'-rakodasi-terv.pdf';
+        return $request->boolean('preview') ? $pdf->stream($filename) : $pdf->download($filename);
+    }
+    private function redirectToShow(Request $request, Shipment $shipment)
+    {
+        $context = ShipmentListContext::token($request->input('context', ''));
+        return redirect()->route('shipments.show', ['shipment' => $shipment] + ($context !== '' ? ['context' => $context] : []));
     }
 }

@@ -20,6 +20,8 @@ class InventoryTransferController extends Controller
             'transfers' => $listing->query()->paginate($filters['per_page'])->withQueryString(),
             'pendingQuantity' => (int)$listing->query()->reorder()->where('status', 'pending')->sum('quantity'),
             'filters' => $filters, 'labels' => $listing->labels(), 'context' => $context,
+            'datePresets' => \App\Support\ListingDates::presets('transfers.index', $filters),
+            'statusCounts' => $listing->query(true)->reorder()->toBase()->select('inventory_transfers.status')->selectRaw('COUNT(*) as total')->groupBy('inventory_transfers.status')->pluck('total', 'status')->all(),
             'products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
         ]);
     }

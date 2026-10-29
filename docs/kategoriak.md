@@ -6,6 +6,16 @@ Fő- és alkategóriákra lehet szűrni. Asztalon az oszlopfejléc, mobilon a re
 
 A teljes kategóriaútvonal látható a listában és a szülőválasztóban. A Termékek az ágban menüpont a meglévő terméklista kategóriaszűrőjét nyitja, amely a teljes leszármazotti ágat tartalmazza. A listában jelzett termék- és alkategóriaszám ezzel szemben kizárólag a közvetlen kapcsolatok darabszáma.
 
+## Kereshető szülő és termékgyorsgomb
+
+A létrehozó/szerkesztő űrlap szülőmezője a közös autocomplete-választót használja. Több szóval és ékezetek nélkül is kereshető a teljes kategóriaútvonal; a végén az ID segít azonos nevű kategóriák megkülönböztetésében. A kurzorbillentyűkkel és Enterrel, illetve egérrel is választható találat. A pusztán begépelt, ki nem választott szöveg nem érvényes szülő. A törlőgomb kiüríti a választást, így a kategória főkategória lesz. Üres, opcionális mezőben az Enter nem választja ki önkényesen az első találatot.
+
+Önmaga, a teljes saját ág és minden már körkörös ősláncú kategória hiányzik a szülőjavaslatokból. A szerveroldali ellenőrzés változatlanul érvényes. Ha egy kiválasztott szülőt közben töröltek, az űrlaphiba után a választó figyelmeztet és nem enged automatikusan üres szülővel menteni: másik találatot kell választani vagy kifejezetten törölni a mezőt. Hibajavítás után az érvényes korábbi választás és a listakontextus megmarad.
+
+A szerkesztőlapon a Termékek az ágban gyorsgomb a mentett kategória és minden leszármazott termékeinek számát mutatja. Készletsor nélküli, nulla és pozitív készletű termékek egyaránt beleszámítanak, minden termék egyszer. A szám a teljes ágra vonatkozik, nem csak a terméklista első oldalára. A gyorsgomb név szerint rendezett, kizárólag az ágra szűrt terméklistát nyit; a számláló és a terméklista közös kategóriabejárást használ. Üres ágnál is működő, nullás hivatkozás jelenik meg. Az űrlap még nem mentett módosításai nem részei a számlálónak. Új kategóriánál nincs ilyen gyorsgomb.
+
+A szövegbevitel közbeni kompozíciós Enter (`isComposing`, illetve a régebbi 229-es billentyűkód) nem választ ki találatot. A normál Enter továbbra is kiválasztja a kijelölt találatot. Erre külön böngésző-regressziós teszt készült.
+
 ## Hierarchia és törlés
 
 A saját kategória és összes leszármazottja nem választható szülőnek. A szerver ezt közvetlen PUT-kérésnél is ellenőrzi, tranzakción belül: a hierarchia aktuális sorait azonosítósorrendben zárolja, majd ellenőrzi és menti a módosítást. A szülő teljes ősláncát végigjárja: már korábban létrejött körkörös ághoz sem lehet új vagy meglévő kategóriát kapcsolni. A hibás kapcsolat megszüntetése továbbra is megengedett. A kategória létrehozása és törlése ugyanezt a zárolási sorrendet használja. Ez az alkalmazás kezelővégpontjainak védelme, nem adatbázis-szintű körtiltó constraint. A megjelenítési segéd egy korábban keletkezett körnél is véges bejárást használ.
@@ -22,6 +32,7 @@ Létrehozás, mentés és megszakítás megőrzi a lista szűrését, rendezés�
 
 ```powershell
 php artisan test --filter=CategoryManagementTest
+php artisan test --filter=CategoryQuickAccessTest
 npm run test:browser -- categories.spec.js
 ```
 

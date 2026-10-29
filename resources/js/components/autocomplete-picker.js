@@ -4,7 +4,10 @@ export default (initial) => ({
     init() {
         const selected = this.items.find(item => String(item.value) === this.value);
         this.query = selected?.label ?? '';
-        if (!selected) this.value = '';
+        if (!selected) {
+            if (this.value && initial.invalidValueLabel) this.query = initial.invalidValueLabel;
+            this.value = '';
+        }
         this.$nextTick(() => this.syncValidity());
     },
     normalize(text) {
@@ -50,7 +53,12 @@ export default (initial) => ({
         this.$nextTick(() => this.$refs.list.children[this.active]?.scrollIntoView({ block: 'nearest' }));
     },
     enter(event) {
+        if (event.isComposing || event.keyCode === 229) return;
         if (!this.open) return;
+        if (!this.required && !this.query.trim() && this.active < 0) {
+            this.open = false;
+            return;
+        }
         event.preventDefault();
         const item = this.results[this.active < 0 ? 0 : this.active];
         if (item) this.choose(item);

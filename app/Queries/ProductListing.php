@@ -66,15 +66,7 @@ class ProductListing
 
     private function descendantIds(int $id): array
     {
-        $ids = [$id];
-        for ($i = 0; $i < count($ids); $i++) {
-            foreach ($this->categories->where('parent_id', $ids[$i]) as $child) {
-                if (!in_array($child->category_id, $ids, true)) {
-                    $ids[] = $child->category_id;
-                }
-            }
-        }
-        return $ids;
+        return (new \App\Support\CategoryTree($this->categories))->branchIds($id);
     }
 
     public function query(): Builder

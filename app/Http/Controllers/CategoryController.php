@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\CategoryRequest;
-use App\Models\Category;
+use App\Models\{Category, Product};
 use App\Queries\CategoryListing;
 use App\Support\{CategoryListContext, CategoryTree};
 use Illuminate\Database\QueryException;
@@ -39,10 +39,12 @@ class CategoryController extends Controller
     {
         $categories = Category::orderBy('category_name')->orderBy('category_id')->get();
         $tree = new CategoryTree($categories);
-        if ($category) $categories = $categories->whereNotIn('category_id', $tree->branchIds($category->category_id));
+        $branchProductCount = $category ? Product::whereIn('category_id', $tree->branchIds($category->category_id))->count() : null;
+        $categories = $categories->reject(fn ($candidate) => $tree->wouldCreateCycle($category?->category_id, $candidate->category_id));
+        $parentItems = $categories->map(fn ($candidate) => ['value' => (string) $candidate->category_id, 'label' => $tree->path($candidate->category_id).' · #'.$candidate->category_id])->values();
         $context = CategoryListContext::token(old('context', $request->query('context', '')));
         $returnUrl = CategoryListContext::url($context);
-        return view('categories.form', compact('category', 'categories', 'tree', 'context', 'returnUrl'));
+        return view('categories.form', compact('category', 'categories', 'parentItems', 'branchProductCount', 'context', 'returnUrl'));
     }
 
     public function store(CategoryRequest $request) { return $this->save($request); }

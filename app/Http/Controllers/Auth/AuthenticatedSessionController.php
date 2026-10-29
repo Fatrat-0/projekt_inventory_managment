@@ -6,17 +6,18 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\View\View;
 
 class AuthenticatedSessionController extends Controller
 {
     /**
      * Display the login view.
      */
-    public function create(): View
+    public function create(): Response
     {
-        return view('auth.login');
+        return response()->view('auth.login')
+            ->header('Cache-Control', 'no-store, private, max-age=0');
     }
 
     /**

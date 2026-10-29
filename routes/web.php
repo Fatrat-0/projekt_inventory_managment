@@ -53,6 +53,7 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager'])->group(function () {
         Route::resource('categories', CategoryController::class);
         Route::resource('warehouses', WarehouseController::class);
+        Route::get('/warehouses/{warehouse}/inventory.pdf', [ExportController::class, 'warehouseInventoryPdf'])->name('warehouses.inventory-pdf');
         Route::resource('users', UserController::class)->except(['show', 'edit', 'update']);
     });
 

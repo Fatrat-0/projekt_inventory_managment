@@ -43,4 +43,18 @@ class WarehouseStockListing
         $sort = $f['sort_by'] === 'quantity' ? 'stocks.quantity' : Product::select($f['sort_by'])->whereColumn('products.product_id', 'stocks.product_id');
         return $query->orderBy($sort, $f['sort_dir'])->orderBy('stocks.id');
     }
+
+    public function filterInfo(bool $includeStock = true, bool $includeSku = true): array
+    {
+        $f = $this->filters;
+        $info = [];
+        if ($f['search'] !== '') $info[] = 'Keresés: '.$f['search'];
+        if ($f['product_id'] !== '') {
+            $product = Product::findOrFail($f['product_id']);
+            $info[] = 'Termék: '.$product->product_name.($includeSku ? ' ('.$product->sku.')' : '');
+        }
+        if ($includeStock) $info[] = 'Készletsorok: '.['positive' => 'pozitív készlet', 'zero' => 'nulla készlet', 'all' => 'összes helyi készletsor'][$f['stock']];
+        $info[] = 'Rendezés: '.self::SORTS[$f['sort_by']].' ('.($f['sort_dir'] === 'asc' ? 'növekvő' : 'csökkenő').')';
+        return $info;
+    }
 }

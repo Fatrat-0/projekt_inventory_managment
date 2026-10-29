@@ -290,3 +290,43 @@ test('an open warehouse menu closes when switching between desktop rows and mobi
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(page.getByRole('menu')).toHaveCount(0);
 });
+
+for (const mobile of [false, true]) {
+    test(`warehouse stock count opens matching products and browser Back restores the list (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+        await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 });
+        await page.goto('/warehouses?search=Teszt%20Test&stock=stocked&per_page=25&sort_by=location&sort_dir=desc');
+        const originalUrl = page.url();
+        const warehouse = page.locator(`${mobile ? 'article' : 'tr'}[data-warehouse-id="1"]`);
+        const link = warehouse.getByRole('link', { name: /készleten lévő termékfajta megtekintése$/ });
+        const expectedCount = Number((await link.innerText()).replace(/\s/g, ''));
+        expect(expectedCount).toBeGreaterThan(0);
+        await page.screenshot({ path: `tests/Browser/.runtime/warehouse-stock-link-${mobile ? 'mobile' : 'desktop'}.png` });
+        await link.focus();
+        await link.press('Enter');
+        await expect(page).toHaveURL(url => url.pathname === '/products' && url.searchParams.get('warehouse_id') === '1');
+        const params = new URL(page.url()).searchParams;
+        expect(params.get('sort_by')).toBe('product_name');
+        expect(params.get('sort_dir')).toBe('asc');
+        for (const key of ['search', 'stock', 'stock_status', 'page', 'per_page', 'category_id']) expect(params.has(key)).toBe(false);
+        await expect(page.locator('select[name="warehouse_id"]')).toHaveValue('1');
+        await expect(page.locator('tbody tr')).toHaveCount(expectedCount);
+        await page.goBack();
+        await expect(page).toHaveURL(originalUrl);
+        await expect(page.getByLabel('Készlet', { exact: true })).toHaveValue('stocked');
+        await expect(page.getByLabel('Találatok oldalanként', { exact: true })).toHaveValue('25');
+        await expect(link).toHaveText(String(expectedCount));
+    });
+}
+
+test('a zero warehouse stock count opens an empty product list without showing other warehouses stock', async ({ page }) => {
+    await page.goto('/warehouses');
+    await createWarehouse(page, 'Gyorslink-ures');
+    await page.goto('/warehouses?search=Gyorslink-ures');
+    const link = page.getByRole('link', { name: 'Gyorslink-ures: 0 készleten lévő termékfajta megtekintése', exact: true });
+    await expect(link).toHaveText('0');
+    const warehouseId = new URL(await link.getAttribute('href')).searchParams.get('warehouse_id');
+    await link.click();
+    await expect(page).toHaveURL(url => url.pathname === '/products' && url.searchParams.get('warehouse_id') === warehouseId);
+    await expect(page.locator('tbody').getByText(/Nincs a szűrési feltételeknek megfelelő termék\./)).toBeVisible();
+    await expect(page.locator('select[name="warehouse_id"]')).toHaveValue(warehouseId);
+});

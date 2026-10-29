@@ -10,12 +10,19 @@ export default (initial) => ({
         const words = this.normalize(this.query).trim().split(/\s+/).filter(Boolean);
         if (!words.length) return [];
         return this.items.filter(item => {
-            const text = this.normalize(item.name + ' ' + item.sku);
+            const text = this.normalize(item.name + ' ' + item.detail);
             return words.every(word => text.includes(word));
         });
     },
     get results() { return this.matches.slice(0, 8); },
-    edit() { this.active = -1; this.open = this.query.trim() !== ''; },
+    edit(changed = false) {
+        if (changed && initial.clearFilterOnEdit) {
+            const field = this.$refs.input.form.elements.namedItem(initial.filterName);
+            if (field) field.value = '';
+        }
+        this.active = -1;
+        this.open = this.query.trim() !== '';
+    },
     move(direction) {
         if (!this.results.length) return;
         this.open = true;
@@ -36,11 +43,11 @@ export default (initial) => ({
     choose(item) {
         if (!item) return;
         // Read current form fields, including controls associated by the form attribute.
-        // Selecting a suggestion replaces both the free text and any previous product filter.
+        // Selecting a suggestion replaces the free text and the previous exact filter.
         const form = this.$refs.input.form;
         const url = new URL(form.action);
         for (const [key, value] of new FormData(form)) url.searchParams.set(key, value);
-        url.searchParams.set('product_id', item.value);
+        url.searchParams.set(initial.filterName, item.value);
         url.searchParams.delete('search');
         url.searchParams.delete('page');
         this.open = false;

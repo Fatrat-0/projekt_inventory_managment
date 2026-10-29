@@ -17,6 +17,7 @@ if (DB::connection()->getDriverName() !== 'sqlite' || realpath(DB::connection()-
 }
 Artisan::call('migrate:fresh', ['--force' => true]);
 $user = User::factory()->create(['email' => 'browser@example.test', 'password' => Hash::make('browser-test-password'), 'role' => 'worker']);
+User::factory()->create(['email' => 'warehouse-admin@example.test', 'password' => Hash::make('browser-test-password'), 'role' => 'admin']);
 $category = Category::create(['category_name' => 'Browser']);
 $a = Product::create(['category_id' => $category->category_id, 'product_name' => 'Alpha teszttermék', 'sku' => 'ALPHA-001', 'price' => 100]);
 $b = Product::create(['category_id' => $category->category_id, 'product_name' => 'Zeta teszttermék', 'sku' => 'ZETA-002', 'price' => 100]);

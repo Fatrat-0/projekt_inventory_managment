@@ -3,9 +3,10 @@ import './bootstrap';
 import Alpine from 'alpinejs';
 import movementForm from './components/movement-form';
 import autocompletePicker from './components/autocomplete-picker';
-import movementSearch from './components/movement-search';
+import listingSearch from './components/listing-search';
 import shipmentBuilder from './components/shipment-builder';
 import pdfPreview from './components/pdf-preview';
+import rowActions from './components/row-actions';
 
 window.Alpine = Alpine;
 
@@ -36,8 +37,9 @@ Alpine.data('productListing', () => ({
 
 Alpine.data('movementForm', movementForm);
 Alpine.data('autocompletePicker', autocompletePicker);
-Alpine.data('movementSearch', movementSearch);
+Alpine.data('listingSearch', listingSearch);
 Alpine.data('shipmentBuilder', shipmentBuilder);
 Alpine.data('pdfPreview', pdfPreview);
+Alpine.data('rowActions', rowActions);
 
 Alpine.start();

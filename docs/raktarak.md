@@ -12,7 +12,21 @@ A termékfajták száma asztali és mobilnézetben is gyorslink a raktárra szű
 
 A kereső legfeljebb 8 raktárnevet és címet ajánl fel, több szóra és ékezetektől függetlenül. A javaslatok a többi listával közös `listingSearch` komponenst használják. Kattintás vagy kijelölt találaton Enter pontos `warehouse_id` szűrést alkalmaz, a szöveges keresést és lapozást törli, a többi mező aktuális értékét megtartja. Kijelölés nélkül az Enter szöveges keresést indít; Escape és Tab bezárja a listát. Új szöveg beírása törli a korábbi pontos raktárszűrést. A kiválasztott raktár külön eltávolítható szűrőként jelenik meg, és a visszatérési kontextusban is megmarad.
 
-A műveleti oszlop egyetlen hárompontos gombot tartalmaz. A menüben Szerkesztés, Termékek, Mozgások és Törlés érhető el; a raktár neve közvetlenül a szerkesztést nyitja. A menü natív automatikus popoverként a táblázat görgethető kerete fölött jelenik meg, a rendelkezésre álló hely alapján föl- vagy lefelé nyílik. Nyílbillentyűk, Home/End, Escape és Tab kezelése biztosított; kívülre kattintva bezárul. A törlés megerősítést kér. A tiltott törlés letiltott menüpontként, magyarázattal jelenik meg.
+A műveleti oszlop egyetlen hárompontos gombot tartalmaz. A menüben Szerkesztés, Termékek, Mozgások és Törlés érhető el; a raktár neve az adatlapot nyitja. A menü natív automatikus popoverként a táblázat görgethető kerete fölött jelenik meg, a rendelkezésre álló hely alapján föl- vagy lefelé nyílik. Nyílbillentyűk, Home/End, Escape és Tab kezelése biztosított; kívülre kattintva bezárul. A törlés megerősítést kér. A tiltott törlés letiltott menüpontként, magyarázattal jelenik meg.
+
+## Raktáradatlap és helyi készlet
+
+A raktáradatlap a raktártörzzsel azonos admin/manager jogosultságot használja. A helyi készlet és a pozitív készletű termékfajták száma mellett külön szerepelnek a pending állapotú beérkező és kimenő átmozgatások. Az összesítők a teljes raktárra vonatkoznak, a helyi terméklista szűrésétől függetlenül. A kimenő úton lévő áru már levonódott a forrás készletéből: itt nem vonjuk le még egyszer. A beérkező csak átvételkor kerül a helyi készletbe. Lezárt, visszavont vagy csak tervezett szállítmány nem számít úton lévő tételnek.
+
+A terméklista kizárólag a megnyitott raktár készletsorait mutatja, alapértelmezetten pozitív mennyiséggel. Nulla vagy minden helyi készletsor is választható; készletsor nélkül a termék nem kerül a listába. A keresés terméknévre és SKU-ra, több szóval, literális speciális karakterekkel működik. A javaslatok csak a raktárhoz tartozó termékekből készülnek. A pontos termékszűrő sem választhat másik raktár kizárólagos termékét. A route-ban szereplő raktárt queryparaméter nem írhatja felül.
+
+A készlet- és lapméretválasztó automatikusan frissít. Asztalon a helyi készletlista Termék, Cikkszám és Helyi készlet oszlopfejlécei rendeznek, ismételt kattintással irányt váltva. Az aktív rendezést nyíl és aria-sort jelzi. A kattintás a keresőben még be nem küldött szöveget és a többi aktuális szűrőt is megtartja, a lapozást az első oldalra állítja. Mobilon a termékkártyákhoz rendezés- és irányválasztó marad. A lista 15/25/50/100 sorral lapozható. A készletszűrők törlése megőrzi a rendezést és lapméretet. Minden terméknél az adott termékre és raktárra szűrt mozgásnapló nyitható meg.
+
+A beérkező/kimenő előnézet a legutóbbi öt tételt mutatja, a teljes mennyiségek és tételszámok korlátozás nélkül számolódnak. Az Összes hivatkozás a megfelelő pending átmozgatáslistát nyitja. Szállítmányhoz kapcsolt tétel a szállítmány adatlapjára vezet, ahol a megálló teljes átvétele végezhető el. Az adatlap a legutóbbi hat helyi készletmozgást is megmutatja, teljes naplóhivatkozással.
+
+Az adatlap megnyitása nem változtat készletet vagy bizonylatot. A raktárlista kontextusa a részleteken keresztül megmarad. Az adatlapról indított szerkesztés és annak megszakítása/mentése a helyi készlet szűrését és lapozását is megőrzi külön, titkosított és whitelistes kontextusban. Hibás készletszűrés HTML-ben érthető hibaüzenettel visszaáll az alapnézetre, JSON-ban mezőszintű 422-t ad. Az adatlaphoz nem szükséges új migráció vagy seeder.
+
+Ha a kért helyi készletoldal már nem létezik (például közben csökkent a találatok száma), az adatlap az utolsó érvényes oldalra irányít, a szűrés, rendezés, lapméret és raktárlista-kontextus megtartásával. Nulla találatnál az első oldal az érvényes üres nézet.
 
 ## Létrehozás és szerkesztés
 

@@ -52,7 +52,7 @@ Route::middleware(['auth'])->group(function () {
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja
     Route::middleware(['role:admin,manager'])->group(function () {
         Route::resource('categories', CategoryController::class);
-        Route::resource('warehouses', WarehouseController::class);
+        Route::resource('warehouses', WarehouseController::class)->except(['show']);
         Route::resource('users', UserController::class)->except(['show', 'edit', 'update']);
     });
 

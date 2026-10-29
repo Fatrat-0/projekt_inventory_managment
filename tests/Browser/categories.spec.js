@@ -3,7 +3,10 @@ import { test, expect } from '@playwright/test';
 async function create(page, name, parent = '') {
     await page.goto('/categories/create');
     await page.getByLabel('Kategória neve', { exact: true }).fill(name);
-    if (parent) await page.getByLabel('Szülő kategória', { exact: true }).selectOption(parent);
+    if (parent) {
+        await page.getByLabel('Szülő kategória', { exact: true }).fill('#'+parent);
+        await page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true }).getByRole('option', { name: new RegExp('· #'+parent+'$') }).click();
+    }
     await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/categories');
     await page.goto('/categories?search='+encodeURIComponent(name));
@@ -50,7 +53,9 @@ test('editing excludes the entire own branch and preserves list context through 
     const menu = page.getByRole('menu', { name: 'CAT-FORM Root műveletei', exact: true });
     await expect(menu.getByRole('menuitem', { name: 'Törlés', exact: true })).toBeDisabled();
     await menu.getByRole('menuitem', { name: 'Szerkesztés', exact: true }).click();
-    for (const id of [root, child, leaf]) await expect(page.locator('select[name="parent_id"] option[value="'+id+'"]')).toHaveCount(0);
+    await page.getByLabel('Szülő kategória', { exact: true }).click();
+    for (const id of [root, child, leaf]) await expect(page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true }).getByRole('option', { name: new RegExp('· #'+id+'$') })).toHaveCount(0);
+    await page.keyboard.press('Escape');
     const minimum = page.getByLabel('Termékenkénti minimum (db)', { exact: true });
     await minimum.fill('-1');
     await page.locator('form').filter({ has: page.locator('[name="category_name"]') }).evaluate(form => form.noValidate = true);
@@ -116,7 +121,7 @@ test('restoring a cached form unlocks submit without clearing entered values', a
     await page.goto('/categories/create');
     await page.getByLabel('Kategória neve', { exact: true }).fill('CAT-RESTORED Form');
     const form = page.locator('form').filter({ has: page.locator('[name="category_name"]') });
-    const button = form.getByRole('button');
+    const button = form.locator('button[type="submit"]');
     // Simulate the frozen state restored from the browser's back/forward cache.
     await form.evaluate(el => { window.Alpine.$data(el).submitting = true; });
     await expect(button).toBeDisabled();
@@ -139,3 +144,114 @@ test('category actions close when changing between desktop and mobile layouts', 
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(page.getByRole('menu')).toHaveCount(0);
 });
+
+test('parent picker searches full paths without accents, preserves selection after errors and clears to root', async ({ page }) => {
+    const root = await create(page, 'CAT-PICK Gépek');
+    const child = await create(page, 'CAT-PICK Akkus', root);
+    await page.goto('/categories/create');
+    await page.getByLabel('Kategória neve', { exact: true }).fill('CAT-PICK Új');
+    const parent = page.getByRole('combobox', { name: 'Szülő kategória', exact: true });
+    await parent.fill('CAT-PICK gepek akkus');
+    await expect(page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true }).getByRole('option')).toHaveCount(1);
+    await parent.press('ArrowDown'); await parent.press('Enter');
+    await expect(page.locator('input[name="parent_id"]')).toHaveValue(child);
+    await expect(parent).toHaveValue('CAT-PICK Gépek / CAT-PICK Akkus · #'+child);
+    await page.getByLabel('Kategória minimum (db)', { exact: true }).fill('-1');
+    await page.locator('form').filter({ has: page.locator('[name="category_name"]') }).evaluate(form => form.noValidate = true);
+    await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(parent).toHaveValue('CAT-PICK Gépek / CAT-PICK Akkus · #'+child);
+    await expect(page.locator('input[name="parent_id"]')).toHaveValue(child);
+    await page.getByLabel('Kategória minimum (db)', { exact: true }).fill('0');
+    await parent.fill('NINCS-ILYEN-SZÜLŐ');
+    await expect(page.locator('input[name="parent_id"]')).toHaveValue('');
+    expect(await parent.evaluate(el => el.checkValidity())).toBe(false);
+    await parent.press('Tab');
+    await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
+    await expect(page).toHaveURL(/\/categories\/create$/);
+    await page.getByRole('button', { name: 'Szülő kategória törlése a mezőből', exact: true }).click();
+    await expect(parent).toHaveValue('');
+    expect(await parent.evaluate(el => el.checkValidity())).toBe(true);
+    await parent.press('Escape');
+    await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === '/categories');
+    await page.goto('/categories?search=CAT-PICK&type=root');
+    await expect(page.locator('tr[data-category-id]')).toHaveCount(2);
+});
+
+test('Enter on an empty optional parent creates a root rather than selecting the first suggestion', async ({ page }) => {
+    await page.goto('/categories/create');
+    await page.getByLabel('Kategória neve', { exact: true }).fill('CAT-ENTER Főkategória');
+    const parent = page.getByRole('combobox', { name: 'Szülő kategória', exact: true });
+    await parent.click();
+    await expect(page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true })).toBeVisible();
+    await parent.press('Enter');
+    await expect(page).toHaveURL(url => url.pathname === '/categories');
+    await page.goto('/categories?search=CAT-ENTER&type=root');
+    await expect(page.locator('tr[data-category-id]')).toHaveCount(1);
+});
+
+test('composition Enter finishes text input without choosing a parent prematurely', async ({ page }) => {
+    const id = await create(page, 'CAT-IME Szülő');
+    await page.goto('/categories/create');
+    const parent = page.getByRole('combobox', { name: 'Szülő kategória', exact: true });
+    await parent.fill('CAT-IME');
+    for (const eventData of [{ isComposing: true }, { keyCode: 229 }]) {
+        await parent.evaluate((el, data) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...data })), eventData);
+        await expect(page.locator('input[name="parent_id"]')).toHaveValue('');
+        await expect(parent).toHaveValue('CAT-IME');
+        await expect(page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true })).toBeVisible();
+    }
+    await parent.press('ArrowDown'); await parent.press('Enter');
+    await expect(page.locator('input[name="parent_id"]')).toHaveValue(id);
+});
+
+test('a parent deleted while the form is open cannot silently turn the category into a root', async ({ page }) => {
+    const id = await create(page, 'CAT-STALE Régi szülő');
+    await page.goto('/categories/create');
+    await page.getByLabel('Kategória neve', { exact: true }).fill('CAT-STALE Új kategória');
+    const parent = page.getByRole('combobox', { name: 'Szülő kategória', exact: true });
+    await parent.fill('#'+id);
+    await page.getByRole('listbox', { name: 'Szülőkategória-találatok', exact: true }).getByRole('option', { name: new RegExp('· #'+id+'$') }).click();
+    const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    const response = await page.request.delete('/categories/'+id, { headers: { 'X-CSRF-TOKEN': token, Accept: 'application/json' }, maxRedirects: 0 });
+    expect(response.status(), await response.text()).toBe(302);
+    await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(parent).toHaveValue('A korábbi szülő nem választható. Válassz másikat, vagy töröld a mezőt.');
+    expect(await parent.evaluate(el => el.checkValidity())).toBe(false);
+    await page.getByRole('button', { name: 'Szülő kategória törlése a mezőből', exact: true }).click();
+    await parent.press('Escape');
+    await page.getByRole('button', { name: 'Kategória mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === '/categories');
+});
+
+for (const mobile of [false, true]) {
+    test(`branch product quick link includes child products with no stock and preserves Back navigation (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+        const root = await create(page, 'CAT-LINK-'+mobile+' Szülő');
+        const child = await create(page, 'CAT-LINK-'+mobile+' Gyerek', root);
+        const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+        for (const [category, name] of [[root, 'CAT-LINK-'+mobile+' A termék'], [child, 'CAT-LINK-'+mobile+' B termék']]) {
+            const response = await page.request.post('/products', { headers: { 'X-CSRF-TOKEN': token, Accept: 'application/json' }, form: { category_id: category, product_name: name, sku: name.replaceAll(' ', '-'), price: '1' } });
+            expect(response.ok(), await response.text()).toBe(true);
+        }
+        await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1280, height: 800 });
+        await page.goto('/categories/'+root+'/edit');
+        const originalUrl = page.url();
+        const link = page.getByRole('link', { name: 'Termékek az ágban: 2', exact: true });
+        await expect(link).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: `tests/Browser/.runtime/category-quick-link-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
+        await link.click();
+        await expect(page).toHaveURL(url => url.pathname === '/products' && url.searchParams.get('category_id') === root);
+        expect(new URL(page.url()).searchParams.get('stock_status')).toBeNull();
+        await expect(page.locator('tbody tr')).toHaveCount(2);
+        await expect(page.locator('tbody')).toContainText('CAT-LINK-'+mobile+' A termék');
+        await expect(page.locator('tbody')).toContainText('CAT-LINK-'+mobile+' B termék');
+        await page.goBack();
+        await expect(page).toHaveURL(originalUrl);
+        await expect(link).toBeVisible();
+        await page.goto('/categories/'+child+'/edit');
+        await expect(page.getByRole('link', { name: 'Termékek az ágban: 1', exact: true })).toBeVisible();
+    });
+}

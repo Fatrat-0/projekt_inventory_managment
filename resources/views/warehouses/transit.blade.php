@@ -1,0 +1,9 @@
+@php($isIncoming = $direction === 'incoming')
+<section aria-label="{{ $isIncoming ? 'Beérkező átmozgatások' : 'Kimenő átmozgatások' }}" class="min-w-0 space-y-3 rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
+    <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="font-semibold text-gray-900">{{ $isIncoming ? 'Beérkező, úton lévő tételek' : 'Kimenő, úton lévő tételek' }}</h3><a href="{{ route('transfers.index', [($isIncoming ? 'to_warehouse_id' : 'from_warehouse_id') => $warehouse->warehouse_id, 'status' => 'pending']) }}" class="text-sm text-indigo-600 hover:underline">Összes ({{ $totals->transfer_count }})</a></div>
+    <ul class="divide-y divide-gray-100">@forelse($transfers as $transfer)
+        @php($shipment = $transfer->shipmentItem?->stop?->shipment)
+        <li class="flex items-start justify-between gap-3 py-3"><div class="min-w-0"><a href="{{ $shipment ? route('shipments.show', $shipment) : route('transfers.show', $transfer) }}" class="text-xs font-medium text-indigo-600 hover:underline">{{ $transfer->transfer_number }}@if($shipment) · {{ $shipment->shipment_number }}@endif</a><p class="break-words text-sm text-gray-900">{{ $transfer->product->product_name }}</p><p class="break-words text-xs text-gray-500">{{ $isIncoming ? 'Forrás: '.$transfer->fromWarehouse->warehouse_name : 'Cél: '.$transfer->toWarehouse->warehouse_name }}</p></div><span class="whitespace-nowrap text-sm font-semibold tabular-nums text-gray-900">{{ number_format($transfer->quantity, 0, ',', ' ') }} db</span></li>
+    @empty<li class="py-5 text-sm text-gray-500">Nincs úton lévő tétel.</li>@endforelse</ul>
+    @if($totals->transfer_count > 5)<p class="text-xs text-gray-500">A legutóbbi 5 tétel látható; az összesítő minden úton lévő tételt tartalmaz.</p>@endif
+</section>

@@ -7,10 +7,27 @@ use App\Models\Product;
 use App\Models\Category;
 use App\Models\InventoryMovement;
 use App\Models\InventoryTransfer;
+use App\Models\Warehouse;
+use App\Queries\WarehouseStockListing;
+use App\Support\WarehouseInventoryPdfOptions;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class ExportController extends Controller
 {
+    public function warehouseInventoryPdf(Request $request, Warehouse $warehouse)
+    {
+        $options = WarehouseInventoryPdfOptions::fromRequest($request);
+        $listing = new WarehouseStockListing($request, $warehouse);
+        $stocks = $listing->query()->with('product.category')->get();
+        $filterInfo = $listing->filterInfo(!$options['blind_mode'], $options['show_sku']);
+        $partial = $listing->filters['search'] !== '' || $listing->filters['product_id'] !== '' || $listing->filters['stock'] !== 'all';
+        $exportedAt = now();
+        $pdf = Pdf::loadView('pdf.warehouse-inventory', compact('warehouse', 'stocks', 'options', 'filterInfo', 'partial', 'exportedAt'))
+            ->setPaper('a4', $options['orientation']);
+        $filename = 'raktar_'.$warehouse->warehouse_id.'_leltariv_'.$exportedAt->format('Y-m-d').'.pdf';
+        return $request->boolean('preview') ? $pdf->stream($filename) : $pdf->download($filename);
+    }
+
     // 1. HIVATALOS LELTÁRÍV PDF (Szinkronizálva az intelligens szűrőkkel és rendezéssel)
     public function inventoryPdf(Request $request)
     {

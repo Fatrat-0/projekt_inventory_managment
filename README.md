@@ -46,6 +46,14 @@ A rendszer több raktár készleteinek egységes kezelését, hierarchikus kateg
 
 ---
 
+## Bejelentkezés és lejárt munkamenet
+
+A munkamenet alapértelmezésben 120 perc inaktivitás után jár le (`SESSION_LIFETIME`). A böngésző visszaállíthat korábban megnyitott űrlapot, amelynek CSRF-tokenje már nem érvényes. A bejelentkezési oldal ezért `Cache-Control: no-store` fejlécet kap.
+
+Lejárt HTML-bejelentkezési űrlap beküldésekor az alkalmazás 303-as átirányítással friss űrlapot jelenít meg, érthető üzenettel és az e-mail-cím megtartásával. A jelszót újra meg kell adni; nincs automatikus újraküldés vagy CSRF-kivétel. A JSON-kérések és más űrlapok lejárt tokenje továbbra is 419-es hibát eredményez. Amennyiben még él a munkamenetben az eredeti céloldal, sikeres bejelentkezés után oda térünk vissza.
+
+Ellenőrzés: `php artisan test --filter=ExpiredLoginTest` és `npm run test:browser -- auth-session.spec.js`. A böngészőteszt elkülönített tesztalkalmazásban, a régi HTML megtartása és a munkamenetsüti törlése útján reprodukálja a hibát.
+
 ## 🌐 Élesítés Produkciós Szerverkörnyezetben (Deployment)
 
 1. Másold át a `.env.production.example` fájlt `.env` néven az éles szerverre, és töltsd ki a produkciós adatbázis-adatokat, majd generálj alkalmazáskulcsot (`php artisan key:generate`).

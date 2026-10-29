@@ -17,6 +17,9 @@ export default (initial) => {
             return url.toString();
         },
         updateOptions() {
+            for (const [key, trigger] of Object.entries(initial.forceWhen ?? {})) {
+                if (this.options[trigger]) this.options[key] = true;
+            }
             clearTimeout(reloadTimer);
             reloadTimer = setTimeout(() => {
                 if (this.open) this.frameUrl = this.previewUrl + '#zoom=page-width';

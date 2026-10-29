@@ -28,6 +28,18 @@ Az adatlap megnyitása nem változtat készletet vagy bizonylatot. A raktárlist
 
 Ha a kért helyi készletoldal már nem létezik (például közben csökkent a találatok száma), az adatlap az utolsó érvényes oldalra irányít, a szűrés, rendezés, lapméret és raktárlista-kontextus megtartásával. Nulla találatnál az első oldal az érvényes üres nézet.
 
+## Raktári PDF-leltárív
+
+Az adatlap PDF-leltárív gombja a böngésző saját PDF-olvasójával nyit előnézetet. A testreszabó panel elrejtése ténylegesen megnöveli az előnézetet; külön lapon is megnyitható, illetve letölthető. Ugyanez a közös előnézet-komponens szolgálja ki a szállítmányok rakodólistáját.
+
+Az export kizárólag a megnyitott raktár helyi készletsorait és mennyiségeit tartalmazza, a megjelenített lista alkalmazott keresése, pontos termékszűrése, készletszűrése és rendezése szerint. Minden találat bekerül, a lapozás és lapméret nem korlátozza. Készletsor nélküli termékek és még át nem vett beérkező tételek nem jelennek meg. Más raktár készletét vagy globális mennyiséget nem összesít.
+
+Álló/fekvő A4, cikkszám, kategória, üres számolt mennyiség- és megjegyzésoszlop, szűrési részletek és aláírások állíthatók. Vakleltárban a helyi mennyiség és összegzés eltűnik, a számolt mennyiség oszlopa kötelező; a készletszűrés mennyiségre utaló leírása sem jelenik meg. A kiválasztott termékkör és rendezés megmarad: ez nyomtatási mód, nem külön hozzáférési jogosultság.
+
+A raktár, kiállítás ideje, tételszám és teljes/részleges készletsor-lista jelzés mindig szerepel. Alapértelmezésben csak pozitív készletsorok látszanak, ezért ez részleges lista; minden helyi készletsorhoz az Összes készletállapotot kell választani, további keresőszűrés nélkül. A nyomtatvány nem tartalmazza a raktárban sosem tárolt összes katalógusterméket. A leltárív kiállítása vagy kézi kitöltése nem módosít adatot. A végpont ugyanúgy csak adminisztrátor és manager számára elérhető, mint a raktáradatlap.
+
+Ellenőrzés: `php artisan test --filter=WarehouseInventoryPdfTest` és `npm run test:browser -- warehouse-pdf.spec.js`. A tesztek helyi/globális készlet elkülönítését, teljes találathalmazt, rendezést, vakleltárt, kapcsolható tartalmat, PDF-tájolást, előnézet/letöltés választást, validációt, jogosultságot és változatlan adatbázist ellenőriznek. A böngészőteszt a beágyazás címét és a kiszolgált PDF-bájtokat vizsgálja; a böngésző beépített olvasójának belső kezelőfelületét nem automatizálja.
+
 ## Létrehozás és szerkesztés
 
 A név legfeljebb 100, a cím legfeljebb 255 karakter; mindkettő kötelező szöveges adat. A szerkesztés a meglévő azonosítót és a kapcsolódó készleteket, bizonylatokat megőrzi. Hibás beküldés után a mezők értékei és mezőhivatkozásos hibák megjelennek. A felület ismételt beküldési események ellen letiltja a mentést; ez nem szerveroldali idempotenciakulcs. Azonos nevű raktárakat a jelenlegi adatmodell megenged.

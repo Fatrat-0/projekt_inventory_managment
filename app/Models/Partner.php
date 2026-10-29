@@ -9,6 +9,8 @@ class Partner extends Model
 {
     use HasFactory;
 
+    public const TYPES = ['customer' => 'Vevő', 'supplier' => 'Beszállító'];
+
     protected $fillable = [
         'name',
         'type',

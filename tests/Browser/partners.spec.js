@@ -7,6 +7,10 @@ async function create(page, name, { type = 'customer', email = '', phone = '' } 
     await page.getByLabel('E-mail', { exact: true }).fill(email);
     await page.getByLabel('Telefon', { exact: true }).fill(phone);
     await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    if (new URL(page.url()).pathname === '/partners/create') {
+        await page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true }).check();
+        await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    }
     await expect(page).toHaveURL(url => url.pathname === '/partners');
     await page.goto('/partners?search='+encodeURIComponent(name));
     let rows = page.locator('tr[data-partner-id]').filter({ has: page.getByRole('link', { name, exact: true }) });
@@ -203,4 +207,211 @@ test('maximum length unbroken names and contacts fit a narrow mobile screen', as
     await page.keyboard.press('Escape');
     await page.locator('article[data-partner-id="'+id+'"]' ).getByRole('link', { name, exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('archive cancellation, archive filtering and restoration preserve the original partner', async ({ page }) => {
+    const name = 'P-ARCHIVE Partner';
+    const id = await create(page, name, { type: 'supplier', email: 'archive@example.test', phone: '123456' });
+    await page.goto('/partners?search=P-ARCHIVE&type=supplier&per_page=25');
+    const trigger = page.getByRole('button', { name: 'Műveletek: '+name, exact: true });
+    const menu = page.getByRole('menu', { name: name+' műveletei', exact: true });
+    await trigger.click();
+    page.once('dialog', dialog => dialog.dismiss());
+    await menu.getByRole('menuitem', { name: 'Archiválás', exact: true }).click();
+    await expect(page.locator('tr[data-partner-id="'+id+'"]')).toHaveCount(1);
+    page.once('dialog', dialog => dialog.accept());
+    await menu.getByRole('menuitem', { name: 'Archiválás', exact: true }).click();
+    await expect(page).toHaveURL(url => url.searchParams.get('type') === 'supplier' && url.searchParams.get('per_page') === '25');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(0);
+    const search = page.getByRole('combobox', { name: 'Partnerek keresése', exact: true });
+    await search.fill('P-ARCHIVE');
+    await expect(page.getByRole('listbox', { name: 'Partnerjavaslatok', exact: true }).getByRole('option')).toHaveCount(0);
+    await search.press('Escape');
+    await page.getByLabel('Állapot', { exact: true }).selectOption('archived');
+    const row = page.locator('tr[data-partner-id="'+id+'"]');
+    await expect(row).toContainText('Archivált');
+    await expect(row).toContainText('archive@example.test');
+    await page.getByLabel('Állapot', { exact: true }).selectOption('all');
+    await expect(row).toBeVisible();
+    await trigger.click();
+    await menu.getByRole('menuitem', { name: 'Visszaállítás', exact: true }).click();
+    await expect(row).not.toContainText('Archivált');
+    await expect(row).toContainText('123456');
+    await expect(page.getByLabel('Állapot', { exact: true })).toHaveValue('all');
+});
+
+test('archived form can be edited and restored on mobile without losing list context', async ({ page }) => {
+    const name = 'P-ARCH-EDIT Partner';
+    const id = await create(page, name);
+    const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    const response = await page.request.patch('/partners/'+id+'/archive', { headers: { 'X-CSRF-TOKEN': token }, maxRedirects: 0 });
+    expect(response.status()).toBe(302);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/partners?search=P-ARCH-EDIT&status=archived&per_page=25');
+    await page.locator('article[data-partner-id="'+id+'"]' ).getByRole('link', { name, exact: true }).click();
+    await expect(page.getByText('Archivált partner. Az aktív partnerlistában nem jelenik meg.', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true })).not.toBeVisible();
+    await page.getByLabel('Telefon', { exact: true }).fill('987654');
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.searchParams.get('status') === 'archived' && url.searchParams.get('per_page') === '25');
+    await expect(page.locator('article[data-partner-id="'+id+'"]')).toContainText('Archivált');
+    await page.getByRole('link', { name, exact: true }).click();
+    await page.screenshot({ path: 'tests/Browser/.runtime/partner-archived-mobile.png', fullPage: true });
+    await page.getByRole('button', { name: 'Visszaállítás', exact: true }).click();
+    await expect(page.getByLabel('Állapot', { exact: true })).toHaveValue('archived');
+    await expect(page.locator('article[data-partner-id]')).toHaveCount(0);
+    await page.getByLabel('Állapot', { exact: true }).selectOption('active');
+    await expect(page.locator('article[data-partner-id="'+id+'"]')).toContainText('987654');
+});
+
+test('live duplicate warning includes archived matches and resets acknowledgement when identity fields change', async ({ page }) => {
+    const activeName = 'P-DUP-A Aktív';
+    const oldName = 'P-DUP-B Régi';
+    await create(page, activeName, { email: 'dup-active@example.test' });
+    const archived = await create(page, oldName, { email: 'dup-old@example.test' });
+    const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    await page.request.patch('/partners/'+archived+'/archive', { headers: { 'X-CSRF-TOKEN': token }, maxRedirects: 0 });
+    await page.goto('/partners/create');
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill(activeName);
+    const region = page.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+    await expect(region.getByRole('link', { name: new RegExp('^'+activeName) })).toBeVisible();
+    const acknowledged = page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true });
+    await acknowledged.check();
+    await page.getByLabel('E-mail', { exact: true }).fill('dup-old@example.test');
+    await expect(region.getByRole('link')).toHaveCount(2);
+    await expect(acknowledged).not.toBeChecked();
+    await expect(region).toContainText('Archivált');
+    await expect(region.getByRole('link').first()).toHaveAttribute('target', '_blank');
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(page).toHaveURL(/\/partners\/create$/);
+    await page.screenshot({ path: 'tests/Browser/.runtime/partner-duplicate-desktop.png', fullPage: true });
+    await acknowledged.check();
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === '/partners');
+    await page.goto('/partners?search=P-DUP-A');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(2);
+});
+
+test('without JavaScript the server warns before writing and accepts explicit duplicate confirmation', async ({ page, browser }) => {
+    const name = 'P-NOJS Partner';
+    await create(page, name, { email: 'nojs@example.test' });
+    const context = await browser.newContext({ javaScriptEnabled: false, storageState: await page.context().storageState(), baseURL: new URL(page.url()).origin });
+    try {
+        const plain = await context.newPage();
+        await plain.goto('/partners/create');
+        await plain.getByLabel('Név / Cégnév', { exact: true }).fill(name);
+        await plain.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+        await expect(plain).toHaveURL(/\/partners\/create/);
+        const region = plain.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+        await expect(region.getByRole('link')).toContainText(name);
+        await plain.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true }).check();
+        await plain.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+        await expect(plain).toHaveURL(url => url.pathname === '/partners');
+        await plain.goto('/partners?search=P-NOJS');
+        await expect(plain.locator('tr[data-partner-id]')).toHaveCount(2);
+    } finally { await context.close(); }
+});
+
+test('a slow previous duplicate response cannot overwrite the new input', async ({ page }) => {
+    let sawOld;
+    const oldStarted = new Promise(resolve => { sawOld = resolve; });
+    await page.route('**/partners/duplicates?**', async route => {
+        const name = new URL(route.request().url()).searchParams.get('name');
+        if (name === 'OLD') { sawOld(); await new Promise(resolve => setTimeout(resolve, 500)); }
+        await route.fulfill({ json: { matches: [{ id: name === 'OLD' ? 1 : 2, name, email: null, archived: false, same_name: true, same_email: false, edit_url: '/partners/1/edit' }], total: 1, token: 'a'.repeat(64) } });
+    });
+    await page.goto('/partners/create');
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill('OLD');
+    await oldStarted;
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill('NEW');
+    const region = page.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+    await expect(region.getByRole('link')).toHaveText('NEW · #2');
+    await page.waitForTimeout(650);
+    await expect(region.getByRole('link')).toHaveText('NEW · #2');
+});
+
+test('failed duplicate lookup allows a retry and leaves server-side confirmation available', async ({ page }) => {
+    const name = 'P-RETRY Partner';
+    await create(page, name);
+    let requests = 0;
+    await page.route('**/partners/duplicates?**', route => ++requests === 1 ? route.abort('failed') : route.continue());
+    await page.goto('/partners/create');
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill(name);
+    const region = page.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+    await expect(region).toContainText('Az ellenőrzés nem sikerült.');
+    await region.getByRole('button', { name: 'Újrapróbálás', exact: true }).click();
+    await expect(region.getByRole('link')).toContainText(name);
+    await expect(page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 700 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: 'tests/Browser/.runtime/partner-duplicate-mobile.png', fullPage: true });
+});
+
+test('saving during a pending duplicate lookup warns without losing entered fields or list context', async ({ page }) => {
+    const name = 'P-PENDING Partner';
+    await create(page, name);
+    await page.goto('/partners?search=P-PENDING&status=all&type=supplier&per_page=25');
+    await page.getByRole('link', { name: '+ Új partner', exact: true }).click();
+    let started;
+    const pending = new Promise(resolve => { started = resolve; });
+    await page.route('**/partners/duplicates?**', async route => {
+        started();
+        await new Promise(resolve => setTimeout(resolve, 700));
+        await route.abort();
+    });
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill(name);
+    await page.getByLabel('Telefon', { exact: true }).fill('765432');
+    await pending;
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    const region = page.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+    await expect(region).toContainText('A folytatáshoz erősítsd meg');
+    await expect(page.getByLabel('Telefon', { exact: true })).toHaveValue('765432');
+    await expect(page.getByLabel('Partner típusa', { exact: true })).toHaveValue('supplier');
+    await page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true }).check();
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === '/partners' && url.searchParams.get('status') === 'all' && url.searchParams.get('type') === 'supplier' && url.searchParams.get('per_page') === '25');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(1);
+    await expect(page.locator('tr[data-partner-id]')).toContainText('765432');
+});
+
+test('a candidate archived after acknowledgement triggers a fresh warning instead of silently saving', async ({ page }) => {
+    const name = 'P-STALE Partner';
+    const id = await create(page, name);
+    await page.goto('/partners/create');
+    await page.getByLabel('Név / Cégnév', { exact: true }).fill(name);
+    const region = page.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+    await expect(region.getByRole('link')).toContainText(name);
+    const confirmation = page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true });
+    await confirmation.check();
+    const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    const response = await page.request.patch('/partners/'+id+'/archive', { headers: { 'X-CSRF-TOKEN': token }, maxRedirects: 0 });
+    expect(response.status()).toBe(302);
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(region).toContainText('A folytatáshoz erősítsd meg');
+    await expect(region).toContainText('Archivált');
+    await expect(confirmation).not.toBeChecked();
+    await confirmation.check();
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === '/partners');
+    await page.goto('/partners?search=P-STALE&status=all');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(2);
+});
+
+test('without JavaScript email-only matches show their reason, contacts and full result count', async ({ page, browser }) => {
+    const email = 'nojs-many@example.test';
+    for (let i = 0; i < 6; i++) await create(page, 'P-NOJS-MANY '+i, { email });
+    const context = await browser.newContext({ javaScriptEnabled: false, storageState: await page.context().storageState(), baseURL: new URL(page.url()).origin });
+    try {
+        const plain = await context.newPage();
+        await plain.goto('/partners/create');
+        await plain.getByLabel('Név / Cégnév', { exact: true }).fill('P-NOJS-MANY Új');
+        await plain.getByLabel('E-mail', { exact: true }).fill(email);
+        await plain.getByRole('button', { name: 'Partner mentése', exact: true }).click();
+        const region = plain.getByRole('region', { name: 'Lehetséges duplikációk', exact: true });
+        await expect(region.getByRole('link')).toHaveCount(5);
+        await expect(region.getByText(email, { exact: true })).toHaveCount(5);
+        await expect(region.getByText('Egyező e-mail', { exact: true })).toHaveCount(5);
+        await expect(region).toContainText('Az első 5 találat látható, összesen 6 egyezésből.');
+        await expect(region.getByText('Egyező név', { exact: true })).toHaveCount(0);
+    } finally { await context.close(); }
 });

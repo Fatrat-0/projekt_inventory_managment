@@ -13,11 +13,12 @@
             </div>
             <div class="min-w-0 max-w-full"><label for="partner-filter-type" class="mb-1 block text-xs font-medium text-gray-600">Partner típusa</label><select id="partner-filter-type" name="type" onchange="this.form.requestSubmit()" class="max-w-full rounded-md border-gray-300 text-sm"><option value="">Összes partner</option>@foreach(\App\Models\Partner::TYPES as $value => $label)<option value="{{ $value }}" @selected($filters['type'] === $value)>{{ $label }}</option>@endforeach</select></div>
             <div class="min-w-0 max-w-full"><label for="partner-contact" class="mb-1 block text-xs font-medium text-gray-600">Elérhetőség</label><select id="partner-contact" name="contact" onchange="this.form.requestSubmit()" class="max-w-full rounded-md border-gray-300 text-sm"><option value="">Összes elérhetőség</option>@foreach(\App\Queries\PartnerListing::CONTACTS as $value => $label)<option value="{{ $value }}" @selected($filters['contact'] === $value)>{{ $label }}</option>@endforeach</select></div>
+            <div class="min-w-0 max-w-full"><label for="partner-status" class="mb-1 block text-xs font-medium text-gray-600">Állapot</label><select id="partner-status" name="status" onchange="this.form.requestSubmit()" class="max-w-full rounded-md border-gray-300 text-sm">@foreach(\App\Queries\PartnerListing::STATUSES as $value => $label)<option value="{{ $value }}" @selected($filters['status'] === $value)>{{ $label }}</option>@endforeach</select></div>
             <div class="flex w-full flex-wrap gap-2 md:hidden">
                 <div class="min-w-0 flex-1"><label for="partner-sort" class="mb-1 block text-xs text-gray-600">Rendezés</label><select id="partner-sort" onchange="this.form.elements.namedItem('sort_by').value=this.value; this.form.requestSubmit()" class="w-full rounded-md border-gray-300 text-sm">@foreach(\App\Queries\PartnerListing::SORTS as $key => $label)<option value="{{ $key }}" @selected($filters['sort_by'] === $key)>{{ $label }}</option>@endforeach</select></div>
                 <div><label for="partner-direction" class="mb-1 block text-xs text-gray-600">Irány</label><select id="partner-direction" onchange="this.form.elements.namedItem('sort_dir').value=this.value; this.form.requestSubmit()" class="max-w-full rounded-md border-gray-300 text-sm"><option value="asc" @selected($filters['sort_dir'] === 'asc')>Növekvő</option><option value="desc" @selected($filters['sort_dir'] === 'desc')>Csökkenő</option></select></div>
             </div>
-            @if($filters['search'] !== '' || $filters['partner_id'] !== '' || $filters['type'] !== '' || $filters['contact'] !== '')
+            @if($filters['search'] !== '' || $filters['partner_id'] !== '' || $filters['type'] !== '' || $filters['contact'] !== '' || $filters['status'] !== 'active')
                 <a href="{{ route('partners.index', array_intersect_key($filters, array_flip(['sort_by','sort_dir','per_page']))) }}" class="py-2 text-sm text-gray-600 underline">Szűrők törlése</a>
             @endif
         </form>
@@ -41,7 +42,7 @@
                 <tbody class="divide-y divide-gray-100">
                     @forelse($partners as $partner)
                         <tr data-partner-id="{{ $partner->id }}" class="align-top hover:bg-gray-50">
-                            <td class="max-w-sm break-words px-4 py-4"><a href="{{ route('partners.edit', ['partner' => $partner, 'context' => $context]) }}" class="font-semibold text-gray-900 hover:text-indigo-600">{{ $partner->name }}</a><p class="mt-1 text-xs text-gray-400">#{{ $partner->id }}</p></td>
+                            <td class="max-w-sm break-words px-4 py-4"><a href="{{ route('partners.edit', ['partner' => $partner, 'context' => $context]) }}" class="font-semibold text-gray-900 hover:text-indigo-600">{{ $partner->name }}</a><p class="mt-1 text-xs text-gray-400">#{{ $partner->id }} @if($partner->isArchived())<span class="ml-1 rounded bg-gray-200 px-1.5 py-0.5 text-gray-700">Archivált</span>@endif</p></td>
                             <td class="px-4 py-4"><span class="whitespace-nowrap rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-700">{{ \App\Models\Partner::TYPES[$partner->type] ?? 'Ismeretlen típus' }}</span></td>
                             <td class="max-w-xs px-4 py-4">@include('partners.contact', ['field' => 'email'])</td>
                             <td class="max-w-xs px-4 py-4">@include('partners.contact', ['field' => 'phone'])</td>
@@ -56,7 +57,7 @@
         <div class="space-y-3 md:hidden">
             @forelse($partners as $partner)
                 <article data-partner-id="{{ $partner->id }}" class="rounded-lg border border-gray-200 bg-white p-4">
-                    <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold text-gray-900"><a href="{{ route('partners.edit', ['partner' => $partner, 'context' => $context]) }}">{{ $partner->name }}</a></h3><p class="mt-1 text-xs text-gray-500">{{ \App\Models\Partner::TYPES[$partner->type] ?? 'Ismeretlen típus' }} · #{{ $partner->id }}</p></div>@include('partners.actions', ['variant' => 'card'])</div>
+                    <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold text-gray-900"><a href="{{ route('partners.edit', ['partner' => $partner, 'context' => $context]) }}">{{ $partner->name }}</a></h3><p class="mt-1 text-xs text-gray-500">{{ \App\Models\Partner::TYPES[$partner->type] ?? 'Ismeretlen típus' }} · #{{ $partner->id }} @if($partner->isArchived()) · Archivált @endif</p></div>@include('partners.actions', ['variant' => 'card'])</div>
                     <dl class="mt-3 space-y-3 text-sm"><div><dt class="text-xs text-gray-500">E-mail</dt><dd class="mt-1">@include('partners.contact', ['field' => 'email'])</dd></div><div><dt class="text-xs text-gray-500">Telefon</dt><dd class="mt-1">@include('partners.contact', ['field' => 'phone'])</dd></div></dl>
                 </article>
             @empty

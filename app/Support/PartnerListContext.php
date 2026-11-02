@@ -15,7 +15,7 @@ class PartnerListContext
         $filters = [];
         try {
             $data = json_decode(Crypt::decryptString(self::token($token)), true);
-            if (is_array($data)) foreach (['search', 'partner_id', 'type', 'contact', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
+            if (is_array($data)) foreach (['search', 'partner_id', 'type', 'contact', 'status', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
                 if (isset($data[$key]) && is_scalar($data[$key])) $filters[$key] = $data[$key];
             }
         } catch (DecryptException $e) {}

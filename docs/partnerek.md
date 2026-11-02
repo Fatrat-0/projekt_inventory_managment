@@ -1,6 +1,6 @@
 # Partnerek
 
-A Partnerek oldal a vevők és beszállítók önálló törzsadat-nyilvántartása. A jelenlegi adatmodellben nincs kapcsolatuk készletmozgással, átmozgatással vagy szállítmánnyal. A fejlesztés nem ad új mezőt, migrációt vagy seeder-követelményt.
+A Partnerek oldal a vevők és beszállítók önálló törzsadat-nyilvántartása. A jelenlegi adatmodellben nincs kapcsolatuk készletmozgással, átmozgatással vagy szállítmánnyal. Az archiválás nullable, indexelt `archived_at` mezőt ad hozzá: telepítéskor `php artisan migrate` szükséges. A meglévő partnerek aktívak maradnak, újraseedelés nem szükséges.
 
 ## Lista és keresés
 
@@ -16,11 +16,31 @@ Mobilon kártyák és rendezésválasztók jelennek meg. A lapméret 15/25/50/10
 
 A névre vagy a hárompontos menü Szerkesztés elemére kattintva közös űrlap nyílik. A név legfeljebb 100 karakter, a típus kötelezően vevő vagy beszállító. Az opcionális e-mail legfeljebb 100 karakter és formailag érvényes cím; nincs DNS-lekérdezés. Az opcionális telefon szabad formátumú, legfeljebb 20 karakteres szöveg, így előhívó és mellék is tárolható. Minden szöveges mező szerveroldali típusellenőrzést is kap. Az üres opcionális mezők NULL-ra állnak, a kontaktadatok külön törölhetők. A partner ID-ját a route határozza meg, nem az űrlap tetszőleges mezője.
 
-Azonos nevek és közös e-mail-címek továbbra is megengedettek. Az e-mail-cím kattintható `mailto:` hivatkozás, URI-kódolt címrésszel; ez önmagában nem küld levelet. A hiányzó mezők Nincs megadva jelzést kapnak. A nevek, elérhetőségek és javaslatok kimenete escape-elt.
+Azonos nevek és közös e-mail-címek továbbra is megengedettek, az egyezések áttekintésének megerősítésével. Az e-mail-cím kattintható `mailto:` hivatkozás, URI-kódolt címrésszel; ez önmagában nem küld levelet. A hiányzó mezők Nincs megadva jelzést kapnak. A nevek, elérhetőségek és javaslatok kimenete escape-elt.
 
 Beszállítóra/vevőre szűrt listából új partnert nyitva az adott típus előre kiválasztott. A szűrés, rendezés, lapméret és lapozás létrehozás, szerkesztés, mentés és megszakítás során korlátozott méretű, titkosított és whitelistes kontextusban megmarad. Külső visszatérési URL nem fogadható el. Törléshez megerősítés szükséges; siker után a törölt pontos partnerazonosító és az oldalszám eltűnik, a többi feltétel megmarad. Nem létező rekord szerkesztése/módosítása/törlése 404-et ad.
 
-A Mentés gomb védi a felületet az ismételt beküldéstől; a visszaállított böngészőűrlapon újra engedélyeződik, a mezők tartalmának elvesztése nélkül. Ez nem szerveroldali idempotenciagarancia. A jelenlegi önálló partnerrekord közvetlenül törölhető; nincs alkalmazott archiválási vagy bizonylat-törlésvédelmi szabály.
+A Mentés gomb védi a felületet az ismételt beküldéstől; a visszaállított böngészőűrlapon újra engedélyeződik, a mezők tartalmának elvesztése nélkül. Ez nem szerveroldali idempotenciagarancia. A jelenlegi önálló partnerrekord az archiválás mellett továbbra is véglegesen törölhető, külön megerősítéssel; nincs bizonylat-törlésvédelmi kapcsolat.
+
+## Archiválás és visszaállítás
+
+Az Állapot szűrő alapértéke Aktív partnerek; választható Archivált partnerek vagy Összes állapot. A keresőjavaslatok ugyanezt az állapotkört követik, de a többi listaszűrő nem szűkíti őket. A pontos partnerszűrés chipje akkor is megmarad, ha a választott állapot miatt a rekord éppen nem látszik.
+
+A műveleti menüben az aktív rekord archiválható, az archivált visszaállítható. Archiváláskor megerősítés szükséges; archivált rekordnál jelzés látszik a listában, mobilkártyán és az űrlapon. Az űrlapon külön visszaállítási gomb is van. A rekord szerkeszthető marad, a szokásos adatmentés nem állítja vissza automatikusan.
+
+Mindkét állapotváltás tranzakcióban zárolja a partnert. Az ismételt, azonos irányú kérés nem változtatja meg az időbélyegeket. Az ID, létrehozási idő és kontaktadatok megmaradnak. A névjegyzék állapota és többi szűrője megmarad a visszatérési kontextusban, a pontos azonosító és oldalszám törlődik. Új partner mindig aktívan jön létre, függetlenül a kiinduló listaszűrőtől. Az archiválási mező nem állítható a közönséges létrehozó/szerkesztő payloadon keresztül.
+
+Nincs globális Eloquent-szűrő: a seeder meglévő archivált partnert is megtalál, nem hozza létre ismét és nem állítja vissza. A lista állapotszűrése kifejezett. A jelenlegi jogosultságok vonatkoznak az új PATCH-végpontokra is.
+
+## Lehetséges duplikációk
+
+Gépeléskor 350 ms késleltetéssel ellenőrizzük a nevet és e-mailt. Az egyezés teljes, normalizált értékre vonatkozik: névnél a szóközök összenyomása és Unicode-kisbetűsítés, e-mailnél külső szóközök levágása és kisbetűsítés. Nem részszavas vagy ékezetelhagyásos hasonlósági keresés. Üres mező nem egyezés. Név VAGY e-mail egyezés elegendő, ugyanaz a rekord egyszer szerepel. A szerkesztett partner kimarad, az archivált partnerek viszont részt vesznek az ellenőrzésben.
+
+Legfeljebb öt találat látszik, a teljes találatszámmal, az e-mail-címmel, az egyezés okával és archivált jelzéssel; ezek JavaScript nélkül is megjelennek. A meglévő rekord új lapon nyitható meg, így a kitöltött űrlap megmarad. A felhasználó jelölőnégyzettel megerősítheti az egyezések áttekintését, majd külön rekordként menthet. Nincs automatikus összevonás vagy egyediségkényszer.
+
+A szerver mentés előtt is ellenőriz. JavaScript nélkül, hálózati hiba vagy még folyamatban lévő kérés esetén is figyelmeztető űrlapra tér vissza, adatírás nélkül. Megerősítés után lehet menteni. A HMAC a normalizált névhez/e-mailhez, a létrehozás/szerkesztés hatóköréhez és a teljes aktuális egyezéslistához kötött; változott mező, új találat vagy archiválási állapot esetén új megerősítés kell. Ez figyelmeztető munkafolyamat, nem párhuzamos írásokat kizáró egyediségellenőrzés.
+
+A korábbi AJAX-kérés megszakad, és sorszámvédelem is megakadályozza, hogy lassú válasz felülírja az új mezőállapotot. Hiba esetén újrapróbálás és a szerveroldali út is rendelkezésre áll. A GET-ellenőrzések hitelesítéshez/szerepkörhöz kötöttek, percenként 60 kérésre korlátozottak és `no-store` választ adnak. A normalizálás PHP-ban történik, hogy MySQL és SQLite alatt azonos legyen a viselkedés; a jelenlegi megoldás a partnerrekordok átvizsgálásával dolgozik, nagy névjegyzéknél normalizált, indexelt keresőmezőkre érdemes váltani.
 
 ## Jogosultság és tesztek
 
@@ -28,7 +48,10 @@ A meglévő hozzáférés megmarad: admin, manager és worker végigviheti a tel
 
 ```powershell
 php artisan test --filter=PartnerManagementTest
+php artisan test --filter=PartnerArchiveAndDuplicatesTest
 npm run test:browser -- partners.spec.js
 ```
 
 A PHP-tesztek kombinált keresést és szűrést, literális karaktereket, hiányzó kontaktadatokat, stabil rendezést és lapozást, írási validációt, opcionális mezők törlését, kontextust, szerepköröket, XSS-kimenetvédelmet és 404-es eseteket ellenőriznek. A böngészőtesztek az elkülönített SQLite alkalmazást használják: keresőjavaslatok, automatikus szűrés, űrlaphiba javítása, minden rendezési oszlop, lapozás, billentyűzetes menü, törlés megszakítása/megerősítése, 320/390 pixeles mobilnézet és visszaállított űrlap. A felhasználó Laragon-adatbázisát nem módosítják.
+
+Az archiválás tesztjei az állapotszűrést, az ismételt állapotváltást, a jogosultságokat és az újraseedelés utáni megőrzést is vizsgálják. A duplikációjelzés ellenőrzése kiterjed a normalizálásra, az archivált egyezésekre, az öt találatos megjelenítési korlátra, a hamis vagy elavult megerősítésre, a közben módosított/törölt egyezésekre és az egyéb mezőhiba után megőrzött érvényes megerősítésre. Böngészőben a lassú és hibás válasz, a folyamatban lévő ellenőrzés közbeni mentés, az időközben archivált egyezés és a JavaScript nélküli munkafolyamat is tesztelt.

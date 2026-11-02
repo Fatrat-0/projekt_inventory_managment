@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Product, Stock, User};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock, User};
 use App\Services\InventoryService;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -33,6 +33,22 @@ class DatabaseSeederRepeatTest extends TestCase
         $this->travel(2)->hours();
         $this->seed(DatabaseSeeder::class);
         $this->assertSame($before, $this->snapshot());
+    }
+
+    public function test_reseeding_does_not_restore_or_duplicate_archived_partners(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $partner = Partner::whereNotNull('email')->firstOrFail();
+        $count = Partner::count();
+        $this->actingAs(User::where('role', 'worker')->firstOrFail());
+        $this->patch(route('partners.archive', $partner))->assertRedirect();
+        $archivedAt = $partner->fresh()->archived_at;
+        $this->travel(1)->hour();
+        $this->seed(DatabaseSeeder::class);
+        $this->assertSame($count, Partner::count());
+        $this->assertTrue($partner->fresh()->isArchived());
+        $this->assertTrue($archivedAt->equalTo($partner->fresh()->archived_at));
+        $this->assertSame(1, Partner::where('email', $partner->email)->count());
     }
 
     public function test_full_seed_preserves_changed_stock_credentials_and_transfer_state(): void

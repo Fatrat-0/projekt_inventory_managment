@@ -5,17 +5,27 @@
             <h2 class="text-xl font-bold text-gray-900">{{ $partner ? 'Partner szerkesztése' : 'Új partner' }}</h2>
             <p class="mt-1 text-sm text-gray-500">Vevők és beszállítók alapadatai és elérhetőségei.</p>
         </div>
+        @if($partner?->isArchived())
+            <div role="status" class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gray-300 bg-gray-100 p-4 text-sm text-gray-800">
+                <p>Archivált partner. Az aktív partnerlistában nem jelenik meg.</p>
+                <form method="POST" action="{{ route('partners.restore', $partner) }}">
+                    @csrf @method('PATCH')
+                    <input type="hidden" name="context" value="{{ $context }}">
+                    <button class="font-semibold text-indigo-700 underline">Visszaállítás</button>
+                </form>
+            </div>
+        @endif
         <x-operation-feedback />
         <form method="POST" action="{{ $partner ? route('partners.update', $partner) : route('partners.store') }}"
-            x-data="{ submitting: false }" @pageshow.window="if ($event.persisted) submitting = false"
-            @submit="if (submitting) $event.preventDefault(); else submitting = true"
+            x-ref="form" x-data="partnerForm({{ Illuminate\Support\Js::from(['url' => $partner ? route('partners.duplicates-edit', $partner) : route('partners.duplicates'), 'matches' => $duplicates['matches'], 'total' => $duplicates['total'], 'token' => $duplicates['token'], 'acknowledged' => $duplicateAcknowledged]) }})"
+            @pageshow.window="restored($event)" @submit="submit($event)"
             class="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
             @csrf
             @if($partner) @method('PUT') @endif
             <input type="hidden" name="context" value="{{ $context }}">
             <div>
                 <label for="partner-name" class="mb-1 block text-sm font-medium text-gray-700">Név / Cégnév</label>
-                <input id="partner-name" name="name" maxlength="100" required autofocus autocomplete="organization"
+                <input id="partner-name" name="name" maxlength="100" required autofocus autocomplete="organization" @input="changed()"
                     value="{{ is_scalar(old('name', $partner?->name ?? '')) ? old('name', $partner?->name ?? '') : '' }}"
                     aria-describedby="partner-name-error" @error('name') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
                 <p id="partner-name-error" class="mt-1 text-sm text-red-700">@error('name'){{ $message }}@enderror</p>
@@ -30,7 +40,7 @@
             <div class="grid gap-5 sm:grid-cols-2">
                 <div>
                     <label for="partner-email" class="mb-1 block text-sm font-medium text-gray-700">E-mail</label>
-                    <input id="partner-email" name="email" type="email" autocomplete="email" maxlength="100" spellcheck="false"
+                    <input id="partner-email" name="email" type="email" autocomplete="email" maxlength="100" spellcheck="false" @input="changed()"
                         value="{{ is_scalar(old('email', $partner?->email ?? '')) ? old('email', $partner?->email ?? '') : '' }}"
                         aria-describedby="partner-email-help partner-email-error" @error('email') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
                     <p id="partner-email-help" class="mt-1 text-xs text-gray-500">Opcionális e-mail-cím.</p>
@@ -45,6 +55,7 @@
                     <p id="partner-phone-error" class="mt-1 text-sm text-red-700">@error('phone'){{ $message }}@enderror</p>
                 </div>
             </div>
+            @include('partners.duplicate-warning')
             <div class="flex flex-wrap justify-end gap-4 border-t border-gray-100 pt-4">
                 <a href="{{ $returnUrl }}" class="py-2 text-sm text-gray-600">Mégse</a>
                 <button type="submit" :disabled="submitting" x-text="submitting ? 'Mentés…' : 'Partner mentése'" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">Partner mentése</button>

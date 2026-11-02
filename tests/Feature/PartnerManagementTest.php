@@ -117,6 +117,8 @@ class PartnerManagementTest extends TestCase
     public function test_duplicate_names_and_shared_email_addresses_remain_allowed(): void
     {
         $data = ['name' => $this->customer->name, 'type' => 'supplier', 'email' => $this->customer->email];
+        $data['confirm_duplicates'] = 1;
+        $data['duplicate_token'] = app(\App\Services\PartnerDuplicateCheck::class)->check($data['name'], $data['email'])['token'];
         $this->post('/partners', $data)->assertRedirect();
         $this->assertSame(2, Partner::where('email', $data['email'])->count());
     }
@@ -131,7 +133,8 @@ class PartnerManagementTest extends TestCase
     public static function badFields(): array
     {
         return [['name', ''], ['name', str_repeat('x', 101)], ['name', ['bad']], ['name', 123], ['type', 'bad'], ['type', ['bad']],
-            ['email', 'invalid'], ['email', str_repeat('x', 90).'@example.test'], ['email', ['bad']], ['phone', str_repeat('1', 21)], ['phone', ['bad']], ['phone', 123]];
+            ['email', 'invalid'], ['email', str_repeat('x', 90).'@example.test'], ['email', ['bad']], ['phone', str_repeat('1', 21)], ['phone', ['bad']], ['phone', 123],
+            ['confirm_duplicates', ['bad']], ['confirm_duplicates', 2], ['duplicate_token', ['bad']], ['duplicate_token', str_repeat('a', 65)]];
     }
 
     #[DataProvider('badFields')]

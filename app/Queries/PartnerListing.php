@@ -10,6 +10,7 @@ class PartnerListing
 {
     public const SORTS = ['name' => 'Név / Cégnév', 'type' => 'Típus', 'email' => 'E-mail', 'phone' => 'Telefon'];
     public const CONTACTS = ['complete' => 'Mindkét elérhetőség megadva', 'missing' => 'Hiányos elérhetőség'];
+    public const STATUSES = ['active' => 'Aktív partnerek', 'archived' => 'Archivált partnerek', 'all' => 'Összes állapot'];
     public array $filters;
 
     public function __construct(Request $request)
@@ -17,6 +18,7 @@ class PartnerListing
         $data = $request->validate([
             'search' => 'nullable|string|max:200',
             'partner_id' => 'nullable|integer|exists:partners,id',
+            'status' => ['nullable', Rule::in(array_keys(self::STATUSES))],
             'type' => ['nullable', Rule::in(array_keys(Partner::TYPES))],
             'contact' => ['nullable', Rule::in(array_keys(self::CONTACTS))],
             'sort_by' => ['nullable', Rule::in(array_keys(self::SORTS))],
@@ -27,15 +29,24 @@ class PartnerListing
         $this->filters = [
             'search' => trim($data['search'] ?? ''), 'partner_id' => $data['partner_id'] ?? '',
             'type' => $data['type'] ?? '', 'contact' => $data['contact'] ?? '',
+            'status' => $data['status'] ?? 'active',
             'sort_by' => $data['sort_by'] ?? 'name', 'sort_dir' => $data['sort_dir'] ?? 'asc',
             'per_page' => (int) ($data['per_page'] ?? 15),
         ];
     }
 
+    public function baseQuery()
+    {
+        $query = Partner::query();
+        if ($this->filters['status'] === 'active') $query->whereNull('archived_at');
+        if ($this->filters['status'] === 'archived') $query->whereNotNull('archived_at');
+        return $query;
+    }
+
     public function query()
     {
         $f = $this->filters;
-        $query = Partner::query();
+        $query = $this->baseQuery();
         if ($f['partner_id'] !== '') $query->whereKey($f['partner_id']);
         if ($f['type'] !== '') $query->where('type', $f['type']);
         if ($f['contact'] === 'complete') $query->whereRaw("COALESCE(TRIM(email), '') <> '' AND COALESCE(TRIM(phone), '') <> ''");

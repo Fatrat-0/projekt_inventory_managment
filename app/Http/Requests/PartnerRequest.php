@@ -17,11 +17,14 @@ class PartnerRequest extends FormRequest
             'type' => ['required', Rule::in(array_keys(Partner::TYPES))],
             'email' => ['nullable', 'string', 'email', 'max:100'],
             'phone' => ['nullable', 'string', 'max:20'],
+            'confirm_duplicates' => ['nullable', 'boolean'],
+            'duplicate_token' => ['nullable', 'string', 'max:64'],
         ];
     }
 
     public function attributes(): array
     {
-        return ['name' => 'név / cégnév', 'type' => 'partner típusa', 'email' => 'e-mail-cím', 'phone' => 'telefonszám'];
+        return ['name' => 'név / cégnév', 'type' => 'partner típusa', 'email' => 'e-mail-cím', 'phone' => 'telefonszám',
+            'confirm_duplicates' => 'egyezések megerősítése', 'duplicate_token' => 'egyezések megerősítése'];
     }
 }

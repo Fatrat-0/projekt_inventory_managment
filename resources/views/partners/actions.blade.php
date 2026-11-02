@@ -7,8 +7,14 @@
         class="m-0 max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 text-sm text-gray-700 shadow-xl"
         style="position: fixed; inset: auto; width: min(15rem, calc(100vw - 1rem));">
         <a role="menuitem" href="{{ route('partners.edit', ['partner' => $partner, 'context' => $context]) }}" class="block rounded-md px-3 py-2 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Szerkesztés</a>
+        <form method="POST" action="{{ route($partner->isArchived() ? 'partners.restore' : 'partners.archive', $partner) }}"
+            onsubmit="@if(!$partner->isArchived()) if (!confirm('Archiválod ezt a partnert? Később visszaállítható.')) return false; @endif this.closest('[popover]').hidePopover();">
+            @csrf @method('PATCH')
+            <input type="hidden" name="context" value="{{ $context }}">
+            <button role="menuitem" class="w-full rounded-md px-3 py-2 text-left hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">{{ $partner->isArchived() ? 'Visszaállítás' : 'Archiválás' }}</button>
+        </form>
         <form method="POST" action="{{ route('partners.destroy', $partner) }}" class="mt-1 border-t border-gray-100 pt-1"
-            onsubmit="if (!confirm('Biztosan törlöd ezt a partnert?')) return false; this.closest('[popover]').hidePopover();">
+            onsubmit="if (!confirm('Biztosan véglegesen törlöd ezt a partnert?')) return false; this.closest('[popover]').hidePopover();">
             @csrf @method('DELETE')
             <input type="hidden" name="context" value="{{ $context }}">
             <button role="menuitem" class="w-full rounded-md px-3 py-2 text-left text-red-600 hover:bg-red-50 focus:bg-red-50 focus:outline-none">Törlés</button>

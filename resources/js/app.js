@@ -7,6 +7,7 @@ import listingSearch from './components/listing-search';
 import shipmentBuilder from './components/shipment-builder';
 import pdfPreview from './components/pdf-preview';
 import rowActions from './components/row-actions';
+import partnerForm from './components/partner-form';
 
 window.Alpine = Alpine;
 
@@ -41,5 +42,6 @@ Alpine.data('listingSearch', listingSearch);
 Alpine.data('shipmentBuilder', shipmentBuilder);
 Alpine.data('pdfPreview', pdfPreview);
 Alpine.data('rowActions', rowActions);
+Alpine.data('partnerForm', partnerForm);
 
 Alpine.start();

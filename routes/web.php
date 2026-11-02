@@ -35,6 +35,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
         Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store', 'show']);
+        Route::get('/partners/duplicates', [PartnerController::class, 'duplicates'])->middleware('throttle:60,1')->name('partners.duplicates');
+        Route::get('/partners/{partner}/duplicates', [PartnerController::class, 'duplicates'])->middleware('throttle:60,1')->name('partners.duplicates-edit');
+        Route::patch('/partners/{partner}/archive', [PartnerController::class, 'archive'])->name('partners.archive');
+        Route::patch('/partners/{partner}/restore', [PartnerController::class, 'restore'])->name('partners.restore');
         Route::resource('partners', PartnerController::class)->except(['show']);
         Route::resource('transfers', InventoryTransferController::class)->only(['index', 'create', 'store', 'show']);
         Route::resource('shipments', \App\Http\Controllers\ShipmentController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update']);

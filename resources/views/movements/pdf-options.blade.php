@@ -3,6 +3,7 @@
     orientation: 'portrait',
     showWarehouse: true,
     showReference: true,
+    showPartner: true,
     showUser: true,
     showSummary: true,
     showSignatures: true,
@@ -14,6 +15,7 @@
         url.searchParams.set('orientation', this.orientation);
         setParam('show_warehouse', this.showWarehouse);
         setParam('show_reference', this.showReference);
+        setParam('show_partner', this.showPartner);
         setParam('show_user', this.showUser);
         setParam('show_summary', this.showSummary);
         setParam('show_signatures', this.showSignatures);
@@ -61,6 +63,10 @@
                             <label class="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
                                 <input type="checkbox" x-model="showReference" class="rounded border-gray-300 text-indigo-600">
                                 <span>Hivatkozás / Megjegyzés oszlop</span>
+                            </label>
+                            <label class="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
+                                <input type="checkbox" x-model="showPartner" class="rounded border-gray-300 text-indigo-600">
+                                <span>Partner neve a rögzítéskor</span>
                             </label>
                             <label class="flex items-center space-x-2 text-sm text-gray-700 cursor-pointer">
                                 <input type="checkbox" x-model="showUser" class="rounded border-gray-300 text-indigo-600">

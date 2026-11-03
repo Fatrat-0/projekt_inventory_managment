@@ -13,7 +13,7 @@ A szolgáltatás a végrehajtó felhasználó és a kisbetűsre egységesített 
 
 Eltérő tartalommal megismételt beküldés után az űrlap „Új készletmozgás indítása” hivatkozást kínál: ez új beküldési kulcsot kér, és megőrzi a lista visszatérési szűréseit.
 
-Az üzleti adatok normalizált SHA-256 lenyomata tartalmazza a terméket, raktárt, végrehajtót, típust, mennyiséget és hivatkozást. A numerikus azonosítók és mennyiség egységes egész értékek, az üres hivatkozás null. A hivatkozás `0` értéke megmarad. A listaállapot és a CSRF-token nem része az üzleti lenyomatnak.
+Az üzleti adatok normalizált SHA-256 lenyomata tartalmazza a terméket, raktárt, végrehajtót, típust, mennyiséget, hivatkozást és a megadott partner azonosítóját. Partner nélkül a korábbi formátum marad, ezért a régebbi beküldések újraküldése is működik. A numerikus azonosítók és mennyiség egységes egész értékek, az üres hivatkozás null. A hivatkozás `0` értéke megmarad. A listaállapot és a CSRF-token nem része az üzleti lenyomatnak.
 
 A belső `InventoryService::recordMovement($data, $requestKey)` hívásnál a kulcs opcionális a meglévő programozott hívásokhoz. Új HTTP-végpontból kötelező hitelesített végrehajtót, ellenőrzött adatokat és beküldési kulcsot átadni. Ez a védelem a bevételezési/kiadási végpontra vonatkozik; az átmozgatások már meglévő státuszátmenet-védelme külön mechanizmus.
 

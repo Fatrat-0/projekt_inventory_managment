@@ -2,7 +2,7 @@
 
 namespace App\Queries;
 
-use App\Models\{InventoryMovement, Product, Warehouse, User};
+use App\Models\{InventoryMovement, Partner, Product, Warehouse, User};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -23,6 +23,7 @@ class MovementListing
             'product_id' => ['nullable', 'integer', 'exists:products,product_id'],
             'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,warehouse_id'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
+            'partner_id' => ['nullable', 'integer', 'exists:partners,id'],
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => array_merge(['nullable', 'date_format:Y-m-d'], $request->filled('date_from') ? ['after_or_equal:date_from'] : []),
             'sort_by' => ['nullable', Rule::in(array_keys(self::SORTS))],
@@ -30,7 +31,7 @@ class MovementListing
             'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 100])],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
-        $this->filters = array_replace(array_fill_keys(['search', 'type', 'product_id', 'warehouse_id', 'user_id', 'date_from', 'date_to'], null), $data);
+        $this->filters = array_replace(array_fill_keys(['search', 'type', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to'], null), $data);
         $this->filters['search'] = trim($data['search'] ?? '');
         $this->filters['type'] = ($data['type'] ?? null) === 'all' ? null : ($data['type'] ?? null);
         $this->filters['sort_by'] = $data['sort_by'] ?? 'created_at';
@@ -42,8 +43,8 @@ class MovementListing
     public function query(): Builder
     {
         $f = $this->filters;
-        $query = InventoryMovement::with(['product', 'warehouse', 'user']);
-        foreach (['type', 'product_id', 'warehouse_id', 'user_id'] as $key) {
+        $query = InventoryMovement::with(['product', 'warehouse', 'user', 'partner']);
+        foreach (['type', 'product_id', 'warehouse_id', 'user_id', 'partner_id'] as $key) {
             if ($f[$key] !== null && $f[$key] !== '') $query->where('inventory_movements.'.$key, $f[$key]);
         }
         foreach (preg_split('/\s+/u', $f['search'], -1, PREG_SPLIT_NO_EMPTY) as $token) {
@@ -59,6 +60,8 @@ class MovementListing
             }
             $query->where(function (Builder $q) use ($pattern, $movementId) {
                 $q->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereRaw("partner_name LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereHas('partner', fn (Builder $p) => $p->whereRaw("name LIKE ? ESCAPE '!'", [$pattern]))
                     ->orWhereHas('product', fn (Builder $p) => $p->where(function (Builder $p) use ($pattern) {
                         $p->whereRaw("product_name LIKE ? ESCAPE '!'", [$pattern])->orWhereRaw("sku LIKE ? ESCAPE '!'", [$pattern]);
                     }));
@@ -109,6 +112,10 @@ class MovementListing
         if ($f['product_id']) $labels['product_id'] = 'Termék: '.Product::findOrFail($f['product_id'])->product_name;
         if ($f['warehouse_id']) $labels['warehouse_id'] = 'Raktár: '.Warehouse::findOrFail($f['warehouse_id'])->warehouse_name;
         if ($f['user_id']) $labels['user_id'] = 'Rögzítette: '.User::findOrFail($f['user_id'])->name;
+        if ($f['partner_id']) {
+            $partner = Partner::findOrFail($f['partner_id']);
+            $labels['partner_id'] = 'Partner: '.$partner->name.($partner->isArchived() ? ' (Archivált)' : '');
+        }
         if ($f['date_from']) $labels['date_from'] = 'Ettől: '.$f['date_from'];
         if ($f['date_to']) $labels['date_to'] = 'Eddig: '.$f['date_to'];
         return $labels;

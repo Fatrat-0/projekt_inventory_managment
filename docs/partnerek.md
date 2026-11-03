@@ -1,26 +1,47 @@
 # Partnerek
 
-A Partnerek oldal a vevők és beszállítók önálló törzsadat-nyilvántartása. A jelenlegi adatmodellben nincs kapcsolatuk készletmozgással, átmozgatással vagy szállítmánnyal. Az archiválás nullable, indexelt `archived_at` mezőt ad hozzá: telepítéskor `php artisan migrate` szükséges. A meglévő partnerek aktívak maradnak, újraseedelés nem szükséges.
+A Partnerek oldal a vevők és beszállítók törzsadat-nyilvántartása, kapcsolattartóval, címmel, belső megjegyzéssel és készletmozgási előzményekkel. Telepítéskor `php artisan migrate` szükséges: az archiválási mező mellett új partnermezők és opcionális mozgáskapcsolat jön létre. A régi partneradatok és mozgások megmaradnak; a korábbi naplóbejegyzésekhez nem találunk ki utólag partnert. Az átmozgatások és szállítmányok továbbra is raktárak közötti folyamatok.
 
 ## Lista és keresés
 
-A névben, e-mailben és telefonszámban több szóval lehet keresni: minden szónak valamelyik mezőben szerepelnie kell. A `%`, `_` és `!` literális keresőkarakter. A közös keresőkomponens gépeléskor legfeljebb nyolc, ékezetfüggetlenül kereshető javaslatot ad. A név mellett az elérhetőségek és az ID segítenek az azonos nevű partnerek megkülönböztetésében. A javaslat pontos partnerazonosítóra szűr, a kereső átírása megszünteti ezt a pontos szűrést. A javaslatválasztó billentyűzettel, Escape-pel és Tab-bal is használható.
+A névben, kapcsolattartóban, e-mailben, telefonszámban és településben több szóval lehet keresni: minden szónak valamelyik mezőben szerepelnie kell. A belső megjegyzés nem keresési mező. A `%`, `_` és `!` literális keresőkarakter. A közös keresőkomponens gépeléskor legfeljebb nyolc, ékezetfüggetlenül kereshető javaslatot ad. A név mellett a kapcsolattartó, elérhetőségek, település és ID segítenek az azonos nevű partnerek megkülönböztetésében. A javaslat pontos partnerazonosítóra szűr, a kereső átírása megszünteti ezt a pontos szűrést. A javaslatválasztó billentyűzettel, Escape-pel és Tab-bal is használható.
 
-A vevő/beszállító szűrő és az elérhetőségszűrő automatikusan frissít, az éppen beírt keresőszöveg megtartásával. A Hiányos elérhetőség legalább egy hiányzó mezőt jelent; a Mindkét elérhetőség megadva mindkét mezőt megköveteli. NULL, üres és szóközös régi érték is hiánynak számít, a `0` szöveg nem. Minden szűrő ÉS kapcsolatban működik, a hiányos mezők VAGY feltétele nem kerülheti meg a többi szűrőt.
+A vevő/beszállító szűrő és az elérhetőségszűrő automatikusan frissít, az éppen beírt keresőszöveg megtartásával. Az „E-mail vagy telefon hiányzik” legalább egy hiányzó mezőt jelent; az „E-mail és telefon is megadva” mindkét mezőt megköveteli. A kapcsolattartó neve és a cím nem számít bele ebbe. NULL, üres, tabulátoros/sortöréses és csak láthatatlan Unicode-karaktereket tartalmazó régi érték is hiánynak számít; a `0` szöveg megadott adat. A szűrés, a hiányzó elérhetőségeket a sor végére helyező rendezés és a „Nincs megadva” megjelenítés ugyanígy értelmezi a hiányt, a régi rekordok átírása nélkül. MySQL-en paraméterezett reguláris kifejezés, SQLite alatt a Laravel normalizálását használó determinisztikus SQL-függvény végzi az ellenőrzést. Minden szűrő ÉS kapcsolatban működik, a hiányos mezők VAGY feltétele nem kerülheti meg a többi szűrőt.
 
-Asztalon a név, típus, e-mail és telefon oszlopfejléce rendez, az irányt nyíl és `aria-sort` jelzi. Az egyszerű kattintás a még be nem küldött mezőértékeket is figyelembe veszi; módosítóbillentyűvel a szokásos hivatkozásnyitás működik. A típusrendezés a magyar feliratokat követi: növekvő sorrendben Beszállító, majd Vevő. Az üres elérhetőségek mindkét irányban a lista végére kerülnek. A stabil másodlagos rendezési kulcs az ID.
+Asztalon a név, típus, e-mail és telefon oszlopfejléce rendez, az irányt nyíl és `aria-sort` jelzi. Az egyszerű kattintás a még be nem küldött mezőértékeket is figyelembe veszi; módosítóbillentyűvel a szokásos hivatkozásnyitás működik. A típusrendezés növekvő sorrendben Beszállító, Vevő, majd Vevő és beszállító. Az üres elérhetőségek mindkét irányban a lista végére kerülnek. A stabil másodlagos rendezési kulcs az ID.
 
 Mobilon kártyák és rendezésválasztók jelennek meg. A lapméret 15/25/50/100, a vezérlő a lista alatt található; a szűrés és rendezés az első oldalra állítja a listát. Elavult oldalszám az utolsó érvényes oldalra irányít. Hibás HTML-listaparaméter alapnézetre áll vissza érthető hibaüzenettel, JSON-nál 422-es mezőhibát ad.
 
 ## Létrehozás, szerkesztés, törlés
 
-A névre vagy a hárompontos menü Szerkesztés elemére kattintva közös űrlap nyílik. A név legfeljebb 100 karakter, a típus kötelezően vevő vagy beszállító. Az opcionális e-mail legfeljebb 100 karakter és formailag érvényes cím; nincs DNS-lekérdezés. Az opcionális telefon szabad formátumú, legfeljebb 20 karakteres szöveg, így előhívó és mellék is tárolható. Minden szöveges mező szerveroldali típusellenőrzést is kap. Az üres opcionális mezők NULL-ra állnak, a kontaktadatok külön törölhetők. A partner ID-ját a route határozza meg, nem az űrlap tetszőleges mezője.
+A névre vagy a hárompontos menü Szerkesztés elemére kattintva közös űrlap nyílik. A név legfeljebb 100 karakter, a típus kötelezően vevő, beszállító vagy vevő és beszállító (`both`). A kettős szerepű partner a vevő- és beszállítószűrőben is látszik, a harmadik választás kizárólag a kettős szerepűeket listázza. Az opcionális e-mail legfeljebb 100 karakter és formailag érvényes cím; nincs DNS-lekérdezés. Az opcionális telefon szabad formátumú, legfeljebb 20 karakteres szöveg, így előhívó és mellék is tárolható. A kapcsolattartó/ország/település maximum 100, az irányítószám 20, az utca-házszám 255, a belső megjegyzés 2000 karakter. Az irányítószám szöveg, a kezdő nullák megmaradnak. Minden szöveges mező szerveroldali típusellenőrzést is kap. Az üres opcionális mezők NULL-ra állnak, külön törölhetők. A partner ID-ját a route határozza meg, nem az űrlap tetszőleges mezője.
 
 Azonos nevek és közös e-mail-címek továbbra is megengedettek, az egyezések áttekintésének megerősítésével. Az e-mail-cím kattintható `mailto:` hivatkozás, URI-kódolt címrésszel; ez önmagában nem küld levelet. A hiányzó mezők Nincs megadva jelzést kapnak. A nevek, elérhetőségek és javaslatok kimenete escape-elt.
 
 Beszállítóra/vevőre szűrt listából új partnert nyitva az adott típus előre kiválasztott. A szűrés, rendezés, lapméret és lapozás létrehozás, szerkesztés, mentés és megszakítás során korlátozott méretű, titkosított és whitelistes kontextusban megmarad. Külső visszatérési URL nem fogadható el. Törléshez megerősítés szükséges; siker után a törölt pontos partnerazonosító és az oldalszám eltűnik, a többi feltétel megmarad. Nem létező rekord szerkesztése/módosítása/törlése 404-et ad.
 
-A Mentés gomb védi a felületet az ismételt beküldéstől; a visszaállított böngészőűrlapon újra engedélyeződik, a mezők tartalmának elvesztése nélkül. Ez nem szerveroldali idempotenciagarancia. A jelenlegi önálló partnerrekord az archiválás mellett továbbra is véglegesen törölhető, külön megerősítéssel; nincs bizonylat-törlésvédelmi kapcsolat.
+A Mentés gomb védi a felületet az ismételt beküldéstől; a visszaállított böngészőűrlapon újra engedélyeződik, a mezők tartalmának elvesztése nélkül. Ez nem szerveroldali idempotenciagarancia. Készletmozgáshoz kapcsolódó partner végleges törlését érthető hibaüzenet és `RESTRICT` idegen kulcs tiltja. Archiválása továbbra is engedélyezett. Mozgás nélküli partner megerősítéssel törölhető.
+
+## Készletmozgás-kapcsolat
+
+Az új mozgás űrlapján opcionális, automatikus találatlistás partnerválasztó van. Bevételezéshez aktív beszállító, kiadáshoz aktív vevő választható; a kettős szerep mindkettőhöz megfelelő. Mozgástípus-váltáskor az alkalmatlan választás törlődik, a kettős szerepű megmarad. Az azonos nevű partnerek kapcsolattartóval, e-maillel és ID-val különböztethetők meg. Tetszőleges beírt szöveg nem menthető azonosító nélkül. Ez az űrlap a meglévő termék-/raktárválasztókkal együtt JavaScriptet használ.
+
+A szerver az `InventoryService` tranzakciójában, frissen zárolt partnerből ellenőrzi az aktivitást és szerepet. A zárolási sorrend beküldési kulcs → termék → partner (ha van) → készlet. A partner archiválása és törlése ugyanazt a partnersort zárolja, ezért nem versenyezhet ellenőrizetlenül a mozgás létrehozásával. Hiba esetén a készlet, mozgás és beküldési foglalás együtt visszagörgetődik.
+
+A mozgás `partner_id` mezője az élő törzsadatkapcsolat, a `partner_name` a szerver által rögzített névpillanatkép. A név átírása nem változtatja meg a múltbeli naplót; a részletezőoldal szükség esetén a jelenlegi nevet is kiírja. A cím és belső megjegyzés nem része a mozgás pillanatképének, a megjegyzés nem kerül a PDF-be.
+
+A beküldési hash tartalmazza a megadott partner azonosítóját. Más partnerrel vagy partner hozzáadásával/eltávolításával ugyanaz a kulcs nem használható újra. Partner nélkül a hash régi formátuma megmarad. Egy már sikeres, változatlan beküldés a partner későbbi átnevezése, archiválása vagy szerepváltozása után is az eredeti mozgást adja vissza, új készletírás nélkül.
+
+A partner űrlapján az összes mozgás, bevételezés és kiadás darabszámmal ellátott gyorslinkje jelenik meg. A listaszűrő archivált partnert is enged kiválasztani, a szűrés megmarad a visszatérési kontextusban és a teljes PDF-exportban. A szabad szöveges mozgáskeresés a rögzítéskori és jelenlegi partnernévre is keres. A PDF-ben a partnernév külön kapcsolóval a hivatkozással közös cellában jelenik meg, új széles oszlop nélkül.
+
+## Telepítés és bemutatóadat
+
+```powershell
+php artisan migrate
+php artisan db:seed --class=PartnerMovementDemoSeeder
+```
+
+A második parancs opcionális; meglévő `worker@raktar.hu` bemutatófelhasználót igényel. A teljes `DatabaseSeeder` is meghívja. Külön kettős szerepű partner, cím/kapcsolattartó/megjegyzés, `DEMO-PARTNER-CSAVAR` termék és bemutatóraktár készül, szolgáltatáson át rögzített 20 db bevételezéssel és 5 db kiadással. Az ismételt, befejezett bemutató futása nem írja felül a felhasználó módosításait és a készletet. A két rögzítés egyetlen tranzakció része. A partnermigráció visszagörgetése kettős szerepű rekord mellett megáll: előbb egyetlen szerepet kell beállítani ezeknél, hogy ne veszítsünk el szerepet észrevétlenül.
 
 ## Archiválás és visszaállítás
 
@@ -49,7 +70,10 @@ A meglévő hozzáférés megmarad: admin, manager és worker végigviheti a tel
 ```powershell
 php artisan test --filter=PartnerManagementTest
 php artisan test --filter=PartnerArchiveAndDuplicatesTest
+php artisan test --filter=PartnerMovementIntegrationTest
+php artisan test --filter=PartnerContactEdgeCasesTest
 npm run test:browser -- partners.spec.js
+npm run test:browser -- partner-movements.spec.js
 ```
 
 A PHP-tesztek kombinált keresést és szűrést, literális karaktereket, hiányzó kontaktadatokat, stabil rendezést és lapozást, írási validációt, opcionális mezők törlését, kontextust, szerepköröket, XSS-kimenetvédelmet és 404-es eseteket ellenőriznek. A böngészőtesztek az elkülönített SQLite alkalmazást használják: keresőjavaslatok, automatikus szűrés, űrlaphiba javítása, minden rendezési oszlop, lapozás, billentyűzetes menü, törlés megszakítása/megerősítése, 320/390 pixeles mobilnézet és visszaállított űrlap. A felhasználó Laragon-adatbázisát nem módosítják.

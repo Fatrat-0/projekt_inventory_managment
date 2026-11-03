@@ -143,6 +143,7 @@ test('list product filter uses suggestions and clearing restores all products', 
     await expect(page).toHaveURL(/product_id=1/);
     await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Alpha teszttermék (ALPHA-001)');
     await page.getByRole('button', { name: 'Termék törlése a mezőből', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveAttribute('aria-expanded', 'false');
     await page.getByRole('button', { name: 'Szűrés alkalmazása', exact: true }).click();
     expect(new URL(page.url()).searchParams.get('product_id')).not.toBe('1');
 });

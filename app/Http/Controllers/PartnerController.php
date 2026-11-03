@@ -13,6 +13,8 @@ use Illuminate\Validation\ValidationException;
 
 class PartnerController extends Controller
 {
+    private const FIELDS = ['name', 'type', 'email', 'phone', 'contact_name', 'country', 'postal_code', 'city', 'street_address', 'notes'];
+
     public function index(Request $request)
     {
         try { $listing = new PartnerListing($request); }
@@ -25,9 +27,10 @@ class PartnerController extends Controller
         if ($request->integer('page', 1) > $partners->lastPage()) {
             return redirect()->route('partners.index', $filters + ($partners->lastPage() > 1 ? ['page' => $partners->lastPage()] : []));
         }
-        $all = $listing->baseQuery()->orderBy('name')->orderBy('id')->get(['id', 'name', 'email', 'phone']);
+        $all = $listing->baseQuery()->orderBy('name')->orderBy('id')->get(['id', 'name', 'email', 'phone', 'contact_name', 'city']);
         $suggestions = $all->map(fn ($partner) => ['value' => (string) $partner->id, 'name' => $partner->name,
-            'detail' => collect([$partner->email, $partner->phone, '#'.$partner->id])->reject(fn ($value) => blank($value))->implode(' · ')])->values();
+            'detail' => collect([$partner->contact_name, $partner->email, $partner->phone, $partner->city, '#'.$partner->id])
+                ->map(fn ($value) => \Illuminate\Support\Str::trim($value ?? ''))->reject(fn ($value) => $value === '')->implode(' · ')])->values();
         $selectedPartner = $filters['partner_id'] !== '' ? Partner::find($filters['partner_id']) : null;
         $context = PartnerListContext::encode($filters + ['page' => $request->integer('page', 1)]);
         return view('partners.index', compact('partners', 'filters', 'suggestions', 'selectedPartner', 'context'));
@@ -46,26 +49,34 @@ class PartnerController extends Controller
         $oldToken = old('duplicate_token');
         $duplicateAcknowledged = $duplicates['total'] > 0 && in_array(old('confirm_duplicates'), [true, 1, '1'], true)
             && is_string($oldToken) && hash_equals($duplicates['token'], $oldToken);
+        $partner?->loadCount(['movements', 'movements as receipts_count' => fn ($q) => $q->where('type', 'in'),
+            'movements as issues_count' => fn ($q) => $q->where('type', 'out')]);
         return view('partners.form', compact('partner', 'context', 'returnUrl', 'defaultType', 'duplicates', 'duplicateAcknowledged'));
     }
 
     public function store(PartnerRequest $request)
     {
         if ($warning = $this->duplicateWarning($request)) return $warning;
-        Partner::create(array_replace(['email' => null, 'phone' => null], $request->safe()->only(['name', 'type', 'email', 'phone'])));
+        Partner::create($this->partnerData($request));
         return redirect(PartnerListContext::url($request->input('context')))->with('success', 'Partner létrehozva.');
     }
 
     public function update(PartnerRequest $request, Partner $partner)
     {
         if ($warning = $this->duplicateWarning($request, $partner)) return $warning;
-        $partner->update(array_replace(['email' => null, 'phone' => null], $request->safe()->only(['name', 'type', 'email', 'phone'])));
+        $partner->update($this->partnerData($request));
         return redirect(PartnerListContext::url($request->input('context')))->with('success', 'Partner adatai frissítve.');
     }
 
     public function destroy(Request $request, Partner $partner)
     {
-        $partner->delete();
+        $deleted = DB::transaction(function () use ($partner) {
+            $locked = Partner::lockForUpdate()->findOrFail($partner->id);
+            if ($locked->movements()->exists()) return false;
+            return $locked->delete();
+        }, 3);
+        if (!$deleted) return redirect(PartnerListContext::url($request->input('context')))
+            ->withErrors(['partner' => 'A partnerhez készletmozgás tartozik, ezért nem törölhető. Használd az archiválást.']);
         return redirect(PartnerListContext::url($request->input('context'), ['partner_id', 'page']))->with('success', 'Partner törölve.');
     }
 
@@ -84,7 +95,12 @@ class PartnerController extends Controller
         $params = ['context' => PartnerListContext::token($request->input('context'))];
         if ($partner) $params['partner'] = $partner;
         return redirect()->route($partner ? 'partners.edit' : 'partners.create', $params)
-            ->withInput($request->only(['name', 'type', 'email', 'phone', 'context']))->with('duplicate_warning', true);
+            ->withInput($request->only([...self::FIELDS, 'context']))->with('duplicate_warning', true);
+    }
+
+    private function partnerData(PartnerRequest $request): array
+    {
+        return array_replace(array_fill_keys(array_diff(self::FIELDS, ['name', 'type']), null), $request->safe()->only(self::FIELDS));
     }
 
     public function archive(Request $request, Partner $partner) { return $this->changeState($request, $partner, true); }

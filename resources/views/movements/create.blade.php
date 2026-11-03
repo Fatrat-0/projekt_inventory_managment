@@ -9,11 +9,19 @@
         @if($products->isEmpty() || $warehouses->isEmpty())
             <div role="status" class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Mozgás rögzítéséhez legalább egy termék és egy raktár szükséges.</div>
         @else
-            <form method="POST" action="{{ route('movements.store') }}" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)old('product_id', ''), 'warehouse' => (string)old('warehouse_id', ''), 'type' => old('type', 'in'), 'quantity' => old('quantity', 1)]) }})" @submit="submit($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-5">
+            <form method="POST" action="{{ route('movements.store') }}" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)old('product_id', ''), 'warehouse' => (string)old('warehouse_id', ''), 'type' => old('type', 'in'), 'quantity' => old('quantity', 1)]) }})" @submit="submit($event)" @pageshow.window="restored($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-5">
                 @csrf
                 <input type="hidden" name="request_key" value="{{ $requestKey }}">
                 <input type="hidden" name="context" value="{{ $context }}">
                 <div><label for="movement-type" class="block text-sm font-medium text-gray-700 mb-1">Mozgás típusa</label><select id="movement-type" name="type" x-model="type" class="w-full rounded-md {{ $errors->has('type') ? 'border-red-500' : 'border-gray-300' }}" required aria-invalid="{{ $errors->has('type') ? 'true' : 'false' }}" @if($errors->has('type')) aria-describedby="movement-type-error" @endif><option value="in" @selected(old('type','in') === 'in')>Bevételezés – készlet növelése</option><option value="out" @selected(old('type') === 'out')>Kiadás – készlet csökkentése</option></select>@error('type')<p id="movement-type-error" class="mt-1 text-sm text-red-700">{{ $message }}</p>@enderror</div>
+                <div>
+                    <label for="movement-partner" class="block text-sm font-medium text-gray-700 mb-1">Partner</label>
+                    @php($partnerItems = $partners->map(fn ($partner) => ['value' => (string)$partner->id, 'label' => collect([$partner->name, $partner->contact_name, $partner->email, '#'.$partner->id])->filter(fn ($v) => filled($v))->implode(' · '), 'types' => array_values(array_filter(['in', 'out'], fn ($type) => $partner->supportsMovement($type)))])->values())
+                    <x-autocomplete-picker :items="$partnerItems" id="movement-partner" name="partner_id" :value="old('partner_id', '')" :movement-partner="true"
+                        placeholder="Partner neve, kapcsolattartója vagy e-mailje…" clear-label="Partner törlése a mezőből" results-label="Partnertalálatok"
+                        invalid-value-label="A korábban választott partner már nem elérhető. Válassz másikat vagy töröld a mezőt." described-by="movement-partner-help" />
+                    <p id="movement-partner-help" class="mt-1 text-xs text-gray-500" x-text="type === 'in' ? 'Opcionális: aktív beszállító választható. A kettős szerepű partnerek is megjelennek.' : 'Opcionális: aktív vevő választható. A kettős szerepű partnerek is megjelennek.'">Opcionális: bevételezéshez aktív beszállító, kiadáshoz aktív vevő választható.</p>
+                </div>
                 <div @product-selected="product = $event.detail.value; loadStock()">
                     <label for="movement-product" class="block text-sm font-medium text-gray-700 mb-1">Termék</label>
                     <x-product-picker :products="$products" id="movement-product" :value="old('product_id', '')" :required="true" />

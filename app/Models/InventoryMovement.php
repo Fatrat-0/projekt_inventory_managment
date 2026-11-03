@@ -15,6 +15,7 @@ class InventoryMovement extends Model
         'reference',
         'stock_before',
         'stock_after',
+        'partner_id', 'partner_name',
     ];
 
     protected function casts(): array
@@ -26,6 +27,8 @@ class InventoryMovement extends Model
     {
         return 'MOZ-'.str_pad((string) $this->id, 6, '0', STR_PAD_LEFT);
     }
+
+    public function partner() { return $this->belongsTo(Partner::class); }
 
     // Kapcsolat a Termékkel
     public function product()

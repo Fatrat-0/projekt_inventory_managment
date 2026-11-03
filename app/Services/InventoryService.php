@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Product, Stock};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -18,6 +18,8 @@ class InventoryService
             'user_id' => (int) $data['user_id'], 'type' => $data['type'], 'quantity' => (int) $data['quantity'],
             'reference' => trim((string) ($data['reference'] ?? '')) === '' ? null : trim((string) $data['reference']),
         ];
+        // Omit an empty partner from the hash so requests created before this feature still replay.
+        if (isset($data['partner_id']) && $data['partner_id'] !== '') $payload['partner_id'] = (int) $data['partner_id'];
         $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
         try {
             return DB::transaction(function () use ($payload, $requestKey, $hash) {
@@ -31,9 +33,18 @@ class InventoryService
                     ]);
                 }
                 $this->lockProduct($payload['product_id']);
+                $partnerName = null;
+                if (isset($payload['partner_id'])) {
+                    // Archive/delete and movement creation serialize on the same partner row.
+                    $partner = Partner::whereKey($payload['partner_id'])->lockForUpdate()->first();
+                    if (!$partner || $partner->isArchived() || !$partner->supportsMovement($payload['type'])) {
+                        throw ValidationException::withMessages(['partner_id' => 'Válassz aktív, a mozgás típusának megfelelő partnert (bevételezéshez beszállítót, kiadáshoz vevőt).']);
+                    }
+                    $partnerName = $partner->name;
+                }
                 $balances = $this->changeStock($payload['product_id'], $payload['warehouse_id'],
                     $payload['type'] === 'in' ? $payload['quantity'] : -$payload['quantity']);
-                $movement = InventoryMovement::create(array_merge($payload, $balances));
+                $movement = InventoryMovement::create(array_merge($payload, $balances, ['partner_name' => $partnerName]));
                 if ($requestId !== null) {
                     DB::table('inventory_movement_requests')->where('id', $requestId)
                         ->update(['movement_id' => $movement->id, 'updated_at' => now()]);

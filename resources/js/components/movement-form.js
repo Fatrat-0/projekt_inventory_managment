@@ -11,6 +11,11 @@ export default (initial) => ({
         if (this.submitting) { event.preventDefault(); return; }
         this.submitting = true;
     },
+    restored(event) {
+        if (!event.persisted) return;
+        this.submitting = false;
+        this.loadStock();
+    },
     async loadStock() {
         const id = ++this.requestId;
         this.stock = null; this.failed = false; this.loading = false;

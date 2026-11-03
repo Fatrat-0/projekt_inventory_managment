@@ -42,8 +42,10 @@ export default (initial) => ({
         this.open = false;
     },
     clear() {
-        this.value = ''; this.query = ''; this.active = -1; this.open = true;
+        this.value = ''; this.query = ''; this.active = -1;
         this.syncValidity(); this.notify(); this.$refs.input.focus();
+        // Clearing a filter must leave the apply/save buttons reachable below it.
+        this.open = false;
     },
     move(direction) {
         this.open = true;

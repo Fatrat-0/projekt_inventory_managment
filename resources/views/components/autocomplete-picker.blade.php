@@ -1,9 +1,9 @@
-@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null])
+@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null, 'movementPartner' => false])
 @php
     $selectedValue = is_scalar($value) ? (string)$value : '';
     $selected = collect($items)->first(fn($item) => (string)$item['value'] === $selectedValue);
 @endphp
-<div class="relative" x-data="autocompletePicker({{ Illuminate\Support\Js::from(['items' => $items, 'value' => $selectedValue, 'required' => (bool)$required, 'eventName' => $eventName, 'invalidValueLabel' => $invalidValueLabel]) }})"
+<div class="relative" x-data="{{ $movementPartner ? 'movementPartnerPicker' : 'autocompletePicker' }}({{ Illuminate\Support\Js::from(['items' => $items, 'value' => $selectedValue, 'required' => (bool)$required, 'eventName' => $eventName, 'invalidValueLabel' => $invalidValueLabel]) }})"
     @click.outside="open = false" @focusout="if (!$el.contains($event.relatedTarget)) open = false">
     <input type="hidden" name="{{ $name }}" :value="value" value="{{ $selectedValue }}" @if($form) form="{{ $form }}" @endif>
     <div class="relative">

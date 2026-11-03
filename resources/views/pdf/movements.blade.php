@@ -9,8 +9,9 @@
         h1 { text-align: center; color: #1a202c; border-bottom: 2px solid #cbd5e0; padding-bottom: 8px; margin-bottom: 5px; }
         .date { text-align: right; margin-bottom: 15px; font-style: italic; color: #4a5568; }
         .filter-box { background-color: #f7fafc; border: 1px dashed #cbd5e0; padding: 8px; margin-bottom: 15px; font-size: 11px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 10px; }
         th { background-color: #edf2f7; font-weight: bold; text-align: left; padding: 6px; border: 1px solid #cbd5e0; }
+        th, td { word-wrap: break-word; }
         td { padding: 6px; border: 1px solid #cbd5e0; vertical-align: middle; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
@@ -42,15 +43,23 @@
     @endif
 
     <table>
+        @php
+            $columnWeights = ['date' => 12, 'type' => 12, 'product' => 22, 'quantity' => 13];
+            if ($options['show_warehouse']) $columnWeights['warehouse'] = 14;
+            if ($options['show_reference'] || ($options['show_partner'] ?? false)) $columnWeights['reference'] = 22;
+            if ($options['show_user']) $columnWeights['user'] = 12;
+            $totalWeight = array_sum($columnWeights);
+            $columnWidth = fn ($key) => $columnWeights[$key] / $totalWeight * 100;
+        @endphp
         <thead>
             <tr>
-                <th>Dátum</th>
-                <th>Típus</th>
-                <th>Termék (Cikkszám)</th>
-                @if($options['show_warehouse']) <th>Raktár</th> @endif
-                <th class="text-right">Mennyiség</th>
-                @if($options['show_reference']) <th>Hivatkozás / Megjegyzés</th> @endif
-                @if($options['show_user']) <th>Rögzítette</th> @endif
+                <th style="width: {{ $columnWidth('date') }}%;">Dátum</th>
+                <th style="width: {{ $columnWidth('type') }}%;">Típus</th>
+                <th style="width: {{ $columnWidth('product') }}%;">Termék (Cikkszám)</th>
+                @if($options['show_warehouse']) <th style="width: {{ $columnWidth('warehouse') }}%;">Raktár</th> @endif
+                <th style="width: {{ $columnWidth('quantity') }}%;" class="text-right">Mennyiség</th>
+                @if($options['show_reference'] || ($options['show_partner'] ?? false)) <th style="width: {{ $columnWidth('reference') }}%;">{{ $options['show_reference'] ? 'Hivatkozás / Megjegyzés' : '' }}{{ $options['show_reference'] && ($options['show_partner'] ?? false) ? ' / ' : '' }}{{ ($options['show_partner'] ?? false) ? 'Partner' : '' }}</th> @endif
+                @if($options['show_user']) <th style="width: {{ $columnWidth('user') }}%;">Rögzítette</th> @endif
             </tr>
         </thead>
         <tbody>
@@ -83,8 +92,12 @@
                     <td class="text-right">
                         <strong>{{ $movement->type === 'in' ? '+' : '-' }}{{ $movement->quantity }} db</strong>
                     </td>
-                    @if($options['show_reference'])
-                        <td>{{ $movement->reference ?? '-' }}</td>
+                    @if($options['show_reference'] || ($options['show_partner'] ?? false))
+                        <td>
+                            @if($options['show_reference']){{ $movement->reference ?? '-' }}@endif
+                            @if(($options['show_partner'] ?? false) && $movement->partner_id)<div><small>Partner: {{ $movement->partner_name }}</small></div>@endif
+                            @if(!$options['show_reference'] && !$movement->partner_id)-@endif
+                        </td>
                     @endif
                     @if($options['show_user'])
                         <td>{{ optional($movement->user)->name ?? 'Rendszer' }}</td>
@@ -92,7 +105,7 @@
                 </tr>
             @empty
                 <tr>
-                    <td colspan="7" class="text-center">Nincs megjeleníthető készletmozgás.</td>
+                    <td colspan="{{ 4 + (int)$options['show_warehouse'] + (int)($options['show_reference'] || ($options['show_partner'] ?? false)) + (int)$options['show_user'] }}" class="text-center">Nincs megjeleníthető készletmozgás.</td>
                 </tr>
             @endforelse
         </tbody>

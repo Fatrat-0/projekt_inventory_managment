@@ -10,7 +10,7 @@ class PartnerDuplicateCheck
     private function normalize(mixed $value, bool $name = false): string
     {
         if (!is_string($value) || mb_strlen($value) > 100) return '';
-        return mb_strtolower($name ? Str::squish($value) : trim($value));
+        return mb_strtolower($name ? Str::squish($value) : Str::trim($value));
     }
 
     public function check(mixed $name, mixed $email, ?Partner $except = null): array

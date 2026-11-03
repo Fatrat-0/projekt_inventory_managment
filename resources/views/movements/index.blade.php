@@ -47,6 +47,12 @@
                             @endif
                         </div>
                     @endforeach
+                    <div>
+                        <label for="movement-partner-filter" class="block text-xs font-medium text-gray-600 mb-1">Partner</label>
+                        @php($partnerItems = $partners->map(fn ($partner) => ['value' => (string)$partner->id, 'label' => $partner->name.' · #'.$partner->id.($partner->isArchived() ? ' · Archivált' : '')])->values())
+                        <x-autocomplete-picker :items="$partnerItems" id="movement-partner-filter" name="partner_id" :value="$filters['partner_id'] ?? ''" form="movement-filters"
+                            placeholder="Partner neve…" clear-label="Partner törlése a mezőből" results-label="Partnertalálatok" />
+                    </div>
                     <div><label for="movement-date-from" class="block text-xs font-medium text-gray-600 mb-1">Dátumtól</label><input id="movement-date-from" x-ref="dateFrom" type="date" name="date_from" form="movement-filters" value="{{ $filters['date_from'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
                     <div><label for="movement-date-to" class="block text-xs font-medium text-gray-600 mb-1">Dátumig (beleértve)</label><input id="movement-date-to" x-ref="dateTo" type="date" name="date_to" form="movement-filters" value="{{ $filters['date_to'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
                     <button type="submit" form="movement-filters" class="justify-self-start rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Szűrés alkalmazása</button>
@@ -92,7 +98,9 @@
                                 <td class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
                                 <td class="px-4 py-3">{{ $movement->user->name }}</td>
-                                <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference ?: '—' }}</td>
+                                <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference ?: '—' }}
+                                    @if($movement->partner_id)<a href="{{ route('partners.edit', $movement->partner_id) }}" class="mt-1 block text-xs text-indigo-600 hover:underline">Partner: {{ $movement->partner_name }}@if($movement->partner?->isArchived()) · Archivált @endif</a>@endif
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>

@@ -16,6 +16,13 @@
             </div>
         @endif
         <x-operation-feedback />
+        @if($partner)
+            <nav aria-label="Partner készletmozgásai" class="flex flex-wrap gap-2">
+                @foreach(['' => ['Készletmozgások', $partner->movements_count], 'in' => ['Bevételezések', $partner->receipts_count], 'out' => ['Kiadások', $partner->issues_count]] as $type => [$label, $count])
+                    <a href="{{ route('movements.index', array_filter(['partner_id' => $partner->id, 'type' => $type])) }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-indigo-50">{{ $label }} ({{ $count }})</a>
+                @endforeach
+            </nav>
+        @endif
         <form method="POST" action="{{ $partner ? route('partners.update', $partner) : route('partners.store') }}"
             x-ref="form" x-data="partnerForm({{ Illuminate\Support\Js::from(['url' => $partner ? route('partners.duplicates-edit', $partner) : route('partners.duplicates'), 'matches' => $duplicates['matches'], 'total' => $duplicates['total'], 'token' => $duplicates['token'], 'acknowledged' => $duplicateAcknowledged]) }})"
             @pageshow.window="restored($event)" @submit="submit($event)"
@@ -36,6 +43,7 @@
                     @foreach(\App\Models\Partner::TYPES as $value => $label)<option value="{{ $value }}" @selected(old('type', $defaultType) === $value)>{{ $label }}</option>@endforeach
                 </select>
                 <p id="partner-type-error" class="mt-1 text-sm text-red-700">@error('type'){{ $message }}@enderror</p>
+                <p class="mt-1 text-xs text-gray-500">A „Vevő és beszállító” partner bevételezéshez és kiadáshoz is választható.</p>
             </div>
             <div class="grid gap-5 sm:grid-cols-2">
                 <div>
@@ -54,6 +62,34 @@
                     <p id="partner-phone-help" class="mt-1 text-xs text-gray-500">Opcionális, legfeljebb 20 karakter.</p>
                     <p id="partner-phone-error" class="mt-1 text-sm text-red-700">@error('phone'){{ $message }}@enderror</p>
                 </div>
+            </div>
+            <div>
+                <label for="partner-contact-name" class="mb-1 block text-sm font-medium text-gray-700">Kapcsolattartó</label>
+                <input id="partner-contact-name" name="contact_name" maxlength="100" autocomplete="name"
+                    value="{{ is_scalar(old('contact_name', $partner?->contact_name)) ? old('contact_name', $partner?->contact_name) : '' }}"
+                    aria-describedby="partner-contact-name-error" @error('contact_name') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
+                <p id="partner-contact-name-error" class="mt-1 text-sm text-red-700">@error('contact_name'){{ $message }}@enderror</p>
+            </div>
+            <fieldset class="space-y-3 border-t border-gray-100 pt-4">
+                <legend class="text-sm font-semibold text-gray-700">Partner címe <span class="font-normal text-gray-400">(opcionális)</span></legend>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    @foreach(['country' => ['Ország', 100, 'country-name'], 'postal_code' => ['Irányítószám', 20, 'postal-code'], 'city' => ['Település', 100, 'address-level2'], 'street_address' => ['Utca, házszám', 255, 'address-line1']] as $field => [$label, $max, $autocomplete])
+                        <div>
+                            <label for="partner-{{ $field }}" class="mb-1 block text-sm font-medium text-gray-700">{{ $label }}</label>
+                            <input id="partner-{{ $field }}" name="{{ $field }}" maxlength="{{ $max }}" autocomplete="{{ $autocomplete }}"
+                                value="{{ is_scalar(old($field, $partner?->{$field})) ? old($field, $partner?->{$field}) : '' }}"
+                                aria-describedby="partner-{{ $field }}-error" @error($field) aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
+                            <p id="partner-{{ $field }}-error" class="mt-1 text-sm text-red-700">@error($field){{ $message }}@enderror</p>
+                        </div>
+                    @endforeach
+                </div>
+            </fieldset>
+            <div>
+                <label for="partner-notes" class="mb-1 block text-sm font-medium text-gray-700">Belső megjegyzés</label>
+                <textarea id="partner-notes" name="notes" rows="3" maxlength="2000" aria-describedby="partner-notes-help partner-notes-error"
+                    @error('notes') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">{{ is_scalar(old('notes', $partner?->notes)) ? old('notes', $partner?->notes) : '' }}</textarea>
+                <p id="partner-notes-help" class="mt-1 text-xs text-gray-500">Például áruátvételi idő vagy kapcsolattartási tudnivaló. A megjegyzés az alkalmazásban marad, a mozgásnapló PDF-jébe nem kerül bele. Legfeljebb 2000 karakter.</p>
+                <p id="partner-notes-error" class="mt-1 text-sm text-red-700">@error('notes'){{ $message }}@enderror</p>
             </div>
             @include('partners.duplicate-warning')
             <div class="flex flex-wrap justify-end gap-4 border-t border-gray-100 pt-4">

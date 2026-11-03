@@ -415,3 +415,22 @@ test('without JavaScript email-only matches show their reason, contacts and full
         await expect(region.getByText('Egyező név', { exact: true })).toHaveCount(0);
     } finally { await context.close(); }
 });
+
+test('contact completeness distinguishes email-only phone-only empty and complete dual-role partners', async ({ page }) => {
+    await create(page, 'P-CONTACT-EDGE E-mail', { type: 'both', email: 'contact-edge-only@example.test' });
+    await create(page, 'P-CONTACT-EDGE Telefon', { type: 'both', phone: '123' });
+    await create(page, 'P-CONTACT-EDGE Üres', { type: 'both' });
+    const complete = await create(page, 'P-CONTACT-EDGE Teljes', { type: 'both', email: 'contact-edge-full@example.test', phone: '0' });
+    await page.goto('/partners?search=P-CONTACT-EDGE&type=supplier');
+    await page.getByLabel('Elérhetőség', { exact: true }).selectOption('complete');
+    await expect(page.getByRole('option', { name: 'E-mail és telefon is megadva', exact: true })).toBeAttached();
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(1);
+    await expect(page.locator('tr[data-partner-id]')).toHaveAttribute('data-partner-id', complete);
+    await page.getByLabel('Elérhetőség', { exact: true }).selectOption('missing');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(3);
+    await page.getByLabel('Partner típusa', { exact: true }).selectOption('customer');
+    await expect(page.locator('tr[data-partner-id]')).toHaveCount(3);
+    await page.setViewportSize({ width: 320, height: 800 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.locator('article[data-partner-id]')).toHaveCount(3);
+});

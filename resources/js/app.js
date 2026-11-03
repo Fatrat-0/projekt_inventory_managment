@@ -8,6 +8,7 @@ import shipmentBuilder from './components/shipment-builder';
 import pdfPreview from './components/pdf-preview';
 import rowActions from './components/row-actions';
 import partnerForm from './components/partner-form';
+import movementPartnerPicker from './components/movement-partner-picker';
 
 window.Alpine = Alpine;
 
@@ -43,5 +44,6 @@ Alpine.data('shipmentBuilder', shipmentBuilder);
 Alpine.data('pdfPreview', pdfPreview);
 Alpine.data('rowActions', rowActions);
 Alpine.data('partnerForm', partnerForm);
+Alpine.data('movementPartnerPicker', movementPartnerPicker);
 
 Alpine.start();

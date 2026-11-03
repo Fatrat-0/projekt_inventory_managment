@@ -69,6 +69,7 @@ class ExportController extends Controller
             'type_filter'     => $listing->filters['type'] ?? 'all',
             'show_warehouse'  => $request->boolean('show_warehouse', true),
             'show_reference'  => $request->boolean('show_reference', true),
+            'show_partner'    => $request->boolean('show_partner', true),
             'show_user'       => $request->boolean('show_user', true),
             'show_summary'    => $request->boolean('show_summary', true),
             'show_signatures' => $request->boolean('show_signatures', true),

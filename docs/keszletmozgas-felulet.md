@@ -2,8 +2,10 @@
 
 A lista és a PDF ugyanazt a `MovementListing` lekérdezést használja. A PDF minden szűrt találatot tartalmaz; az oldalméret és az aktuális oldalszám nem korlátozza az exportot.
 
-- Többszavas keresés: terméknév, SKU és bizonylatszám/megjegyzés. Minden keresőszónak egyeznie kell legalább az egyik mezőben. A `%`, `_` és `!` karakterek nem keresési helyettesítő karakterek.
-- Kombinálható termék-, raktár-, felhasználó-, mozgástípus- és dátumszűrők. A dátumhatárok az alkalmazás által használt időzónában értendők; a zárónap teljes egészében benne van a tartományban.
+A böngésző gyorsítótárából visszaállított mozgás- és átmozgatásűrlap újra engedélyezi a beküldést és friss készletet kér le. A beírt mezők és az eredeti beküldési kulcs megmaradnak; a szerver ismételt beküldés elleni védelme továbbra is érvényes.
+
+- Többszavas keresés: terméknév, SKU, bizonylatszám/megjegyzés, továbbá rögzítéskori és jelenlegi partnernév. Minden keresőszónak egyeznie kell legalább az egyik mezőben. A `%`, `_` és `!` karakterek nem keresési helyettesítő karakterek.
+- Kombinálható termék-, raktár-, felhasználó-, partner-, mozgástípus- és dátumszűrők. A partnerfilter az archivált partnereket is tartalmazza. A dátumhatárok az alkalmazás által használt időzónában értendők; a zárónap teljes egészében benne van a tartományban.
 - Rendezés mindkét irányban dátum, típus, termék, raktár, mennyiség és rögzítő szerint. Egyezés esetén a rekordazonosító stabil másodlagos rendezést biztosít.
 - A bevételezés/kiadás összesítése minden szűrt találatot tartalmaz, nem csak az aktuális oldalt. A mennyiség rendezése az előjel nélküli darabszám alapján történik, az irányt a típus jelöli.
 - 10/25/50/100 találat oldalanként. Szűrés és rendezés az első oldaltól indul; a lapozó megőrzi a paramétereket.

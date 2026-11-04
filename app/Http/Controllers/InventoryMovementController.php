@@ -47,9 +47,20 @@ class InventoryMovementController extends Controller
 
     public function show(Request $request, InventoryMovement $movement)
     {
-        $movement->load(['product', 'warehouse', 'user', 'partner']);
+        $movement->load(['product', 'warehouse', 'user', 'partner', 'returnOf'])->loadSum('returns', 'quantity');
+        $returned = (int)$movement->returns_sum_quantity;
+        $remaining = max(0, $movement->quantity - $returned);
+        $returnHistory = $movement->returns()->with('user')->orderByDesc('id')->paginate(10, ['*'], 'returns_page')->withQueryString();
+        $context = $request->query('context');
+        $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
+        if ($returnHistory->currentPage() > $returnHistory->lastPage()) {
+            $params = ['movement' => $movement];
+            if ($context !== '') $params['context'] = $context;
+            if ($returnHistory->lastPage() > 1) $params['returns_page'] = $returnHistory->lastPage();
+            return redirect()->route('movements.show', $params);
+        }
         $returnUrl = \App\Support\MovementListContext::url($request->query('context'));
-        return view('movements.show', compact('movement', 'returnUrl'));
+        return view('movements.show', compact('movement', 'returnUrl', 'returned', 'remaining', 'returnHistory', 'context'));
     }
 
     public function stock(Request $request)

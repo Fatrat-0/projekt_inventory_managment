@@ -6,6 +6,8 @@ use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
@@ -52,17 +54,73 @@ class InventoryService
                 return $movement;
             }, 3);
         } catch (UniqueConstraintViolationException $e) {
-            if ($requestKey === null) throw $e;
-            // The conflicting transaction has committed by the time its unique insert fails.
-            // Read outside the rolled-back transaction to see that committed request.
-            $previous = DB::table('inventory_movement_requests')->where('user_id', $payload['user_id'])
-                ->where('request_key', $requestKey)->first();
-            if (!$previous || !$previous->movement_id) throw $e;
-            if (!hash_equals($previous->payload_hash, $hash)) {
-                throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új művelethez nyiss új készletmozgás-űrlapot.']);
-            }
-            return InventoryMovement::findOrFail($previous->movement_id);
+            return $this->replayMovement($e, $requestKey, $payload['user_id'], $hash);
         }
+    }
+
+    public function recordReturn(InventoryMovement $original, array $data, ?string $requestKey = null): InventoryMovement
+    {
+        foreach (['return_reason', 'reference'] as $field) {
+            if (isset($data[$field]) && is_string($data[$field])) $data[$field] = Str::trim($data[$field]);
+        }
+        $validated = Validator::make($data, [
+            'quantity' => 'required|integer|min:1|max:2147483647',
+            'return_reason' => 'required|string|max:500', 'reference' => 'nullable|string|max:255',
+        ], [], ['return_reason' => 'visszáru indoka'])->validate();
+        $payload = ['operation' => 'return', 'return_of_id' => (int)$original->getKey(), 'user_id' => (int)$data['user_id'],
+            'quantity' => (int)$validated['quantity'], 'return_reason' => $validated['return_reason'],
+            'reference' => ($validated['reference'] ?? '') === '' ? null : $validated['reference']];
+        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
+        try {
+            return DB::transaction(function () use ($original, $payload, $requestKey, $hash) {
+                $requestId = $requestKey === null ? null : DB::table('inventory_movement_requests')->insertGetId([
+                    'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
+                ]);
+                // Preserve the shared lock order: product, original movement/returns, partner, stock.
+                $this->lockProduct((int)$original->product_id);
+                $source = InventoryMovement::whereKey($original->getKey())->lockForUpdate()->firstOrFail();
+                if ($source->isReturn() || (int)$source->product_id !== (int)$original->product_id) {
+                    throw ValidationException::withMessages(['movement' => 'Visszáru csak eredeti készletmozgásból indítható.']);
+                }
+                // A locking read also sees concurrent commits inside an outer REPEATABLE READ transaction.
+                $returned = (int)$source->returns()->lockForUpdate()->get(['quantity'])->sum('quantity');
+                $remaining = max(0, $source->quantity - $returned);
+                if ($payload['quantity'] > $remaining) {
+                    throw ValidationException::withMessages(['quantity' => 'A még visszaküldhető mennyiség legfeljebb '.$remaining.' db.']);
+                }
+                $partnerName = null;
+                if ($source->partner_id !== null) {
+                    // A historical return is valid even if this partner was archived or its role changed.
+                    $partnerName = Partner::whereKey($source->partner_id)->lockForUpdate()->firstOrFail()->name;
+                }
+                $type = $source->type === 'in' ? 'out' : 'in';
+                $balances = $this->changeStock((int)$source->product_id, (int)$source->warehouse_id,
+                    $type === 'in' ? $payload['quantity'] : -$payload['quantity']);
+                $movement = InventoryMovement::create($balances + [
+                    'product_id' => $source->product_id, 'warehouse_id' => $source->warehouse_id, 'partner_id' => $source->partner_id,
+                    'partner_name' => $partnerName, 'type' => $type, 'quantity' => $payload['quantity'], 'user_id' => $payload['user_id'],
+                    'return_of_id' => $source->id, 'return_reason' => $payload['return_reason'], 'reference' => $payload['reference'],
+                ]);
+                if ($requestId !== null) DB::table('inventory_movement_requests')->where('id', $requestId)->update(['movement_id' => $movement->id, 'updated_at' => now()]);
+                return $movement;
+            }, 3);
+        } catch (UniqueConstraintViolationException $e) {
+            return $this->replayMovement($e, $requestKey, $payload['user_id'], $hash);
+        }
+    }
+
+    private function replayMovement(UniqueConstraintViolationException $exception, ?string $requestKey, int $userId, string $hash): InventoryMovement
+    {
+        if ($requestKey === null) throw $exception;
+        // Shared current reads bypass old snapshots without upgrading duplicate-key shared locks.
+        // Replay is read-only; exclusive lock upgrades can deadlock concurrent outer transactions.
+        $previous = DB::table('inventory_movement_requests')->where('user_id', $userId)->where('request_key', $requestKey)->sharedLock()->first();
+        if (!$previous || !$previous->movement_id) throw $exception;
+        if (!hash_equals($previous->payload_hash, $hash)) {
+            throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új művelethez nyiss új készletmozgás-űrlapot.']);
+        }
+        return InventoryMovement::whereKey($previous->movement_id)->sharedLock()->firstOrFail();
     }
 
     public function startTransfer(array $data, ?string $requestKey = null): InventoryTransfer

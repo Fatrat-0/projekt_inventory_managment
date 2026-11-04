@@ -28,12 +28,20 @@ function connectTestDatabase(string $name): void
 if (($argv[1] ?? '') === '--worker') {
     connectTestDatabase($argv[2]);
     $job = json_decode(base64_decode($argv[3]), true, flags: JSON_THROW_ON_ERROR);
+    $outerSnapshot = $job['outerSnapshot'] ?? false;
+    if ($outerSnapshot) {
+        DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        DB::beginTransaction();
+        // Establish the snapshot before either worker can mutate stock/history.
+        InventoryMovement::count();
+    }
     echo "READY\n";
     flush();
     try {
         $service = app(InventoryService::class);
         match ($job['action']) {
             'movement' => $service->recordMovement($job['data'], $job['requestKey'] ?? null),
+            'return' => $service->recordReturn(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'start' => $service->startTransfer($job['data'], $job['requestKey'] ?? null),
             'complete' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), true),
             'cancel' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), false),
@@ -41,10 +49,13 @@ if (($argv[1] ?? '') === '--worker') {
             'shipment_receive' => app(ShipmentService::class)->receive(Shipment::findOrFail($job['id']), ShipmentStop::findOrFail($job['stop']), $job['actor']),
             'shipment_cancel' => app(ShipmentService::class)->cancel(Shipment::findOrFail($job['id'])),
         };
+        if ($outerSnapshot) DB::commit();
         echo "OK\n";
     } catch (ValidationException $e) {
+        if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
         echo "REJECTED\n";
     } catch (Throwable $e) {
+        if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
         fwrite(STDERR, get_class($e).': '.$e->getMessage());
         exit(1);
     }
@@ -247,7 +258,52 @@ try {
         if ($scenario === 'double shipment cancellation') check($stock === 10 && $pending === 0, 'Shipment cancelled twice.');
         echo 'PASS: '.$scenario.PHP_EOL;
     }
-    echo "19 MySQL concurrency scenarios passed.\n";
+    foreach (['return quota', 'return replay', 'return key changed quantity', 'supplier return versus issue',
+        'return quota with outer snapshot', 'return replay with outer snapshot', 'return replay triple with outer snapshot'] as $index => $scenario) {
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario, 'sku' => 'RETURN-RACE-'.$index, 'price' => 100]);
+        $warehouse = Warehouse::create(['warehouse_name' => 'Return race '.$index, 'location' => 'Test']);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 10]);
+        $base = ['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'user_id' => $user->id];
+        $supplierRace = $scenario === 'supplier return versus issue';
+        $quotaRace = str_starts_with($scenario, 'return quota');
+        $replayRace = str_starts_with($scenario, 'return replay');
+        $outerSnapshot = str_ends_with($scenario, 'with outer snapshot');
+        $original = $service->recordMovement($base + ['type' => $supplierRace ? 'in' : 'out', 'quantity' => $supplierRace ? 10 : 5]);
+        if ($supplierRace) $service->recordMovement($base + ['type' => 'out', 'quantity' => 14]);
+        $beforeStock = (int)Stock::where('product_id', $product->product_id)->value('quantity');
+        $beforeMovementCount = InventoryMovement::where('product_id', $product->product_id)->count();
+        $quantity = $supplierRace ? 4 : ($quotaRace ? 3 : 2);
+        $data = ['user_id' => $user->id, 'quantity' => $quantity, 'return_reason' => 'Concurrent return', 'reference' => 'RETURN-RACE-'.$index];
+        $key = (string)\Illuminate\Support\Str::uuid();
+        $secondKey = $replayRace || $scenario === 'return key changed quantity' ? strtoupper($key) : (string)\Illuminate\Support\Str::uuid();
+        $firstJob = ['action' => 'return', 'id' => $original->id, 'data' => $data, 'requestKey' => $key, 'outerSnapshot' => $outerSnapshot];
+        $secondJob = $supplierRace
+            ? ['action' => 'movement', 'data' => $base + ['type' => 'out', 'quantity' => 4], 'requestKey' => $secondKey]
+            : array_replace($firstJob, ['requestKey' => $secondKey, 'data' => $scenario === 'return key changed quantity' ? array_replace($data, ['quantity' => 3]) : $data]);
+        $jobs = [$firstJob, $secondJob];
+        if ($scenario === 'return replay triple with outer snapshot') $jobs[] = $secondJob;
+        $result = race($database, $product->product_id, $jobs);
+        check($result === ($replayRace ? array_fill(0, count($jobs), 'OK') : ['OK', 'REJECTED']), $scenario.': wrong outcomes.');
+        $returns = $original->returns()->get();
+        check((int)$returns->sum('quantity') <= $original->quantity, $scenario.': cumulative return limit exceeded.');
+        check(InventoryMovement::where('product_id', $product->product_id)->count() === $beforeMovementCount + 1, $scenario.': extra or missing movement.');
+        $winner = InventoryMovement::where('product_id', $product->product_id)->latest('id')->firstOrFail();
+        $afterStock = (int)Stock::where('product_id', $product->product_id)->value('quantity');
+        check($winner->stock_before === $beforeStock && $winner->stock_after === $afterStock, $scenario.': incorrect audit balances.');
+        check($afterStock === $beforeStock + ($winner->type === 'in' ? $winner->quantity : -$winner->quantity), $scenario.': stock applied incorrectly.');
+        check(DB::table('inventory_movement_requests')->where('user_id', $user->id)->whereIn('request_key', array_unique([strtolower($key), strtolower($secondKey)]))->count() === 1,
+            $scenario.': failed or replayed request left an extra claim.');
+        check(DB::table('inventory_movement_requests')->whereNull('movement_id')->count() === 0, $scenario.': incomplete request claim.');
+        if ($supplierRace) {
+            check($afterStock === 2, 'Supplier return and issue both consumed the same stock.');
+            check($returns->count() === ($winner->isReturn() ? 1 : 0), 'Supplier return history is inconsistent with the winning operation.');
+        } else {
+            check($returns->count() === 1 && $winner->isReturn(), $scenario.': return history missing or duplicated.');
+            check($winner->return_of_id === $original->id && $winner->type === 'in', $scenario.': wrong original or direction.');
+        }
+        echo 'PASS: '.$scenario.PHP_EOL;
+    }
+    echo "26 MySQL concurrency scenarios passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

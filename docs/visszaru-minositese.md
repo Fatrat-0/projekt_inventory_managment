@@ -32,6 +32,10 @@ A `return_quality_actions` eseménynapló tárolja a forrás visszárut, művele
 
 A készletírás, audit és selejtezési készletmozgás egyetlen tranzakció. Bármely hiba visszagörgeti mindet. A terméksor zárolása után a forrás és korábbi minősítések zároló aktuális olvasása friss mennyiséghatárt ad, külső REPEATABLE READ tranzakció esetén is.
 
+A korábbi minősítések lekérdezése az aktuálisan beszúrt esemény azonosítója előtt véget ér. A közös termékzár miatt ugyanahhoz a visszáruhoz minden korábbi esemény kisebb azonosítót kapott. Ez a felső határ megakadályozza, hogy az indexbejárás egy másik visszáru folyamatban lévő beszúrására is várjon, miközben az ugyanarra a beküldési kulcsra vár. Ezt a korábban időszakos holtpontot öt ismétlés ellenőrzi a MySQL-futtatóban.
+
+Különböző felhasználóknál is közös a még minősíthető mennyiség: az egymást túllépő elfogadás és selejtezés közül csak az egyik sikerülhet, az összesen megengedett részminősítések viszont mind rögzülhetnek. Egy másik visszáru bevételezése és a korábbi visszáru elfogadása ugyanazon termék készletét sorosan, egymás eredményét megtartva módosítja. Ezeket külön MySQL-versenyhelyzetek ellenőrzik.
+
 A beküldés felhasználónként egyedi UUID-t kap. Azonos kulcs és normalizált üzleti adatok ismétlése a korábbi eredményt adja vissza, a teljes mennyiség minősítése után is. Ugyanaz a kulcs más visszáruhoz, mennyiséghez, művelethez vagy indokhoz nem használható fel. Sikertelen művelet kulcsa újrapróbálható. Az indok eleji/végi üres karaktereit eltávolítjuk; a `0` önmagában érvényes indok.
 
 ## Telepítés és bemutatóadat

@@ -10,6 +10,8 @@ class PartnerRequest extends FormRequest
 {
     public function authorize(): bool { return true; }
 
+    public function messages(): array { return \App\Services\MasterDataEditor::messages(); }
+
     public function rules(): array
     {
         return [
@@ -25,7 +27,7 @@ class PartnerRequest extends FormRequest
             'notes' => ['nullable', 'string', 'max:2000'],
             'confirm_duplicates' => ['nullable', 'boolean'],
             'duplicate_token' => ['nullable', 'string', 'max:64'],
-        ];
+        ] + ($this->isMethod('PUT') || $this->isMethod('PATCH') ? \App\Services\MasterDataEditor::rules() : []);
     }
 
     public function attributes(): array
@@ -33,6 +35,6 @@ class PartnerRequest extends FormRequest
         return ['name' => 'név / cégnév', 'type' => 'partner típusa', 'email' => 'e-mail-cím', 'phone' => 'telefonszám',
             'contact_name' => 'kapcsolattartó', 'country' => 'ország', 'postal_code' => 'irányítószám',
             'city' => 'település', 'street_address' => 'utca, házszám', 'notes' => 'belső megjegyzés',
-            'confirm_duplicates' => 'egyezések megerősítése', 'duplicate_token' => 'egyezések megerősítése'];
+            'confirm_duplicates' => 'egyezések megerősítése', 'duplicate_token' => 'egyezések megerősítése'] + \App\Services\MasterDataEditor::attributes();
     }
 }

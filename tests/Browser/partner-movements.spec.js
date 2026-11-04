@@ -166,7 +166,9 @@ test('changing a selected partner role in another tab is checked again at save',
     await movement(page);
     await choosePartner(page, name);
     const csrf = await page.locator('meta[name="csrf-token"]').getAttribute('content');
-    const changed = await page.request.put('/partners/'+id, { headers: { 'X-CSRF-TOKEN': csrf }, form: { name, type: 'customer' }, maxRedirects: 0 });
+    const edit = await page.request.get('/partners/'+id+'/edit');
+    const version = (await edit.text()).match(/name="lock_version" value="(\d+)"/)[1];
+    const changed = await page.request.put('/partners/'+id, { headers: { 'X-CSRF-TOKEN': csrf }, form: { name, type: 'customer', lock_version: version }, maxRedirects: 0 });
     expect(changed.status()).toBe(302);
     await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
     await expect(page.locator('#movement-partner-error')).toContainText('Válassz aktív');

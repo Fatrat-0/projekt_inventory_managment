@@ -93,7 +93,7 @@ class WarehouseManagementTest extends TestCase
         Stock::create(['warehouse_id' => $new->warehouse_id, 'product_id' => $this->product->product_id, 'quantity' => 9]);
         $before = Stock::first()->toArray();
         $this->get(route('warehouses.edit', ['warehouse' => $new, 'context' => $context]))->assertOk()->assertViewHas('returnUrl', $url);
-        $this->put(route('warehouses.update', $new), ['warehouse_name' => 'Frissített', 'location' => 'Szeged', 'context' => $context])->assertRedirect($url);
+        $this->put(route('warehouses.update', $new), ['lock_version' => $new->fresh()->lock_version, 'warehouse_name' => 'Frissített', 'location' => 'Szeged', 'context' => $context])->assertRedirect($url);
         $this->assertSame($before, Stock::first()->toArray());
         $this->assertDatabaseHas('warehouses', ['warehouse_id' => $new->warehouse_id, 'warehouse_name' => 'Frissített', 'location' => 'Szeged']);
     }
@@ -108,7 +108,7 @@ class WarehouseManagementTest extends TestCase
     {
         $payload = ['warehouse_name' => 'Érvényes', 'location' => 'Érvényes cím', $key => $value];
         $this->postJson(route('warehouses.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors($key);
-        $this->putJson(route('warehouses.update', $this->warehouse), $payload)->assertUnprocessable()->assertJsonValidationErrors($key);
+        $this->putJson(route('warehouses.update', $this->warehouse), array_replace($payload, ['lock_version' => $this->warehouse->fresh()->lock_version]))->assertUnprocessable()->assertJsonValidationErrors($key);
         $this->assertSame(1, Warehouse::count());
         $this->assertSame('Alpha raktár', $this->warehouse->fresh()->warehouse_name);
     }
@@ -181,7 +181,7 @@ class WarehouseManagementTest extends TestCase
         foreach (['warehouses.index', 'warehouses.create', 'warehouses.edit'] as $route) $this->get(route($route, $route === 'warehouses.edit' ? $this->warehouse : []))->assertOk();
         $this->post(route('warehouses.store'), ['warehouse_name' => 'Engedélyezett', 'location' => 'Cím'])->assertRedirect(route('warehouses.index'));
         $created = Warehouse::where('warehouse_name', 'Engedélyezett')->sole();
-        $this->put(route('warehouses.update', $created), ['warehouse_name' => 'Módosítva', 'location' => 'Új cím'])->assertRedirect(route('warehouses.index'));
+        $this->put(route('warehouses.update', $created), ['lock_version' => $created->fresh()->lock_version, 'warehouse_name' => 'Módosítva', 'location' => 'Új cím'])->assertRedirect(route('warehouses.index'));
         $this->assertSame('Módosítva', $created->fresh()->warehouse_name);
         $this->delete(route('warehouses.destroy', $created))->assertRedirect(route('warehouses.index'));
         $this->assertModelMissing($created);
@@ -195,7 +195,7 @@ class WarehouseManagementTest extends TestCase
         $status = $role === null ? 401 : 403;
         foreach (['warehouses.index', 'warehouses.create', 'warehouses.edit'] as $route) $this->getJson(route($route, $route === 'warehouses.edit' ? $this->warehouse : []))->assertStatus($status);
         $this->postJson(route('warehouses.store'), ['warehouse_name' => 'Tiltott', 'location' => 'Tiltott'])->assertStatus($status);
-        $this->putJson(route('warehouses.update', $this->warehouse), ['warehouse_name' => 'Tiltott', 'location' => 'Tiltott'])->assertStatus($status);
+        $this->putJson(route('warehouses.update', $this->warehouse), ['lock_version' => $this->warehouse->fresh()->lock_version, 'warehouse_name' => 'Tiltott', 'location' => 'Tiltott'])->assertStatus($status);
         $this->deleteJson(route('warehouses.destroy', $this->warehouse))->assertStatus($status);
         $this->assertModelExists($this->warehouse);
     }

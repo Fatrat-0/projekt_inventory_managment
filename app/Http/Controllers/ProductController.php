@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\Warehouse;
+use App\Services\MasterDataEditor;
 use Illuminate\Http\Request;
 
 class ProductController extends Controller
@@ -49,8 +50,8 @@ class ProductController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'product_name'       => 'required|max:100',
-            'sku'                => 'required|unique:products,sku|max:50',
+            'product_name'       => 'required|string|max:100',
+            'sku'                => 'required|string|unique:products,sku|max:50',
             'price'              => 'required|numeric|min:0',
             'category_id'        => 'required|exists:categories,category_id',
             'min_stock_override' => 'nullable|integer|min:0',
@@ -87,14 +88,14 @@ class ProductController extends Controller
         $product = Product::findOrFail($id);
 
         $validated = $request->validate([
-            'product_name'       => 'required|max:100',
-            'sku'                => 'required|max:50|unique:products,sku,' . $product->product_id . ',product_id',
+            'product_name'       => 'required|string|max:100',
+            'sku'                => 'required|string|max:50|unique:products,sku,' . $product->product_id . ',product_id',
             'price'              => 'required|numeric|min:0',
             'category_id'        => 'required|exists:categories,category_id',
             'min_stock_override' => 'nullable|integer|min:0',
-        ]);
+        ] + MasterDataEditor::rules(), MasterDataEditor::messages(), MasterDataEditor::attributes());
 
-        $product->update($validated);
+        MasterDataEditor::update($product, $request, \Illuminate\Support\Arr::except($validated, ['lock_version', 'review_version', 'confirm_edit_conflict']), route('products.edit', $product));
 
         return redirect()->route('products.index')->with('success', 'Termék sikeresen frissítve!');
     }

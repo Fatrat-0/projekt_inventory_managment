@@ -6,6 +6,7 @@ use App\Http\Requests\WarehouseRequest;
 use App\Models\Warehouse;
 use App\Queries\WarehouseListing;
 use App\Queries\WarehouseStockListing;
+use App\Services\MasterDataEditor;
 use App\Support\WarehouseListContext;
 use App\Support\WarehouseStockContext;
 use Illuminate\Database\QueryException;
@@ -88,7 +89,9 @@ class WarehouseController extends Controller
 
     public function update(WarehouseRequest $request, Warehouse $warehouse)
     {
-        $warehouse->update($request->validated());
+        $editUrl = route('warehouses.edit', ['warehouse' => $warehouse, 'context' => WarehouseListContext::token($request->input('context')),
+            'from' => $request->input('from') === 'details' ? 'details' : '', 'detail_context' => WarehouseStockContext::token($request->input('detail_context'))]);
+        MasterDataEditor::update($warehouse, $request, $request->safe()->only(['warehouse_name', 'location']), $editUrl);
         $context = WarehouseListContext::token($request->input('context'));
         $url = $request->input('from') === 'details' ? WarehouseStockContext::url($warehouse, $request->input('detail_context'), $context) : WarehouseListContext::url($context);
         return redirect($url)->with('success', 'Raktár adatai frissítve.');

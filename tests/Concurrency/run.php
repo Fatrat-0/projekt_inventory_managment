@@ -2,8 +2,8 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
-use App\Services\{InventoryService, ShipmentService};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentService};
 use App\Queries\ReturnQualityListing;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Http\Request;
@@ -52,6 +52,9 @@ if (($argv[1] ?? '') === '--worker') {
             'shipment_start' => app(ShipmentService::class)->start(Shipment::findOrFail($job['id']), $job['actor'], 1),
             'shipment_receive' => app(ShipmentService::class)->receive(Shipment::findOrFail($job['id']), ShipmentStop::findOrFail($job['stop']), $job['actor']),
             'shipment_cancel' => app(ShipmentService::class)->cancel(Shipment::findOrFail($job['id'])),
+            'master_edit' => MasterDataEditor::update(
+                (new ($job['model']))->findOrFail($job['id']), Request::create('/', 'PUT', ['lock_version' => 1]), $job['data'], '/'),
+            'partner_archive' => (new \App\Http\Controllers\PartnerController)->archive(Request::create('/', 'PATCH'), Partner::findOrFail($job['id'])),
         };
         if ($outerSnapshot) DB::commit();
         echo "OK\n";
@@ -73,12 +76,14 @@ function check(bool $condition, string $message): void
     }
 }
 
-function race(string $database, int|array $productId, array $jobs, ?int $userBarrier = null): array
+function race(string $database, int|array $productId, array $jobs, ?int $userBarrier = null, ?\Illuminate\Database\Eloquent\Model $recordBarrier = null): array
 {
     $processes = [];
     DB::beginTransaction();
     try {
-        if ($userBarrier !== null) {
+        if ($recordBarrier !== null) {
+            $recordBarrier->newQuery()->whereKey($recordBarrier->getKey())->lockForUpdate()->firstOrFail();
+        } elseif ($userBarrier !== null) {
             User::whereKey($userBarrier)->lockForUpdate()->firstOrFail();
         } else {
             Product::whereIn('product_id', (array) $productId)->orderBy('product_id')->lockForUpdate()->get();
@@ -134,7 +139,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['users', 'products', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items'];
+    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -476,6 +481,51 @@ try {
         }
         echo 'PASS: '.$scenario.PHP_EOL;
     }
+    foreach ([false, true] as $outerSnapshot) {
+        $suffix = $outerSnapshot ? ' with outer snapshot' : '';
+        foreach ([Product::class, Partner::class, Warehouse::class, Category::class] as $model) {
+            [$data, $field] = match ($model) {
+                Product::class => [['product_name' => 'Master edit product', 'sku' => 'MASTER-'.(int)$outerSnapshot, 'price' => 100, 'category_id' => $category->category_id], 'product_name'],
+                Partner::class => [['name' => 'Master edit partner', 'type' => 'customer', 'phone' => '0'], 'name'],
+                Warehouse::class => [['warehouse_name' => 'Master edit warehouse', 'location' => 'Address'], 'warehouse_name'],
+                Category::class => [['category_name' => 'Master edit category', 'default_item_min_stock' => 0], 'category_name'],
+            };
+            $record = $model::create($data)->fresh();
+            $jobs = array_map(fn ($name) => ['action' => 'master_edit', 'model' => $model, 'id' => $record->getKey(),
+                'data' => array_replace($data, [$field => $name]), 'outerSnapshot' => $outerSnapshot], ['First editor', 'Second editor']);
+            $scenario = class_basename($model).' conflicting edits'.$suffix;
+            check(race($database, [], $jobs, recordBarrier: $record) === ['OK', 'REJECTED'], $scenario.': expected one conflict.');
+            $saved = $record->fresh();
+            check((int)$saved->lock_version === 2 && in_array($saved->getAttribute($field), ['First editor', 'Second editor'], true),
+                $scenario.': wrong version or lost winner.');
+            foreach (array_diff_key($data, [$field => true]) as $key => $value) check($saved->getAttribute($key) == $value, $scenario.': unrelated field changed.');
+            echo 'PASS: '.$scenario.PHP_EOL;
+        }
+        $record = Partner::create(['name' => 'Archive versus edit', 'type' => 'customer'])->fresh();
+        $jobs = [
+            ['action' => 'master_edit', 'model' => Partner::class, 'id' => $record->id, 'data' => ['name' => 'Edited before archive'], 'outerSnapshot' => $outerSnapshot],
+            ['action' => 'partner_archive', 'id' => $record->id, 'outerSnapshot' => $outerSnapshot],
+        ];
+        $result = race($database, [], $jobs, recordBarrier: $record);
+        check(in_array($result, [['OK', 'OK'], ['OK', 'REJECTED']], true), 'Archive/edit returned an unexpected error.');
+        $saved = $record->fresh();
+        check($saved->isArchived() && (int)$saved->lock_version === ($result === ['OK', 'OK'] ? 3 : 2)
+            && $saved->name === ($result === ['OK', 'OK'] ? 'Edited before archive' : 'Archive versus edit'), 'Archive/edit lost an update.');
+        echo 'PASS: partner archive versus edit'.$suffix.PHP_EOL;
+    }
+    $skuProducts = [];
+    foreach ([1, 2] as $index) {
+        $skuProducts[] = Product::create(['category_id' => $category->category_id, 'product_name' => 'SKU edit '.$index,
+            'sku' => 'SKU-EDIT-'.$index, 'price' => 100])->fresh();
+    }
+    $jobs = array_map(fn ($product) => ['action' => 'master_edit', 'model' => Product::class, 'id' => $product->getKey(),
+        'data' => ['sku' => 'SKU-EDIT-SHARED']], $skuProducts);
+    check(race($database, array_map(fn ($product) => $product->getKey(), $skuProducts), $jobs) === ['OK', 'REJECTED'],
+        'Concurrent SKU collision must be a validation error.');
+    check(Product::where('sku', 'SKU-EDIT-SHARED')->count() === 1
+        && array_sum(array_map(fn ($product) => (int)$product->fresh()->lock_version, $skuProducts)) === 3,
+        'Concurrent SKU collision changed a rejected product version.');
+    echo 'PASS: different products competing for the same SKU'.PHP_EOL;
     // Validate the read-only queue SQL on real MySQL using the completed race fixtures.
     // Its expected quantities are computed in PHP from individual immutable actions.
     $queueSnapshot = function (): string {
@@ -564,7 +614,7 @@ try {
     }
     check(hash_equals($beforeQueueReads, $queueSnapshot()), 'Queue reads changed stock, movement history or quality actions.');
     echo 'PASS: quality queue MySQL aggregates and filters'.PHP_EOL;
-    echo "43 MySQL concurrency checks passed.\n";
+    echo "54 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

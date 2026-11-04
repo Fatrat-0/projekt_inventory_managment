@@ -108,7 +108,7 @@ class PartnerManagementTest extends TestCase
         $this->post('/partners', ['name' => '  Test Partner  ', 'type' => 'supplier', 'email' => 'test@example.test', 'phone' => '+36 (1) 234-5678', 'context' => $context])->assertRedirect(route('partners.index', $filters));
         $partner = Partner::where('name', 'Test Partner')->firstOrFail();
         $this->get(route('partners.edit', ['partner' => $partner, 'context' => $context]))->assertOk()->assertViewHas('returnUrl', route('partners.index', $filters));
-        $this->put(route('partners.update', $partner), ['name' => 'Updated', 'type' => 'customer', 'email' => '', 'phone' => '   ', 'context' => $context, 'id' => $this->customer->id])->assertRedirect(route('partners.index', $filters));
+        $this->put(route('partners.update', $partner), ['lock_version' => $partner->fresh()->lock_version, 'name' => 'Updated', 'type' => 'customer', 'email' => '', 'phone' => '   ', 'context' => $context, 'id' => $this->customer->id])->assertRedirect(route('partners.index', $filters));
         $this->assertNull($partner->fresh()->email); $this->assertNull($partner->fresh()->phone);
         $this->assertSame('customer', $partner->fresh()->type);
         $this->assertSame('Alpha 100%_!', $this->customer->fresh()->name);
@@ -142,7 +142,7 @@ class PartnerManagementTest extends TestCase
     {
         $data = array_replace(['name' => 'Valid', 'type' => 'customer'], [$field => $value]);
         $this->postJson('/partners', $data)->assertUnprocessable()->assertJsonValidationErrors($field);
-        $this->putJson(route('partners.update', $this->customer), $data)->assertUnprocessable()->assertJsonValidationErrors($field);
+        $this->putJson(route('partners.update', $this->customer), array_replace($data, ['lock_version' => $this->customer->fresh()->lock_version]))->assertUnprocessable()->assertJsonValidationErrors($field);
         $this->assertDatabaseCount('partners', 2);
         $this->assertSame('Alpha 100%_!', $this->customer->fresh()->name);
     }
@@ -164,7 +164,7 @@ class PartnerManagementTest extends TestCase
     public function test_malformed_old_input_renders_safely_and_restores_list_context(): void
     {
         $url = route('partners.edit', $this->customer);
-        $this->from($url)->put(route('partners.update', $this->customer), ['name' => ['bad'], 'type' => ['bad'], 'email' => ['bad'], 'phone' => ['bad'], 'context' => ['bad']])
+        $this->from($url)->put(route('partners.update', $this->customer), ['lock_version' => $this->customer->fresh()->lock_version, 'name' => ['bad'], 'type' => ['bad'], 'email' => ['bad'], 'phone' => ['bad'], 'context' => ['bad']])
             ->assertRedirect($url)->assertSessionHasErrors(['name', 'type', 'email', 'phone']);
         $this->get($url)->assertOk();
         $this->get(route('partners.create', ['type' => ['bad']]))->assertOk()->assertViewHas('defaultType', 'customer');
@@ -205,7 +205,7 @@ class PartnerManagementTest extends TestCase
         $this->get('/partners')->assertOk(); $this->get('/partners/create')->assertOk();
         $this->get(route('partners.edit', $this->customer))->assertOk();
         $this->post('/partners', ['name' => 'Role partner', 'type' => 'customer'])->assertRedirect();
-        $this->put(route('partners.update', $this->customer), ['name' => 'Role update', 'type' => 'supplier'])->assertRedirect();
+        $this->put(route('partners.update', $this->customer), ['lock_version' => $this->customer->fresh()->lock_version, 'name' => 'Role update', 'type' => 'supplier'])->assertRedirect();
         $this->delete(route('partners.destroy', $this->customer))->assertRedirect();
     }
 
@@ -215,7 +215,7 @@ class PartnerManagementTest extends TestCase
         $this->get('/partners')->assertForbidden(); $this->get('/partners/create')->assertForbidden();
         $this->get(route('partners.edit', $this->customer))->assertForbidden();
         $this->post('/partners', ['name' => 'Forbidden', 'type' => 'customer'])->assertForbidden();
-        $this->put(route('partners.update', $this->customer), ['name' => 'Forbidden', 'type' => 'customer'])->assertForbidden();
+        $this->put(route('partners.update', $this->customer), ['lock_version' => $this->customer->fresh()->lock_version, 'name' => 'Forbidden', 'type' => 'customer'])->assertForbidden();
         $this->delete(route('partners.destroy', $this->customer))->assertForbidden();
         auth()->forgetGuards();
         $this->get('/partners')->assertRedirect(route('login'));

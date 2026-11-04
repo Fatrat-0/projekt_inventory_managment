@@ -36,7 +36,7 @@
                             <td class="px-4 py-4"><a href="{{ route('warehouses.show', ['warehouse' => $warehouse, 'context' => $context]) }}" class="font-semibold text-gray-900 hover:text-indigo-600">{{ $warehouse->warehouse_name }}</a></td>
                             <td class="max-w-xs whitespace-pre-line break-words px-4 py-4">{{ $warehouse->location ?: 'Nincs megadva' }}</td>
                             <td class="px-4 py-4 tabular-nums">@include('warehouses.product-count')</td>
-                            <td class="whitespace-nowrap px-4 py-4 tabular-nums">{{ number_format($warehouse->total_quantity, 0, ',', ' ') }} db</td>
+                            <td class="px-4 py-4 tabular-nums">{{ number_format($warehouse->total_quantity, 0, ',', ' ') }} db @if($warehouse->total_quarantined > 0)<p class="mt-1 text-xs text-gray-500">Kiadható: {{ number_format($warehouse->total_available, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($warehouse->total_quarantined, 0, ',', ' ') }} db</p>@endif</td>
                             <td class="w-16 px-4 py-2">@include('warehouses.actions', ['variant' => 'table'])</td>
                         </tr>
                     @empty
@@ -49,7 +49,7 @@
             @forelse($warehouses as $warehouse)
                 <article data-warehouse-id="{{ $warehouse->warehouse_id }}" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                     <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="break-words font-semibold text-gray-900"><a href="{{ route('warehouses.show', ['warehouse' => $warehouse, 'context' => $context]) }}">{{ $warehouse->warehouse_name }}</a></h3><p class="mt-1 whitespace-pre-line break-words text-sm text-gray-500">{{ $warehouse->location ?: 'Nincs megadva' }}</p></div>@include('warehouses.actions', ['variant' => 'card'])</div>
-                    <dl class="grid grid-cols-2 gap-3 rounded-md bg-gray-50 p-3 text-sm"><div><dt class="text-xs text-gray-500">Készleten lévő termékfajták</dt><dd class="mt-1 font-medium tabular-nums">@include('warehouses.product-count')</dd></div><div><dt class="text-xs text-gray-500">Összkészlet</dt><dd class="mt-1 font-medium tabular-nums">{{ number_format($warehouse->total_quantity, 0, ',', ' ') }} db</dd></div></dl>
+                    <dl class="grid grid-cols-2 gap-3 rounded-md bg-gray-50 p-3 text-sm"><div><dt class="text-xs text-gray-500">Készleten lévő termékfajták</dt><dd class="mt-1 font-medium tabular-nums">@include('warehouses.product-count')</dd></div><div><dt class="text-xs text-gray-500">Összkészlet</dt><dd class="mt-1 font-medium tabular-nums">{{ number_format($warehouse->total_quantity, 0, ',', ' ') }} db @if($warehouse->total_quarantined > 0)<span class="mt-1 block text-xs font-normal text-gray-500">Kiadható: {{ number_format($warehouse->total_available, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($warehouse->total_quarantined, 0, ',', ' ') }} db</span>@endif</dd></div></dl>
                 </article>
             @empty
                 <p role="status" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">Nincs a feltételeknek megfelelő raktár.</p>
@@ -59,6 +59,6 @@
             <div class="flex flex-wrap items-center gap-3"><span>{{ $warehouses->firstItem() ?? 0 }}–{{ $warehouses->lastItem() ?? 0 }} / {{ $warehouses->total() }} találat</span><label for="warehouse-per-page" class="sr-only">Találatok oldalanként</label><select id="warehouse-per-page" name="per_page" form="warehouse-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">@foreach([15,25,50,100] as $size)<option value="{{ $size }}" @selected($filters['per_page'] === $size)>{{ $size }} / oldal</option>@endforeach</select></div>
             {{ $warehouses->links('pagination.inventory') }}
         </div>
-        <p class="text-xs text-gray-500">A termékfajták száma a pozitív készletű termékeket jelenti. Az összkészlet csak az adott raktárban található mennyiség, az úton lévő áru nélkül. Kapcsolódó készletadat vagy bizonylat esetén a raktár nem törölhető.</p>
+        <p class="text-xs text-gray-500">A termékfajták száma a pozitív készletű termékeket jelenti. Az összkészlet az adott raktár fizikai mennyisége, az elkülönített készlettel együtt, az úton lévő áru nélkül. Kapcsolódó készletadat vagy bizonylat esetén a raktár nem törölhető.</p>
     </div>
 </x-app-layout>

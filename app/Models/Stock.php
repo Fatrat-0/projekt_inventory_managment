@@ -7,7 +7,17 @@ use Illuminate\Database\Eloquent\Model;
 class Stock extends Model
 {
     // Itt maradt a sima 'id', így nem kell primaryKey-t megadni
-    protected $fillable = ['warehouse_id', 'product_id', 'quantity', 'min_quantity'];
+    protected $fillable = ['warehouse_id', 'product_id', 'quantity', 'min_quantity', 'quarantined_quantity'];
+
+    protected function casts(): array
+    {
+        return ['quantity' => 'integer', 'quarantined_quantity' => 'integer'];
+    }
+
+    public function getAvailableQuantityAttribute(): int
+    {
+        return (int)$this->quantity - (int)$this->quarantined_quantity;
+    }
 
     public function warehouse()
     {

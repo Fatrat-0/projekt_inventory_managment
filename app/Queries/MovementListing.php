@@ -20,7 +20,7 @@ class MovementListing
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:200'],
             'type' => ['nullable', Rule::in(['in', 'out', 'all'])],
-            'kind' => ['nullable', Rule::in(['all', 'regular', 'return'])],
+            'kind' => ['nullable', Rule::in(['all', 'regular', 'return', 'scrap', 'quarantined'])],
             'product_id' => ['nullable', 'integer', 'exists:products,product_id'],
             'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,warehouse_id'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
@@ -45,9 +45,12 @@ class MovementListing
     public function query(): Builder
     {
         $f = $this->filters;
-        $query = InventoryMovement::with(['product', 'warehouse', 'user', 'partner']);
-        if ($f['kind'] === 'regular') $query->whereNull('inventory_movements.return_of_id');
+        $query = InventoryMovement::with(['product', 'warehouse', 'user', 'partner', 'qualityAction']);
+        if ($f['kind'] === 'regular') $query->whereNull('inventory_movements.return_of_id')->whereNull('inventory_movements.scrap_of_id');
         if ($f['kind'] === 'return') $query->whereNotNull('inventory_movements.return_of_id');
+        if ($f['kind'] === 'scrap') $query->whereNotNull('inventory_movements.scrap_of_id');
+        if ($f['kind'] === 'quarantined') $query->whereNotNull('inventory_movements.return_of_id')->where('type', 'in')
+            ->whereRaw('inventory_movements.quarantined_quantity > (SELECT COALESCE(SUM(return_quality_actions.quantity), 0) FROM return_quality_actions WHERE return_quality_actions.return_movement_id = inventory_movements.id)');
         foreach (['type', 'product_id', 'warehouse_id', 'user_id', 'partner_id'] as $key) {
             if ($f[$key] !== null && $f[$key] !== '') $query->where('inventory_movements.'.$key, $f[$key]);
         }
@@ -65,6 +68,7 @@ class MovementListing
             $query->where(function (Builder $q) use ($pattern, $movementId) {
                 $q->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])
                     ->orWhereRaw("return_reason LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereHas('qualityAction', fn (Builder $a) => $a->whereRaw("reason LIKE ? ESCAPE '!'", [$pattern]))
                     ->orWhereRaw("partner_name LIKE ? ESCAPE '!'", [$pattern])
                     ->orWhereHas('partner', fn (Builder $p) => $p->whereRaw("name LIKE ? ESCAPE '!'", [$pattern]))
                     ->orWhereHas('product', fn (Builder $p) => $p->where(function (Builder $p) use ($pattern) {
@@ -114,7 +118,7 @@ class MovementListing
         $labels = [];
         if ($f['search'] !== '') $labels['search'] = 'Keresés: '.$f['search'];
         if ($f['type']) $labels['type'] = $f['type'] === 'in' ? 'Bevételezés' : 'Kiadás';
-        if ($f['kind']) $labels['kind'] = $f['kind'] === 'return' ? 'Csak visszáruk' : 'Csak normál mozgások';
+        if ($f['kind']) $labels['kind'] = ['return' => 'Csak visszáruk', 'regular' => 'Csak normál mozgások', 'scrap' => 'Csak selejtezések', 'quarantined' => 'Minősítésre váró visszáruk'][$f['kind']];
         if ($f['product_id']) $labels['product_id'] = 'Termék: '.Product::findOrFail($f['product_id'])->product_name;
         if ($f['warehouse_id']) $labels['warehouse_id'] = 'Raktár: '.Warehouse::findOrFail($f['warehouse_id'])->warehouse_name;
         if ($f['user_id']) $labels['user_id'] = 'Rögzítette: '.User::findOrFail($f['user_id'])->name;

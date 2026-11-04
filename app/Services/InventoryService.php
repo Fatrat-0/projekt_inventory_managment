@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Stock, User};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -80,7 +80,7 @@ class InventoryService
                 // Preserve the shared lock order: product, original movement/returns, partner, stock.
                 $this->lockProduct((int)$original->product_id);
                 $source = InventoryMovement::whereKey($original->getKey())->lockForUpdate()->firstOrFail();
-                if ($source->isReturn() || (int)$source->product_id !== (int)$original->product_id) {
+                if (!$source->isReturnable() || (int)$source->product_id !== (int)$original->product_id) {
                     throw ValidationException::withMessages(['movement' => 'Visszáru csak eredeti készletmozgásból indítható.']);
                 }
                 // A locking read also sees concurrent commits inside an outer REPEATABLE READ transaction.
@@ -96,11 +96,12 @@ class InventoryService
                 }
                 $type = $source->type === 'in' ? 'out' : 'in';
                 $balances = $this->changeStock((int)$source->product_id, (int)$source->warehouse_id,
-                    $type === 'in' ? $payload['quantity'] : -$payload['quantity']);
+                    $type === 'in' ? $payload['quantity'] : -$payload['quantity'], $type === 'in' ? $payload['quantity'] : 0);
                 $movement = InventoryMovement::create($balances + [
                     'product_id' => $source->product_id, 'warehouse_id' => $source->warehouse_id, 'partner_id' => $source->partner_id,
                     'partner_name' => $partnerName, 'type' => $type, 'quantity' => $payload['quantity'], 'user_id' => $payload['user_id'],
                     'return_of_id' => $source->id, 'return_reason' => $payload['return_reason'], 'reference' => $payload['reference'],
+                    'quarantined_quantity' => $type === 'in' ? $payload['quantity'] : 0,
                 ]);
                 if ($requestId !== null) DB::table('inventory_movement_requests')->where('id', $requestId)->update(['movement_id' => $movement->id, 'updated_at' => now()]);
                 return $movement;
@@ -121,6 +122,68 @@ class InventoryService
             throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új művelethez nyiss új készletmozgás-űrlapot.']);
         }
         return InventoryMovement::whereKey($previous->movement_id)->sharedLock()->firstOrFail();
+    }
+
+    public function processReturnQuality(InventoryMovement $return, array $data, ?string $requestKey = null): ReturnQualityAction
+    {
+        if (isset($data['reason']) && is_string($data['reason'])) $data['reason'] = Str::trim($data['reason']);
+        $validated = Validator::make($data, [
+            'action' => 'required|in:release,scrap', 'quantity' => 'required|integer|min:1|max:2147483647',
+            'reason' => 'required|string|max:500',
+        ], [], ['reason' => 'minősítés indoka'])->validate();
+        $payload = ['return_movement_id' => (int)$return->getKey(), 'user_id' => (int)$data['user_id'],
+            'action' => $validated['action'], 'quantity' => (int)$validated['quantity'], 'reason' => $validated['reason']];
+        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
+        try {
+            return DB::transaction(function () use ($return, $payload, $requestKey, $hash) {
+                // Lock before inserting the FK-linked action: concurrent inserts must not
+                // hold shared return-row locks while waiting for this same product.
+                $this->lockProduct((int)$return->product_id);
+                // Keep the actor alive until commit; an account deleted while its form
+                // was open must produce a validation error instead of a foreign-key error.
+                if (!User::whereKey($payload['user_id'])->sharedLock()->first(['id'])) {
+                    throw ValidationException::withMessages(['user' => 'A minősítést végző felhasználói fiók már nem érhető el.']);
+                }
+                // Claim first: an identical replay must succeed even after the last unit was processed.
+                $action = ReturnQualityAction::create($payload + ['request_key' => $requestKey, 'payload_hash' => $hash,
+                    'stock_before' => 0, 'stock_after' => 0, 'quarantined_before' => 0, 'quarantined_after' => 0]);
+                $source = InventoryMovement::whereKey($return->getKey())->lockForUpdate()->firstOrFail();
+                if (!$source->isReturn() || $source->type !== 'in' || $source->quarantined_quantity <= 0
+                    || (int)$source->product_id !== (int)$return->product_id) {
+                    throw ValidationException::withMessages(['movement' => 'Csak elkülönítve bevételezett vevői visszáru minősíthető.']);
+                }
+                $processed = (int)$source->qualityActions()->whereKeyNot($action->id)->lockForUpdate()->get(['quantity'])->sum('quantity');
+                $remaining = max(0, $source->quarantined_quantity - $processed);
+                if ($payload['quantity'] > $remaining) {
+                    throw ValidationException::withMessages(['quantity' => 'A még minősíthető mennyiség legfeljebb '.$remaining.' db.']);
+                }
+                $stock = Stock::where('product_id', $source->product_id)->where('warehouse_id', $source->warehouse_id)->lockForUpdate()->firstOrFail();
+                if ($stock->quarantined_quantity < $payload['quantity']) {
+                    throw ValidationException::withMessages(['quantity' => 'Nincs elegendő elkülönített készlet a művelethez.']);
+                }
+                $before = $stock->quantity;
+                $quarantinedBefore = $stock->quarantined_quantity;
+                $scrap = $payload['action'] === 'scrap';
+                $balances = $this->changeStock((int)$source->product_id, (int)$source->warehouse_id,
+                    $scrap ? -$payload['quantity'] : 0, -$payload['quantity']);
+                $movement = $scrap ? InventoryMovement::create($balances + [
+                    'product_id' => $source->product_id, 'warehouse_id' => $source->warehouse_id, 'user_id' => $payload['user_id'],
+                    'type' => 'out', 'quantity' => $payload['quantity'], 'reference' => 'Selejtezés', 'scrap_of_id' => $source->id,
+                ]) : null;
+                $action->update(['movement_id' => $movement?->id, 'stock_before' => $before, 'stock_after' => $balances['stock_after'],
+                    'quarantined_before' => $quarantinedBefore, 'quarantined_after' => $quarantinedBefore - $payload['quantity']]);
+                return $action;
+            }, 3);
+        } catch (UniqueConstraintViolationException $e) {
+            if ($requestKey === null) throw $e;
+            $previous = ReturnQualityAction::where('user_id', $payload['user_id'])->where('request_key', $requestKey)->sharedLock()->first();
+            if (!$previous) throw $e;
+            if (!hash_equals($previous->payload_hash, $hash)) {
+                throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új minősítéshez frissítsd az oldalt.']);
+            }
+            return $previous;
+        }
     }
 
     public function startTransfer(array $data, ?string $requestKey = null): InventoryTransfer
@@ -176,22 +239,26 @@ class InventoryService
         Product::whereKey($productId)->lockForUpdate()->firstOrFail();
     }
 
-    private function changeStock(int $productId, int $warehouseId, int $delta): array
+    private function changeStock(int $productId, int $warehouseId, int $delta, int $quarantineDelta = 0): array
     {
         $stock = Stock::where('product_id', $productId)->where('warehouse_id', $warehouseId)
             ->lockForUpdate()->first();
         $before = (int) ($stock?->quantity ?? 0);
         $quantity = $before + $delta;
+        $quarantined = (int)($stock?->quarantined_quantity ?? 0) + $quarantineDelta;
         if ($quantity < 0) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő készlet a kiválasztott raktárban.']);
         }
         if ($quantity > 2147483647) {
             throw ValidationException::withMessages(['quantity' => 'A készlet meghaladná a megengedett legnagyobb mennyiséget.']);
         }
+        if ($quarantined < 0 || $quarantined > $quantity) {
+            throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a kiválasztott raktárban. Az elkülönített visszáru előbb minősítendő.']);
+        }
         if ($stock) {
-            $stock->update(['quantity' => $quantity]);
+            $stock->update(['quantity' => $quantity, 'quarantined_quantity' => $quarantined]);
         } else {
-            Stock::create(['product_id' => $productId, 'warehouse_id' => $warehouseId, 'quantity' => $quantity]);
+            Stock::create(['product_id' => $productId, 'warehouse_id' => $warehouseId, 'quantity' => $quantity, 'quarantined_quantity' => $quarantined]);
         }
         return ['stock_before' => $before, 'stock_after' => $quantity];
     }

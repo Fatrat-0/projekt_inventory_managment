@@ -36,6 +36,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
         Route::get('/movements/{movement}/return', [\App\Http\Controllers\MovementReturnController::class, 'create'])->name('movements.return.create');
         Route::post('/movements/{movement}/return', [\App\Http\Controllers\MovementReturnController::class, 'store'])->name('movements.return.store');
+        Route::post('/movements/{movement}/quality', [\App\Http\Controllers\ReturnQualityController::class, 'store'])->name('movements.quality.store');
         Route::resource('movements', InventoryMovementController::class)->only(['index', 'create', 'store', 'show']);
         Route::get('/partners/duplicates', [PartnerController::class, 'duplicates'])->middleware('throttle:60,1')->name('partners.duplicates');
         Route::get('/partners/{partner}/duplicates', [PartnerController::class, 'duplicates'])->middleware('throttle:60,1')->name('partners.duplicates-edit');

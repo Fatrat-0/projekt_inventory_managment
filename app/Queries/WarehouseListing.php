@@ -34,7 +34,9 @@ class WarehouseListing
     {
         $query = Warehouse::withUsage()
             ->withCount(['stocks as products_count' => fn($stock) => $stock->where('quantity', '>', 0)])
-            ->selectRaw('(SELECT COALESCE(SUM(quantity), 0) FROM stocks WHERE stocks.warehouse_id = warehouses.warehouse_id) as total_quantity');
+            ->selectRaw('(SELECT COALESCE(SUM(quantity), 0) FROM stocks WHERE stocks.warehouse_id = warehouses.warehouse_id) as total_quantity')
+            ->selectRaw('(SELECT COALESCE(SUM(quarantined_quantity), 0) FROM stocks WHERE stocks.warehouse_id = warehouses.warehouse_id) as total_quarantined')
+            ->selectRaw('(SELECT COALESCE(SUM(quantity - quarantined_quantity), 0) FROM stocks WHERE stocks.warehouse_id = warehouses.warehouse_id) as total_available');
         if ($this->filters['warehouse_id'] !== '') $query->whereKey($this->filters['warehouse_id']);
         foreach (preg_split('/\s+/u', $this->filters['search'], -1, PREG_SPLIT_NO_EMPTY) as $word) {
             $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $word).'%';

@@ -10,8 +10,16 @@ test.beforeEach(async ({ page }) => {
 });
 
 const csrf = page => page.locator('meta[name="csrf-token"]').getAttribute('content');
-async function stock(page) { return (await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json()).quantity; }
+async function stock(page) { return (await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json()).physical_quantity; }
 async function original(page, type = 'out', quantity = 5, partner = '') {
+    // Incoming returns are quarantined: fund this fixture if previous cases spent the available part.
+    const available = (await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json()).quantity;
+    if (type === 'out' && available < quantity) {
+        const funded = await page.request.post('/movements', { headers: { 'X-CSRF-TOKEN': await csrf(page) }, form: {
+            request_key: randomUUID(), product_id: '1', warehouse_id: '1', type: 'in', quantity: String(quantity - available),
+        }, maxRedirects: 0 });
+        expect(funded.status()).toBe(302);
+    }
     const before = await stock(page);
     const reference = 'RETURN-BROWSER-'+randomUUID();
     const response = await page.request.post('/movements', { headers: { 'X-CSRF-TOKEN': await csrf(page) },

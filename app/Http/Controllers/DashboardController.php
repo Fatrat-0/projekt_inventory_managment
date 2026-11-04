@@ -8,6 +8,7 @@ use App\Models\Warehouse;
 use App\Models\Stock;
 use App\Models\InventoryMovement;
 use App\Models\Category;
+use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -19,7 +20,7 @@ class DashboardController extends Controller
 
         // 2. Alacsony készlet (ahol a mennyiség 5 vagy kevesebb)
         $lowStocks = Stock::with(['product', 'warehouse'])
-                          ->where('quantity', '<=', 5)
+                          ->whereRaw('quantity - quarantined_quantity <= 5')
                           ->get();
 
         // 3. Utolsó 5 mozgás a raktárakban
@@ -30,7 +31,9 @@ class DashboardController extends Controller
 
         // 4/A. Egyedi termékhiányok
         $lowStockProducts = Product::with('category')
-            ->withSum('stocks', 'quantity') // Összeadja az összes raktárban lévő készletet
+            ->withSum('stocks', 'quantity')
+            ->withSum('stocks as total_quarantined', 'quarantined_quantity')
+            ->withSum('stocks as total_available', DB::raw('quantity - quarantined_quantity'))
             ->get()
             ->filter(function ($product) {
                 // Limit: Saját felülbírálat VAGY Kategória alapértelmezés
@@ -42,7 +45,7 @@ class DashboardController extends Controller
                 }
                 
                 // Riasztunk, ha a jelenlegi készlet kisebb, mint a limit
-                $currentStock = $product->stocks_sum_quantity ?? 0;
+                $currentStock = $product->total_available ?? 0;
                 return $currentStock < $threshold;
             });
 
@@ -54,7 +57,7 @@ class DashboardController extends Controller
             ->filter(function ($category) {
                 // Összeadjuk a kategóriába tartozó ÖSSZES termék ÖSSZES készletét
                 $totalCategoryStock = $category->products->sum(function ($product) {
-                    return $product->stocks->sum('quantity');
+                    return $product->stocks->sum('available_quantity');
                 });
 
                 // Riasztunk, ha az összesített készlet kisebb, mint a limit

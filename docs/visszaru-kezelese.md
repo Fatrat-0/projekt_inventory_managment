@@ -7,12 +7,12 @@ Az eredeti készletmozgás adatlapjáról indítható visszáru. Egy kiadás vis
 - A termék, raktár, partner és irány az eredeti tételből származik. A végrehajtó a bejelentkezett felhasználó. Ezeket POST-mezővel nem lehet felülírni.
 - A mennyiség pozitív egész, legfeljebb 2 147 483 647, és nem lehet több az eredeti mennyiség mínusz az összes korábbi visszáru mennyisége értéknél. Több részleges visszáru összege sem lépheti túl az eredetit.
 - Kötelező az indok (legfeljebb 500 karakter), opcionális a bizonylatszám/megjegyzés (legfeljebb 255 karakter). A `0` szöveg megmarad. Az indok a PDF-be is bekerülhet, ezért üzleti bizonylathoz illő szöveg legyen.
-- Beszállítói visszaküldéskor a jelenlegi raktári készletnek is elegendőnek kell lennie. Vevői visszavétel nem lépheti túl a készletoszlop tartományát.
+- Beszállítói visszaküldéskor a jelenlegi kiadható készletnek is elegendőnek kell lennie. Vevői visszavétel nem lépheti túl a fizikai készletoszlop tartományát.
 - Archivált vagy időközben más szerepű partnerrel is visszaküldhető a korábbi ügylet. Új normál készletmozgásnál továbbra is az aktív, megfelelő szerepű partner választható.
 - Az új visszáru a partner aktuális nevének pillanatképét tárolja. Az eredeti mozgás partnerneve és adatai nem változnak.
 - Korábbi, partner és készletpillanatkép nélküli normál mozgás is visszaküldhető; a hiányzó történeti adatot nem rekonstruáljuk. Az új tétel előtte/utána egyenlege a tényleges aktuális készletből számolódik.
 - Visszáruból további visszáru nem indítható. Ez az első változat az eredeti normál mozgásokhoz és az eredeti raktárhoz kötődik; nem változtatja meg a szállítmányok vagy raktárközi átmozgatások életciklusát.
-- A bejövő visszáru jelenleg a normál raktári készletbe kerül. Külön kiadható/zárolt állapot és selejtezési folyamat még nincs; ezek önálló üzleti bővítések.
+- Az új bejövő vevői visszáru elkülönített készletbe kerül; csak minősítés után válik kiadhatóvá. Részleges felszabadítás és selejtezés is rögzíthető, lásd: `visszaru-minositese.md`. A korábbi visszáruk szabad készletét a migráció megőrzi.
 - A meglévő admin, manager és worker szerepkör használhatja. Vendégnek hitelesítés, ismeretlen szerepkörnek 403, hiányzó rekordnak 404 jár.
 
 ## Tranzakció és ismételt beküldés
@@ -31,7 +31,7 @@ Az eredeti adatlapon látszik a visszaküldött és a még visszaküldhető menn
 
 Az űrlap a friss készletet is lekéri, a megadott mennyiséget és indokot hiba után megőrzi. A Mégse és az eredeti adatlapra visszalépés megőrzi a titkosított listaállapotot. Az űrlap JavaScript nélkül is beküldhető. Böngészőből visszaállítva a Mentés újra engedélyeződik, a beküldési kulcs megmarad.
 
-A mozgáslistában külön jelzés és eredeti mozgásazonosító különbözteti meg a visszárut. A „Művelet jellege” szűrő összes műveletet, normál mozgást vagy visszárut választ. A szöveges keresés az indokban is keres, továbbra is literális `%`, `_` és `!` karakterekkel. A `kind` szűrő megmarad a dátumgyorsszűrőkben, a visszatérési kontextusban és a PDF-exportban.
+A mozgáslistában külön jelzés és eredeti mozgásazonosító különbözteti meg a visszárut. A „Művelet jellege” szűrő összes műveletet, normál mozgást, visszárut, minősítésre váró visszárut vagy selejtezést választ. A szöveges keresés az indokban is keres, továbbra is literális `%`, `_` és `!` karakterekkel. A `kind` szűrő megmarad a dátumgyorsszűrőkben, a visszatérési kontextusban és a PDF-exportban.
 
 A PDF a visszáru jelzést és az eredeti mozgás számát a meglévő oszlopokban mutatja. Az indok a hivatkozás/megjegyzés bekapcsolásakor szerepel. Ha a bizonylatszám, indok és partnernév együtt túl hosszú lenne a táblázatsorhoz, az indok teljes szövege külön részletező blokkba kerül, a sorból a visszáru azonosítója hivatkozik rá. A visszáruk beleszámítanak a fizikai bevételezés/kiadás összesítésébe, a készletirányuknak megfelelően; ezek a számok nem értékesítési vagy beszerzési forgalmat jelentenek.
 

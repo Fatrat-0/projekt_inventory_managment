@@ -53,7 +53,7 @@ class WarehouseController extends Controller
             if ($stocks->lastPage() > 1) $params['page'] = $stocks->lastPage();
             return redirect(route('warehouses.show', $params).'#local-stock');
         }
-        $stockTotals = $warehouse->stocks()->selectRaw('COALESCE(SUM(quantity), 0) AS quantity, COUNT(CASE WHEN quantity > 0 THEN 1 END) AS products_count')->first();
+        $stockTotals = $warehouse->stocks()->selectRaw('COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(quarantined_quantity), 0) AS total_quarantined, COALESCE(SUM(quantity - quarantined_quantity), 0) AS total_available, COUNT(CASE WHEN quantity > 0 THEN 1 END) AS products_count')->first();
         $incomingQuery = $warehouse->incomingTransfers()->where('status', 'pending');
         $outgoingQuery = $warehouse->outgoingTransfers()->where('status', 'pending');
         $transferTotals = fn($query) => (clone $query)->selectRaw('COUNT(*) AS transfer_count, COALESCE(SUM(quantity), 0) AS quantity')->first();

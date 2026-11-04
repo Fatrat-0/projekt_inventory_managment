@@ -14,6 +14,7 @@
         th { background-color: #edf2f7; font-weight: bold; text-align: left; padding: 6px; border: 1px solid #cbd5e0; }
         td { padding: 6px; border: 1px solid #cbd5e0; vertical-align: top; }
         .text-right { text-align: right; }
+        .stock-breakdown { margin-top: 3px; font-size: 9px; font-weight: normal; color: #596579; }
         .text-center { text-align: center; }
         .total-row { font-weight: bold; background-color: #edf2f7; }
         .count-box { border-bottom: 1px dotted #718096; display: inline-block; width: 70px; height: 14px; }
@@ -68,15 +69,18 @@
         </thead>
         <tbody>
             @php 
-                $grandTotalQty = 0; 
+                $grandTotalQty = 0;
+                $grandTotalQuarantined = 0;
                 $grandTotalValue = 0;
             @endphp
             
             @foreach($products as $product)
                 @php
                     $totalStock = $product->stocks->sum('quantity');
+                    $totalQuarantined = $product->stocks->sum('quarantined_quantity');
                     $totalValue = $totalStock * $product->price;
                     $grandTotalQty += $totalStock;
+                    $grandTotalQuarantined += $totalQuarantined;
                     $grandTotalValue += $totalValue;
                 @endphp
                 
@@ -90,6 +94,7 @@
                             @forelse($product->stocks as $stock)
                                 {{ $stock->warehouse->warehouse_name }}: 
                                 {{ $options['blind_mode'] ? '___ db' : $stock->quantity . ' db' }}<br>
+                                @if(!$options['blind_mode'] && $stock->quarantined_quantity > 0)<div class="stock-breakdown">Kiadható: {{ $stock->available_quantity }} db · Elkülönítve: {{ $stock->quarantined_quantity }} db</div>@endif
                             @empty
                                 <em>Nincs készleten</em>
                             @endforelse
@@ -97,7 +102,7 @@
                     @endif
 
                     @if(!$options['blind_mode'])
-                        <td class="text-right"><strong>{{ $totalStock }} db</strong></td>
+                        <td class="text-right"><strong>{{ $totalStock }} db</strong>@if($totalQuarantined > 0)<div class="stock-breakdown">Kiadható: {{ $totalStock - $totalQuarantined }} db<br>Elkülönítve: {{ $totalQuarantined }} db</div>@endif</td>
                     @endif
 
                     @if($options['show_count_col'] || $options['blind_mode'])
@@ -114,7 +119,7 @@
             @if(!$options['blind_mode'])
                 <tr class="total-row">
                     <td colspan="{{ $baseCols }}" class="text-right">Mindösszesen:</td>
-                    <td class="text-right">{{ $grandTotalQty }} db</td>
+                    <td class="text-right">{{ $grandTotalQty }} db @if($grandTotalQuarantined > 0)<div class="stock-breakdown">Kiadható: {{ $grandTotalQty - $grandTotalQuarantined }} db<br>Elkülönítve: {{ $grandTotalQuarantined }} db</div>@endif</td>
                     @if($options['show_count_col']) <td></td> @endif
                     @if($options['show_prices'])
                         <td></td>
@@ -124,6 +129,8 @@
             @endif
         </tbody>
     </table>
+
+    @if(!$options['blind_mode'])<p class="stock-breakdown">A rendszer szerinti mennyiség fizikai készlet, az elkülönített árut is tartalmazza.</p>@endif
 
     @if($options['show_signatures'])
         <table class="signatures">

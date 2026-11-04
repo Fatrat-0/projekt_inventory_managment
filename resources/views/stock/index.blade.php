@@ -23,8 +23,9 @@
                                 {{ $stock->product->product_name }} <span class="text-gray-400">({{ $stock->product->sku }})</span>
                             </td>
                             <td class="px-6 py-4">{{ $stock->warehouse->warehouse_name }}</td>
-                            <td class="px-6 py-4 text-right font-bold {{ $stock->quantity <= 5 ? 'text-red-600' : 'text-green-600' }}">
+                            <td class="px-6 py-4 text-right font-bold {{ $stock->available_quantity <= 5 ? 'text-red-600' : 'text-green-600' }}">
                                 {{ $stock->quantity }} db
+                                @if($stock->quarantined_quantity > 0)<p class="mt-1 text-xs font-normal text-gray-500">Kiadható: {{ number_format($stock->available_quantity, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($stock->quarantined_quantity, 0, ',', ' ') }} db</p>@endif
                             </td>
                         </tr>
                         @endforeach

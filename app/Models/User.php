@@ -34,6 +34,33 @@ class User extends Authenticatable
         'remember_token',
     ];
 
+    protected static function booted(): void
+    {
+        static::deleting(function (self $user) {
+            if (ReturnQualityAction::where('user_id', $user->id)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'user' => 'A fiók minősítési naplóhoz kapcsolódik, ezért nem törölhető.',
+                ]);
+            }
+        });
+    }
+
+    public function delete()
+    {
+        try {
+            return parent::delete();
+        } catch (\Illuminate\Database\QueryException $exception) {
+            // An initial quality action may commit between the precheck and DELETE.
+            // The FK protects it; use a current read even inside an older outer snapshot.
+            if (ReturnQualityAction::where('user_id', $this->id)->sharedLock()->first(['id'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'user' => 'A fiók minősítési naplóhoz kapcsolódik, ezért nem törölhető.',
+                ]);
+            }
+            throw $exception;
+        }
+    }
+
     /**
      * Get the attributes that should be cast.
      *

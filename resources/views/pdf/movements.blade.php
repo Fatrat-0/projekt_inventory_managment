@@ -24,8 +24,9 @@
 </head>
 <body>
     @php
-        $needsDetails = fn ($movement) => $movement->isReturn() &&
-            mb_strlen($movement->reference ?? '') + mb_strlen($movement->return_reason ?? '') +
+        $operationReason = fn ($movement) => $movement->isScrap() ? $movement->qualityAction?->reason : $movement->return_reason;
+        $needsDetails = fn ($movement) => ($movement->isReturn() || $movement->isScrap()) &&
+            mb_strlen($movement->reference ?? '') + mb_strlen($operationReason($movement) ?? '') +
             (($options['show_partner'] ?? false) ? mb_strlen($movement->partner_name ?? '') : 0) > 360;
         $detailedReturns = $options['show_reference'] ? $movements->filter($needsDetails) : collect();
     @endphp
@@ -88,11 +89,13 @@
                             <span class="badge-out">▼ KIADÁS</span>
                         @endif
                         @if($movement->isReturn())<br><small>Visszáru</small>@endif
+                        @if($movement->isScrap())<br><small>Selejtezés</small>@endif
                     </td>
                     <td>
                         <strong>{{ optional($movement->product)->product_name ?? 'Törölt termék' }}</strong><br>
                         <small style="color: #718096;">{{ optional($movement->product)->sku }}</small>
                         @if($movement->isReturn())<br><small>Eredeti: {{ $movement->original_movement_number }}</small>@endif
+                        @if($movement->isScrap())<br><small>Visszáru: MOZ-{{ str_pad((string)$movement->scrap_of_id, 6, '0', STR_PAD_LEFT) }}</small>@endif
                     </td>
                     @if($options['show_warehouse'])
                         <td>{{ optional($movement->warehouse)->warehouse_name ?? '-' }}</td>
@@ -103,9 +106,9 @@
                     @if($options['show_reference'] || ($options['show_partner'] ?? false))
                         <td>
                             @if($options['show_reference']){{ $movement->reference ?? '-' }}@endif
-                            @if($options['show_reference'] && $movement->isReturn())
+                            @if($options['show_reference'] && ($movement->isReturn() || $movement->isScrap()))
                                 @if($needsDetails($movement))<div>Indok: lásd a {{ $movement->movement_number }} részletezését.</div>
-                                @else<div>Indok: {{ $movement->return_reason }}</div>@endif
+                                @else<div>Indok: {{ $operationReason($movement) }}</div>@endif
                             @endif
                             @if(($options['show_partner'] ?? false) && $movement->partner_id)<div><small>Partner: {{ $movement->partner_name }}</small></div>@endif
                             @if(!$options['show_reference'] && !$movement->partner_id)-@endif
@@ -125,10 +128,10 @@
 
     @if($detailedReturns->isNotEmpty())
         <section>
-            <h2 style="font-size: 13px; page-break-after: avoid;">Visszáruk részletes indoklása</h2>
+            <h2 style="font-size: 13px; page-break-after: avoid;">{{ $detailedReturns->contains(fn ($item) => $item->isScrap()) ? 'Műveletek részletes indoklása' : 'Visszáruk részletes indoklása' }}</h2>
             @foreach($detailedReturns as $return)
-                <h3 style="font-size: 11px; page-break-after: avoid;">{{ $return->movement_number }} · Eredeti: {{ $return->original_movement_number }}</h3>
-                <p style="word-wrap: break-word;">{{ $return->return_reason }}</p>
+                <h3 style="font-size: 11px; page-break-after: avoid;">{{ $return->movement_number }} · {{ $return->isScrap() ? 'Selejtezés' : 'Eredeti: '.$return->original_movement_number }}</h3>
+                <p style="word-wrap: break-word;">{{ $operationReason($return) }}</p>
             @endforeach
         </section>
     @endif

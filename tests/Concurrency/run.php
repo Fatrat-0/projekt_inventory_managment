@@ -2,7 +2,7 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, Shipment, ShipmentStop, Stock, User, Warehouse};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
 use App\Services\{InventoryService, ShipmentService};
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\{Artisan, DB};
@@ -42,6 +42,8 @@ if (($argv[1] ?? '') === '--worker') {
         match ($job['action']) {
             'movement' => $service->recordMovement($job['data'], $job['requestKey'] ?? null),
             'return' => $service->recordReturn(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
+            'quality' => $service->processReturnQuality(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
+            'user_delete' => User::findOrFail($job['id'])->delete(),
             'start' => $service->startTransfer($job['data'], $job['requestKey'] ?? null),
             'complete' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), true),
             'cancel' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), false),
@@ -69,12 +71,16 @@ function check(bool $condition, string $message): void
     }
 }
 
-function race(string $database, int|array $productId, array $jobs): array
+function race(string $database, int|array $productId, array $jobs, ?int $userBarrier = null): array
 {
     $processes = [];
     DB::beginTransaction();
     try {
-        Product::whereIn('product_id', (array) $productId)->orderBy('product_id')->lockForUpdate()->get();
+        if ($userBarrier !== null) {
+            User::whereKey($userBarrier)->lockForUpdate()->firstOrFail();
+        } else {
+            Product::whereIn('product_id', (array) $productId)->orderBy('product_id')->lockForUpdate()->get();
+        }
         foreach ($jobs as $job) {
             $process = new Process([PHP_BINARY, __FILE__, '--worker', $database, base64_encode(json_encode($job, JSON_THROW_ON_ERROR))], dirname(__DIR__, 2));
             $process->setTimeout(30);
@@ -90,10 +96,10 @@ function race(string $database, int|array $productId, array $jobs): array
             usleep(10000);
         } while (microtime(true) < $deadline);
         check($ready === count($processes), 'Workers did not reach the start barrier.');
-        // Both workers must still be waiting while the parent owns the product lock.
+        // Both workers must still be waiting while the parent owns the selected barrier row.
         usleep(250000);
         foreach ($processes as $process) {
-            check($process->isRunning(), 'A worker bypassed the shared product lock.');
+            check($process->isRunning(), 'A worker bypassed the selected start barrier.');
         }
         DB::commit();
         $results = [];
@@ -126,7 +132,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['products', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'shipments', 'shipment_stops', 'shipment_items'];
+    $tables = ['users', 'products', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -303,7 +309,120 @@ try {
         }
         echo 'PASS: '.$scenario.PHP_EOL;
     }
-    echo "26 MySQL concurrency scenarios passed.\n";
+    foreach (['quality quota', 'quality replay', 'quality key changed action', 'quality quota with outer snapshot',
+        'quality replay triple with outer snapshot', 'quality scrap versus unavailable issue', 'quality release versus issue'] as $index => $scenario) {
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario, 'sku' => 'QUALITY-RACE-'.$index, 'price' => 100]);
+        $warehouse = Warehouse::create(['warehouse_name' => 'Quality '.$index]);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 8]);
+        $base = ['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'user_id' => $user->id];
+        $original = $service->recordMovement($base + ['type' => 'out', 'quantity' => 6]);
+        $returned = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Quality inspection', 'user_id' => $user->id]);
+        $stockBefore = Stock::where('product_id', $product->product_id)->sole();
+        check((int)$stockBefore->quantity === 8 && (int)$stockBefore->quarantined_quantity === 6, 'New return was not quarantined.');
+        $key = (string)\Illuminate\Support\Str::uuid();
+        $replay = str_starts_with($scenario, 'quality replay');
+        $outer = str_ends_with($scenario, 'with outer snapshot');
+        $scrapRace = $scenario === 'quality scrap versus unavailable issue';
+        $issueRace = $scenario === 'quality release versus issue';
+        $data = ['user_id' => $user->id, 'action' => $scrapRace ? 'scrap' : 'release', 'quantity' => 4, 'reason' => 'Concurrent quality check'];
+        $first = ['action' => 'quality', 'id' => $returned->id, 'data' => $data, 'requestKey' => $key, 'outerSnapshot' => $outer];
+        $second = $first;
+        $second['requestKey'] = $replay || $scenario === 'quality key changed action' ? strtoupper($key) : (string)\Illuminate\Support\Str::uuid();
+        if (!$replay) $second['data']['action'] = 'scrap';
+        if ($scrapRace || $issueRace) {
+            $second = ['action' => 'movement', 'data' => $base + ['type' => 'out', 'quantity' => $scrapRace ? 3 : 5]];
+        }
+        $jobs = [$first, $second];
+        if ($scenario === 'quality replay triple with outer snapshot') $jobs[] = $second;
+        $results = race($database, $product->product_id, $jobs);
+        $expected = $replay ? array_fill(0, count($jobs), 'OK') : ['OK', 'REJECTED'];
+        check($issueRace ? in_array($results, [['OK', 'OK'], ['OK', 'REJECTED']], true) : $results === $expected,
+            $scenario.': wrong outcomes.');
+        $actions = ReturnQualityAction::where('return_movement_id', $returned->id)->get();
+        check($actions->count() === 1 && (int)$actions->sum('quantity') === 4, $scenario.': duplicate or missing quality action.');
+        $action = $actions->sole();
+        $scrapped = $action->action === 'scrap' ? 4 : 0;
+        $issued = (int)InventoryMovement::where('product_id', $product->product_id)->whereNull('return_of_id')->whereNull('scrap_of_id')->where('id', '!=', $original->id)->sum('quantity');
+        $stockAfter = Stock::where('product_id', $product->product_id)->sole();
+        check((int)$stockAfter->quarantined_quantity === 2, $scenario.': wrong quarantine balance.');
+        check((int)$stockAfter->quantity === 8 - $scrapped - $issued, $scenario.': physical stock was applied twice.');
+        check((int)$stockAfter->quantity >= (int)$stockAfter->quarantined_quantity, $scenario.': unavailable stock was consumed.');
+        check((int)$action->quarantined_before === 6 && (int)$action->quarantined_after === 2, $scenario.': wrong quarantine audit.');
+        check((int)$action->stock_before === 8 && (int)$action->stock_after === 8 - $scrapped, $scenario.': wrong physical audit.');
+        $scrapMovements = InventoryMovement::where('scrap_of_id', $returned->id)->get();
+        check($scrapMovements->count() === ($scrapped ? 1 : 0), $scenario.': scrap movement missing or duplicated.');
+        if ($scrapped) check((int)$action->movement_id === $scrapMovements->sole()->id, $scenario.': scrap audit lost its movement.');
+        if ($scrapRace) check($issued === 0, 'Issue consumed quarantined stock while a scrap action ran.');
+        echo 'PASS: '.$scenario.PHP_EOL;
+    }
+    $qualityProducts = [];
+    $qualityReturns = [];
+    $qualityWarehouse = Warehouse::create(['warehouse_name' => 'Quality cross-product request']);
+    foreach ([1, 2] as $index) {
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Quality cross-product '.$index,
+            'sku' => 'QUALITY-CROSS-'.$index, 'price' => 100]);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id, 'quantity' => 8]);
+        $original = $service->recordMovement(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id,
+            'user_id' => $user->id, 'type' => 'out', 'quantity' => 6]);
+        $qualityProducts[] = $product->product_id;
+        $qualityReturns[] = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Cross-product inspection', 'user_id' => $user->id]);
+    }
+    $key = (string)\Illuminate\Support\Str::uuid();
+    $jobs = array_map(fn ($return, $index) => ['action' => 'quality', 'id' => $return->id,
+        'data' => ['user_id' => $user->id, 'action' => 'release', 'quantity' => 4, 'reason' => 'Cross-product request collision'],
+        'requestKey' => $index === 0 ? $key : strtoupper($key), 'outerSnapshot' => true], $qualityReturns, [0, 1]);
+    check(race($database, $qualityProducts, $jobs) === ['OK', 'REJECTED'], 'Quality same key across products was not rejected.');
+    $action = ReturnQualityAction::where('user_id', $user->id)->where('request_key', $key)->sole();
+    check(in_array((int)$action->return_movement_id, array_map(fn ($return) => $return->id, $qualityReturns), true),
+        'Cross-product request points to an unrelated return.');
+    check((int)$action->quantity === 4 && $action->action === 'release', 'Cross-product action is incomplete.');
+    check(ReturnQualityAction::whereIn('return_movement_id', array_map(fn ($return) => $return->id, $qualityReturns))->count() === 1,
+        'Cross-product collision left a second action.');
+    $stocks = Stock::whereIn('product_id', $qualityProducts)->get();
+    check((int)$stocks->sum('quantity') === 16 && (int)$stocks->sum('quarantined_quantity') === 8,
+        'Cross-product collision changed more than one quarantine balance.');
+    check($stocks->pluck('quarantined_quantity')->sort()->values()->all() === [2, 6], 'Both products were released under one key.');
+    check((int)$action->stock_before === 8 && (int)$action->stock_after === 8
+        && (int)$action->quarantined_before === 6 && (int)$action->quarantined_after === 2,
+        'Cross-product collision audit is inconsistent.');
+    echo 'PASS: quality same key different products with outer snapshot'.PHP_EOL;
+    foreach (['quality versus account deletion', 'quality versus account deletion with outer snapshot'] as $index => $scenario) {
+        $actor = User::factory()->create(['role' => 'worker']);
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario,
+            'sku' => 'QUALITY-USER-'.$index, 'price' => 100]);
+        $warehouse = Warehouse::create(['warehouse_name' => 'Quality account race '.$index]);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 8]);
+        // The actor being deleted has no other history: only this first inspection may protect it.
+        $original = $service->recordMovement(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id,
+            'user_id' => $user->id, 'type' => 'out', 'quantity' => 6]);
+        $returned = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Account race inspection', 'user_id' => $user->id]);
+        $outerSnapshot = str_ends_with($scenario, 'with outer snapshot');
+        $jobs = [
+            ['action' => 'quality', 'id' => $returned->id, 'requestKey' => (string)\Illuminate\Support\Str::uuid(),
+                'data' => ['user_id' => $actor->id, 'action' => 'release', 'quantity' => 4, 'reason' => 'First quality action races account deletion'],
+                'outerSnapshot' => $outerSnapshot],
+            ['action' => 'user_delete', 'id' => $actor->id, 'outerSnapshot' => $outerSnapshot],
+        ];
+        check(race($database, $product->product_id, $jobs, $actor->id) === ['OK', 'REJECTED'], $scenario.': expected one safe rejection.');
+        $actorExists = User::whereKey($actor->id)->exists();
+        $actions = ReturnQualityAction::where('return_movement_id', $returned->id)->get();
+        $stock = Stock::where('product_id', $product->product_id)->sole();
+        check($actions->count() === ($actorExists ? 1 : 0), $scenario.': account/history mismatch.');
+        check((int)$stock->quantity === 8 && (int)$stock->quarantined_quantity === ($actorExists ? 2 : 6),
+            $scenario.': rejected operation changed stock.');
+        check(InventoryMovement::where('product_id', $product->product_id)->count() === 2,
+            $scenario.': account deletion removed the source movement or return.');
+        if ($actorExists) {
+            $action = $actions->sole();
+            check((int)$action->user_id === $actor->id && (int)$action->quantity === 4,
+                $scenario.': inspection actor or quantity was lost.');
+            check((int)$action->stock_before === 8 && (int)$action->stock_after === 8
+                && (int)$action->quarantined_before === 6 && (int)$action->quarantined_after === 2,
+                $scenario.': inspection audit is inconsistent.');
+        }
+        echo 'PASS: '.$scenario.PHP_EOL;
+    }
+    echo "36 MySQL concurrency scenarios passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

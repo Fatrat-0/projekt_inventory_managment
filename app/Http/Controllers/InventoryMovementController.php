@@ -47,7 +47,7 @@ class InventoryMovementController extends Controller
 
     public function show(Request $request, InventoryMovement $movement)
     {
-        $movement->load(['product', 'warehouse', 'user', 'partner', 'returnOf'])->loadSum('returns', 'quantity');
+        $movement->load(['product', 'warehouse', 'user', 'partner', 'returnOf', 'qualityAction.user'])->loadSum('returns', 'quantity');
         $returned = (int)$movement->returns_sum_quantity;
         $remaining = max(0, $movement->quantity - $returned);
         $returnHistory = $movement->returns()->with('user')->orderByDesc('id')->paginate(10, ['*'], 'returns_page')->withQueryString();
@@ -60,7 +60,17 @@ class InventoryMovementController extends Controller
             return redirect()->route('movements.show', $params);
         }
         $returnUrl = \App\Support\MovementListContext::url($request->query('context'));
-        return view('movements.show', compact('movement', 'returnUrl', 'returned', 'remaining', 'returnHistory', 'context'));
+        $qualityHistory = $movement->qualityActions()->with(['user', 'movement'])->orderByDesc('id')->paginate(10, ['*'], 'quality_page')->withQueryString();
+        if ($qualityHistory->currentPage() > $qualityHistory->lastPage()) {
+            $params = ['movement' => $movement];
+            if ($context !== '') $params['context'] = $context;
+            if ($qualityHistory->lastPage() > 1) $params['quality_page'] = $qualityHistory->lastPage();
+            return redirect()->route('movements.show', $params);
+        }
+        $qualityRemaining = max(0, $movement->quarantined_quantity - (int)$movement->qualityActions()->sum('quantity'));
+        $qualityKey = $request->old('request_key');
+        if (!is_string($qualityKey) || !\Illuminate\Support\Str::isUuid($qualityKey)) $qualityKey = (string)\Illuminate\Support\Str::uuid();
+        return view('movements.show', compact('movement', 'returnUrl', 'returned', 'remaining', 'returnHistory', 'context', 'qualityHistory', 'qualityRemaining', 'qualityKey'));
     }
 
     public function stock(Request $request)
@@ -69,9 +79,9 @@ class InventoryMovementController extends Controller
             'product_id' => 'required|integer|exists:products,product_id',
             'warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
         ]);
-        $quantity = (int) \App\Models\Stock::where('product_id', $data['product_id'])
-            ->where('warehouse_id', $data['warehouse_id'])->value('quantity');
-        return response()->json(['quantity' => $quantity])->header('Cache-Control', 'no-store');
+        $stock = \App\Models\Stock::where('product_id', $data['product_id'])->where('warehouse_id', $data['warehouse_id'])->first();
+        return response()->json(['quantity' => $stock?->available_quantity ?? 0, 'physical_quantity' => $stock?->quantity ?? 0,
+            'quarantined_quantity' => $stock?->quarantined_quantity ?? 0])->header('Cache-Control', 'no-store');
     }
 
     public function store(Request $request, InventoryService $inventory)

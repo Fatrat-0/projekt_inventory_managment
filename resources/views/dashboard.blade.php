@@ -34,6 +34,21 @@
                 </div>
             </div>
 
+            <section aria-label="Minősítésre váró visszáruk" class="rounded-lg border {{ $qualitySummary['returns_count'] > 0 ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white' }} p-5 shadow-sm">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <h3 class="font-semibold text-gray-900">Minősítésre váró visszáruk</h3>
+                        <p class="mt-2 text-sm text-gray-700"><strong class="tabular-nums" data-quality-summary="returns">{{ number_format($qualitySummary['returns_count'], 0, ',', ' ') }} tétel</strong> · <strong class="tabular-nums" data-quality-summary="quantity">{{ number_format($qualitySummary['quantity'], 0, ',', ' ') }} db</strong> még elkülönítve</p>
+                        @if($qualitySummary['oldest_at'])
+                            <p class="mt-1 text-xs text-gray-600">Legkorábbi beérkezés: <time datetime="{{ $qualitySummary['oldest_at']->toIso8601String() }}">{{ $qualitySummary['oldest_at']->format('Y.m.d H:i') }}</time></p>
+                        @else
+                            <p class="mt-1 text-xs text-gray-500">Nincs minősítésre váró visszáru.</p>
+                        @endif
+                    </div>
+                    <a href="{{ route('quality-returns.index', ['status' => 'open']) }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50">Minősítési munkalista</a>
+                </div>
+            </section>
+
             <!-- ÚJ: INTELLIGENS RIASZTÁSOK (Két oszlopos rács) -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 

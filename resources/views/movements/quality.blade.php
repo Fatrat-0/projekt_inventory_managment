@@ -2,6 +2,7 @@
     <div><h3 class="font-semibold text-gray-900">Visszáru minősítése</h3>
         @if($movement->quarantined_quantity > 0)
             <p class="mt-1 text-gray-600">Még elkülönítve: <strong>{{ number_format($qualityRemaining, 0, ',', ' ') }} db</strong> · Eredetileg elkülönítve: {{ number_format($movement->quarantined_quantity, 0, ',', ' ') }} db</p>
+            <p class="mt-1 text-gray-500">Felszabadítva: {{ number_format($qualityReleased, 0, ',', ' ') }} db · Selejtezve: {{ number_format($qualityScrapped, 0, ',', ' ') }} db</p>
         @else
             <p class="mt-1 text-gray-600">Ez a korábbi visszáru szabad készletként került bevételezésre; utólag nem helyeztük elkülönítésbe.</p>
         @endif

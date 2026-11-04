@@ -12,7 +12,8 @@
                             <button type="button" @click="filtersOpen = !filtersOpen" :aria-expanded="filtersOpen" aria-controls="movement-filter-panel" class="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"><x-icon name="filter" /> Szűrők</button>
                         </div>
                     </form>
-                    <div class="flex gap-2 items-center">
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <a href="{{ route('quality-returns.index') }}" class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Minősítési munkalista</a>
                         <a href="{{ $createUrl }}" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">+ Új mozgás</a>
                         @include('movements.pdf-options')
                     </div>
@@ -104,7 +105,7 @@
                                 <td class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
                                 <td class="px-4 py-3">{{ $movement->user->name }}</td>
-                                <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference ?: '—' }}
+                                <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference !== null && $movement->reference !== '' ? $movement->reference : '—' }}
                                     @if($movement->isReturn())
                                         <a href="{{ route('movements.show', ['movement' => $movement->return_of_id, 'context' => $listContext]) }}" class="mt-1 block text-xs font-medium text-amber-800 underline">Visszáru · {{ $movement->original_movement_number }}</a>
                                         <p class="mt-1 text-xs text-gray-500">{{ $movement->return_reason }}</p>

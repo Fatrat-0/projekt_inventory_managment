@@ -33,6 +33,7 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager,worker'])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+        Route::get('/quality-returns', [\App\Http\Controllers\ReturnQualityQueueController::class, 'index'])->name('quality-returns.index');
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
         Route::get('/movements/{movement}/return', [\App\Http\Controllers\MovementReturnController::class, 'create'])->name('movements.return.create');
         Route::post('/movements/{movement}/return', [\App\Http\Controllers\MovementReturnController::class, 'store'])->name('movements.return.store');

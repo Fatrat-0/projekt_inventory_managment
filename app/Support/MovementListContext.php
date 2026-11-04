@@ -9,17 +9,31 @@ class MovementListContext
 {
     public static function encode(array $filters): string
     {
-        return Crypt::encryptString(json_encode($filters, JSON_THROW_ON_ERROR));
+        return Crypt::encryptString(json_encode($filters, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
     }
 
     public static function url(mixed $token): string
     {
+        return self::destination($token)['url'];
+    }
+
+    public static function encodeQuality(array $filters): string
+    {
+        return self::encode(['view' => 'return_quality'] + $filters);
+    }
+
+    public static function destination(mixed $token): array
+    {
         $filters = [];
+        $quality = false;
         if (is_string($token) && strlen($token) <= 4096) {
             try {
                 $decoded = json_decode(Crypt::decryptString($token), true);
                 if (is_array($decoded)) {
-                    foreach (['search', 'type', 'kind', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
+                    $quality = ($decoded['view'] ?? null) === 'return_quality';
+                    $keys = $quality ? ['search', 'status', 'product_id', 'warehouse_id', 'partner_id', 'sort_by', 'sort_dir', 'per_page', 'page']
+                        : ['search', 'type', 'kind', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'];
+                    foreach ($keys as $key) {
                         if (isset($decoded[$key]) && is_scalar($decoded[$key])) $filters[$key] = $decoded[$key];
                     }
                 }
@@ -27,6 +41,7 @@ class MovementListContext
                 // Invalid context returns to the unfiltered local list.
             }
         }
-        return route('movements.index', $filters);
+        return ['url' => route($quality ? 'quality-returns.index' : 'movements.index', $filters),
+            'label' => $quality ? '← Minősítési munkalista' : '← Készletmozgások'];
     }
 }

@@ -1,6 +1,6 @@
 <x-app-layout>
     <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-        <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Készletmozgások</a>
+        <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">{{ $returnLabel }}</a>
         <x-operation-feedback />
         <div class="flex flex-wrap items-center gap-3">
             <h2 class="text-xl font-bold text-gray-900">{{ $movement->movement_number }}</h2>

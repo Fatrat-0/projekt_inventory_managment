@@ -19,7 +19,7 @@ class MovementAuditSeederTest extends TestCase
         $this->assertCount(5, $demo);
         $this->assertSame([[0,20], [20,15], [15,23], [0,10], [10,0]], $demo->map(fn($m) => [$m->stock_before, $m->stock_after])->all());
         $this->assertSame(45, InventoryMovement::whereNull('stock_before')->whereNull('stock_after')->count());
-        $this->assertDatabaseCount('inventory_movement_requests', 7);
+        $this->assertDatabaseCount('inventory_movement_requests', 12);
         $this->assertSame(0, DB::table('inventory_movement_requests')->whereNull('movement_id')->count());
         $warehouse = Warehouse::where('warehouse_name', 'Bemutató raktár – Audit')->sole();
         foreach (['DEMO-AUDIT-CSAVAR' => 23, 'DEMO-AUDIT-KESZTYU' => 0] as $sku => $expected) {

@@ -55,9 +55,9 @@ Feltételek: futó helyi MySQL, InnoDB táblák, elérhető PHP CLI és a `.env`
 
 A futtató minden alkalommal saját `inventory_race_test_<16 véletlen hexadecimális karakter>` adatbázist készít. Kizárólag ebben migrál és hoz létre tesztadatokat. A végén kizárólag az adott futásban létrehozott adatbázist törli. Az alkalmazás adatbázisán nem futtat migrációt, ürítést vagy készletmódosítást. A futtató folyamat kényszerített leállításakor a tesztadatbázis megmaradhat.
 
-Minden esetben két külön PHP-folyamat és adatbázis-kapcsolat fut. A szülőfolyamat kezdetben zárolja a terméket; mindkét dolgozó jelzi az indulást, és a teszt ellenőrzi, hogy a zárolás feloldásáig egyik sem fejeződött be. Ezután elengedi a zárat, és ellenőrzi a műveletek eredményét, az egyenlegeket és a naplókat.
+Az esetekben két, a háromszoros ismétlésnél három külön PHP-folyamat és adatbázis-kapcsolat fut. A szülőfolyamat kezdetben zárolja a terméket; a dolgozók jelzik az indulást, és a teszt ellenőrzi, hogy a zárolás feloldásáig egyik sem fejeződött be. Ezután elengedi a zárat, és ellenőrzi a műveletek eredményét, az egyenlegeket és a naplókat. A külső tranzakciós esetekben a dolgozók még az indulási jelzés előtt létrehozzák a REPEATABLE READ pillanatképet.
 
-Nyolc forgatókönyv:
+Az első nyolc alapforgatókönyv:
 
 1. Két egyidejű, 7 darabos kiadás 10 darabos készletből.
 2. Két egyidejű átmozgatásindítás ugyanebből a készletből.
@@ -67,6 +67,8 @@ Nyolc forgatókönyv:
 6. Két külön átmozgatás érkezése ugyanabba a még nem létező célkészletbe.
 7. Kiadás és átmozgatásindítás ugyanabból a forráskészletből.
 8. Ugyanazon átmozgatás kétszeri visszavonása.
+
+Ezek mellett beküldési kulcsos mozgás/átmozgatás, szállítmány-indítás/átvétel/visszavonás és közös készletért versengő műveletek is szerepelnek. A visszáru hét további esete az összesített korlátot, ismételt vagy eltérő beküldést, normál kiadással való versenyt és külső REPEATABLE READ tranzakciót ellenőrzi. Összesen 26 forgatókönyv fut; a visszáru-esetek részleteit a `visszaru-kezelese.md` tartalmazza.
 
 A szkript bármely hibánál nem nulla kilépési kóddal fejeződik be. A külön MySQL-tesztek nem részei az alap `php artisan test` futásnak. Ezek célzott helyességi tesztek, nem terhelésmérés és nem általános hibamentességi bizonyítékok.
 

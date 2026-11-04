@@ -19,7 +19,7 @@ class MovementListContext
             try {
                 $decoded = json_decode(Crypt::decryptString($token), true);
                 if (is_array($decoded)) {
-                    foreach (['search', 'type', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
+                    foreach (['search', 'type', 'kind', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'] as $key) {
                         if (isset($decoded[$key]) && is_scalar($decoded[$key])) $filters[$key] = $decoded[$key];
                     }
                 }

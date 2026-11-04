@@ -59,7 +59,9 @@ class InventoryMovementController extends Controller
             if ($returnHistory->lastPage() > 1) $params['returns_page'] = $returnHistory->lastPage();
             return redirect()->route('movements.show', $params);
         }
-        $returnUrl = \App\Support\MovementListContext::url($request->query('context'));
+        $destination = \App\Support\MovementListContext::destination($request->query('context'));
+        $returnUrl = $destination['url'];
+        $returnLabel = $destination['label'];
         $qualityHistory = $movement->qualityActions()->with(['user', 'movement'])->orderByDesc('id')->paginate(10, ['*'], 'quality_page')->withQueryString();
         if ($qualityHistory->currentPage() > $qualityHistory->lastPage()) {
             $params = ['movement' => $movement];
@@ -67,10 +69,13 @@ class InventoryMovementController extends Controller
             if ($qualityHistory->lastPage() > 1) $params['quality_page'] = $qualityHistory->lastPage();
             return redirect()->route('movements.show', $params);
         }
-        $qualityRemaining = max(0, $movement->quarantined_quantity - (int)$movement->qualityActions()->sum('quantity'));
+        $qualityTotals = $movement->qualityActions()->toBase()->selectRaw("COALESCE(SUM(CASE WHEN action = 'release' THEN quantity ELSE 0 END), 0) AS released, COALESCE(SUM(CASE WHEN action = 'scrap' THEN quantity ELSE 0 END), 0) AS scrapped, COALESCE(SUM(quantity), 0) AS processed")->first();
+        $qualityReleased = (int)$qualityTotals->released;
+        $qualityScrapped = (int)$qualityTotals->scrapped;
+        $qualityRemaining = max(0, $movement->quarantined_quantity - (int)$qualityTotals->processed);
         $qualityKey = $request->old('request_key');
         if (!is_string($qualityKey) || !\Illuminate\Support\Str::isUuid($qualityKey)) $qualityKey = (string)\Illuminate\Support\Str::uuid();
-        return view('movements.show', compact('movement', 'returnUrl', 'returned', 'remaining', 'returnHistory', 'context', 'qualityHistory', 'qualityRemaining', 'qualityKey'));
+        return view('movements.show', compact('movement', 'returnUrl', 'returnLabel', 'returned', 'remaining', 'returnHistory', 'context', 'qualityHistory', 'qualityRemaining', 'qualityReleased', 'qualityScrapped', 'qualityKey'));
     }
 
     public function stock(Request $request)

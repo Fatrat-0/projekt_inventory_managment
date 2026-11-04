@@ -423,7 +423,7 @@
                                             </button>
 
                                             @if($totalQuarantined > 0)
-                                                <p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</p>
+                                                <p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'product_id' => $product->product_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</a></p>
                                             @endif
 
                                             <!-- Felugró Raktári Eloszlás Kártya -->
@@ -442,7 +442,7 @@
                                                                 <span class="truncate pr-2">{{ optional($st->warehouse)->warehouse_name ?? '-' }}:</span>
                                                                 <span class="font-bold text-gray-900">{{ $st->quantity }} db</span>
                                                             </div>
-                                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · Elkülönítve: {{ $st->quarantined_quantity }} db</p>@endif
+                                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'product_id' => $st->product_id, 'warehouse_id' => $st->warehouse_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ $st->quarantined_quantity }} db</a></p>@endif
                                                         </div>
                                                     @empty
                                                         <div class="text-gray-400 italic">Egyik raktárban sincs készleten.</div>
@@ -520,7 +520,7 @@
                                     </span>
                                 </div>
 
-                                @if($totalQuarantined > 0)<p class="mb-2 text-xs text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</p>@endif
+                                @if($totalQuarantined > 0)<p class="mb-2 text-xs text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'product_id' => $product->product_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</a></p>@endif
                                 <h3 class="font-semibold text-gray-900 text-base mb-1">{{ $product->product_name }}</h3>
                                 <p class="text-xs text-gray-500 mb-3 leading-relaxed">
                                     {{ optional(optional($product->category)->parent)->category_name ? $product->category->parent->category_name . ' ➔ ' : '' }}{{ optional($product->category)->category_name }}
@@ -535,7 +535,7 @@
                                                 <span>{{ optional($st->warehouse)->warehouse_name }}</span>
                                                 <span class="font-bold">{{ $st->quantity }} db</span>
                                             </div>
-                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · Elkülönítve: {{ $st->quarantined_quantity }} db</p>@endif
+                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'product_id' => $st->product_id, 'warehouse_id' => $st->warehouse_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ $st->quarantined_quantity }} db</a></p>@endif
                                         </div>
                                     @empty
                                         <div class="text-gray-400 italic">0 db készleten</div>

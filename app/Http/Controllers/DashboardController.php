@@ -17,6 +17,7 @@ class DashboardController extends Controller
         // 1. Alap statisztikák
         $totalProducts = Product::count();
         $totalWarehouses = Warehouse::count();
+        $qualitySummary = \App\Queries\ReturnQualityListing::pendingSummary();
 
         // 2. Alacsony készlet (ahol a mennyiség 5 vagy kevesebb)
         $lowStocks = Stock::with(['product', 'warehouse'])
@@ -71,6 +72,7 @@ class DashboardController extends Controller
             ,'recentMovements' 
             ,'lowStockProducts' 
             ,'lowStockCategories'
+            ,'qualitySummary'
         ));
     }
 }

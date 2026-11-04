@@ -1,0 +1,1 @@
+<span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ match($status) { 'closed' => 'bg-green-50 text-green-800', 'partial' => 'bg-indigo-50 text-indigo-800', default => 'bg-amber-50 text-amber-900' } }}">{{ \App\Queries\ReturnQualityListing::STATUSES[$status] }}</span>

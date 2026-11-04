@@ -4,7 +4,9 @@
 // Run: php tests/Concurrency/run.php
 use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
 use App\Services\{InventoryService, ShipmentService};
+use App\Queries\ReturnQualityListing;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Artisan, DB};
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\Process\Process;
@@ -422,6 +424,94 @@ try {
         }
         echo 'PASS: '.$scenario.PHP_EOL;
     }
+    // Validate the read-only queue SQL on real MySQL using the completed race fixtures.
+    // Its expected quantities are computed in PHP from individual immutable actions.
+    $queueSnapshot = function (): string {
+        $data = [];
+        foreach (['stocks', 'inventory_movements', 'return_quality_actions'] as $table) {
+            $data[$table] = DB::table($table)->orderBy('id')->get()->toArray();
+        }
+        return hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
+    };
+    $beforeQueueReads = $queueSnapshot();
+    $queueExpected = [];
+    foreach (InventoryMovement::with(['qualityActions', 'product', 'warehouse'])->whereNotNull('return_of_id')
+        ->where('type', 'in')->where('quarantined_quantity', '>', 0)->get() as $return) {
+        $released = (int)$return->qualityActions->where('action', 'release')->sum('quantity');
+        $scrapped = (int)$return->qualityActions->where('action', 'scrap')->sum('quantity');
+        $processed = (int)$return->qualityActions->sum('quantity');
+        $remaining = max(0, (int)$return->quarantined_quantity - $processed);
+        $queueExpected[(int)$return->id] = ['id' => (int)$return->id, 'original_quantity' => (int)$return->quarantined_quantity,
+            'released_quantity' => $released, 'scrapped_quantity' => $scrapped, 'remaining_quantity' => $remaining,
+            'status' => $remaining === 0 ? 'closed' : ($processed === 0 ? 'waiting' : 'partial'),
+            'created_at' => $return->created_at->format('Y-m-d H:i:s'), 'product_name' => $return->product->product_name,
+            'warehouse_name' => $return->warehouse->warehouse_name];
+    }
+    check(count($queueExpected) > 0, 'Queue SQL check requires eligible return fixtures.');
+    $queueIds = array_keys($queueExpected);
+    sort($queueIds);
+    $summaryExpected = ['open_count' => 0, 'waiting_count' => 0, 'partial_count' => 0, 'closed_count' => 0, 'pending_quantity' => 0];
+    $pendingDates = [];
+    foreach ($queueExpected as $expected) {
+        $summaryExpected[$expected['status'].'_count']++;
+        if ($expected['remaining_quantity'] > 0) {
+            $summaryExpected['open_count']++;
+            $summaryExpected['pending_quantity'] += $expected['remaining_quantity'];
+            $pendingDates[] = $expected['created_at'];
+        }
+    }
+    $oldestExpected = $pendingDates === [] ? null : min($pendingDates);
+    foreach (['all', 'open', 'waiting', 'partial', 'closed'] as $status) {
+        $listing = new ReturnQualityListing(Request::create('/quality-returns', 'GET', ['status' => $status, 'per_page' => 100]));
+        $rows = $listing->query()->get();
+        $wanted = array_keys(array_filter($queueExpected, fn($row) => $status === 'all'
+            || ($status === 'open' ? $row['remaining_quantity'] > 0 : $row['status'] === $status)));
+        $actual = array_map('intval', $rows->pluck('id')->all());
+        sort($wanted);
+        sort($actual);
+        check($actual === $wanted, 'Queue '.$status.': wrong MySQL status result set.');
+        foreach ($rows as $row) {
+            $expected = $queueExpected[(int)$row->id];
+            foreach (['released_quantity', 'scrapped_quantity', 'remaining_quantity'] as $field) {
+                check((int)$row->$field === $expected[$field], 'Queue '.$status.': incorrect '.$field.' aggregate.');
+            }
+            check(ReturnQualityListing::status($row) === $expected['status'], 'Queue '.$status.': incorrect derived state.');
+        }
+        $summary = $listing->summary();
+        foreach ($summaryExpected as $field => $value) check($summary[$field] === $value, 'Queue '.$status.': wrong summary '.$field.'.');
+        check($summary['oldest_at']?->format('Y-m-d H:i:s') === $oldestExpected, 'Queue '.$status.': wrong oldest pending date.');
+    }
+    $pendingSummary = ReturnQualityListing::pendingSummary();
+    check($pendingSummary['returns_count'] === $summaryExpected['open_count']
+        && $pendingSummary['quantity'] === $summaryExpected['pending_quantity']
+        && $pendingSummary['oldest_at']?->format('Y-m-d H:i:s') === $oldestExpected, 'Queue dashboard summary differs from pending returns.');
+    foreach (array_keys(ReturnQualityListing::SORTS) as $sort) {
+        foreach (['asc', 'desc'] as $direction) {
+            $listing = new ReturnQualityListing(Request::create('/quality-returns', 'GET', ['status' => 'all', 'per_page' => 100,
+                'sort_by' => $sort, 'sort_dir' => $direction]));
+            $actual = array_map('intval', $listing->query()->get()->pluck('id')->all());
+            $actualSet = $actual;
+            sort($actualSet);
+            check($actualSet === $queueIds, 'Queue '.$sort.' '.$direction.': sorting lost or duplicated rows.');
+            if (!in_array($sort, ['product_name', 'warehouse_name'], true)) {
+                $expectedRows = array_values($queueExpected);
+                usort($expectedRows, function ($left, $right) use ($sort, $direction) {
+                    $compared = ($left[$sort] <=> $right[$sort]) ?: ($left['id'] <=> $right['id']);
+                    return $direction === 'asc' ? $compared : -$compared;
+                });
+                check($actual === array_column($expectedRows, 'id'), 'Queue '.$sort.' '.$direction.': incorrect numeric/date order or tie breaker.');
+            } else {
+                // MySQL collation controls lexical ordering; exact equal names must still use stable IDs.
+                for ($index = 1; $index < count($actual); $index++) {
+                    if ($queueExpected[$actual[$index - 1]][$sort] !== $queueExpected[$actual[$index]][$sort]) continue;
+                    check($direction === 'asc' ? $actual[$index - 1] < $actual[$index] : $actual[$index - 1] > $actual[$index],
+                        'Queue '.$sort.' '.$direction.': unstable IDs for equal names.');
+                }
+            }
+        }
+    }
+    check(hash_equals($beforeQueueReads, $queueSnapshot()), 'Queue reads changed stock, movement history or quality actions.');
+    echo 'PASS: quality queue MySQL aggregates and filters'.PHP_EOL;
     echo "36 MySQL concurrency scenarios passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);

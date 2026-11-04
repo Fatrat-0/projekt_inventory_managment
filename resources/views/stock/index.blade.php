@@ -25,7 +25,7 @@
                             <td class="px-6 py-4">{{ $stock->warehouse->warehouse_name }}</td>
                             <td class="px-6 py-4 text-right font-bold {{ $stock->available_quantity <= 5 ? 'text-red-600' : 'text-green-600' }}">
                                 {{ $stock->quantity }} db
-                                @if($stock->quarantined_quantity > 0)<p class="mt-1 text-xs font-normal text-gray-500">Kiadható: {{ number_format($stock->available_quantity, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($stock->quarantined_quantity, 0, ',', ' ') }} db</p>@endif
+                                @if($stock->quarantined_quantity > 0)<p class="mt-1 text-xs font-normal text-gray-500">Kiadható: {{ number_format($stock->available_quantity, 0, ',', ' ') }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ number_format($stock->quarantined_quantity, 0, ',', ' ') }} db</a></p>@endif
                             </td>
                         </tr>
                         @endforeach

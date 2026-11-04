@@ -262,7 +262,7 @@ class ReturnQualityQueueTest extends TestCase
         $key = (string)Str::uuid();
         $before = $this->snapshot();
         $this->from($detail)->post(route('movements.quality.store', $return), ['request_key' => $key, 'action' => 'scrap',
-            'quantity' => 4, 'reason' => 'Megőrzendő indok', 'context' => $token])->assertRedirect($detail)->assertSessionHasErrors('quantity');
+            'quantity' => 4, 'reason' => 'Megőrzendő indok', 'context' => $token])->assertRedirect($detail.'#return-quality')->assertSessionHasErrors('quantity');
         $this->assertSame($token, session()->getOldInput('context'));
         $this->assertSame($key, session()->getOldInput('request_key'));
         $this->assertSame($before, $this->snapshot());

@@ -17,15 +17,20 @@ async function stock(page) {
     return response.json();
 }
 async function post(page, url, data, json = false) {
-    return page.request.post(url, {
+    const response = await page.request.post(url, {
         headers: { 'X-CSRF-TOKEN': await csrf(page), ...(json ? { Accept: 'application/json' } : {}) },
         form: data, maxRedirects: 0,
     });
+    if (url.endsWith('/quality') && data.action === 'scrap' && !data.confirmation && response.status() === 200) {
+        const token = (await response.text()).match(/name="confirmation" value="([^"]+)"/)[1];
+        return post(page, url, { ...data, confirmation: token }, json);
+    }
+    return response;
 }
-async function quarantinedReturn(page, quantity = 6) {
+async function quarantinedReturn(page, quantity = 6, product = 1, warehouse = 1) {
     const before = await stock(page);
     // Fund this test's original issue so each test is independent of other stock consumers.
-    const common = { product_id: '1', warehouse_id: '1', quantity: String(quantity) };
+    const common = { product_id: String(product), warehouse_id: String(warehouse), quantity: String(quantity) };
     expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'in' })).status()).toBe(302);
     const reference = 'QUALITY-BROWSER-'+randomUUID();
     expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'out', reference })).status()).toBe(302);
@@ -47,7 +52,13 @@ async function fillQuality(page, action, quantity, reason) {
     await section.getByLabel('Minősítés indoka', { exact: true }).fill(reason);
 }
 async function submitQuality(page) {
-    await quality(page).getByRole('button', { name: 'Minősítés rögzítése', exact: true }).click();
+    const action = await quality(page).getByLabel('Művelet', { exact: true }).inputValue();
+    const [response] = await Promise.all([page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith('/quality')),
+        quality(page).getByRole('button', { name: 'Minősítés rögzítése', exact: true }).click()]);
+    if (action === 'scrap' && response.status() === 200) {
+        await expect(page.getByRole('heading', { name: 'Selejtezés megerősítése', exact: true })).toBeVisible();
+        await page.getByRole('button', { name: 'Selejtezés véglegesítése', exact: true }).click();
+    }
 }
 function expectStock(actual, before, physicalDelta, quarantinedDelta) {
     expect(actual.physical_quantity).toBe(before.physical_quantity + physicalDelta);
@@ -124,6 +135,60 @@ test('stale inspection form reports the current remainder and preserves the subm
     await fillQuality(page, 'scrap', 2, 'Megőrzendő minősítési indok');
     await submitQuality(page);
     expectStock(await stock(page), source.before, 4, 0);
+});
+
+test('scrap preview leaves stock intact and editing preserves the request and reason', async ({ page }) => {
+    const source = await quarantinedReturn(page, 2);
+    const before = await stock(page);
+    const key = await quality(page).locator('input[name="request_key"]').inputValue();
+    const reason = '<script>test</script> '+ 'W'.repeat(400);
+    await fillQuality(page, 'scrap', 2, reason);
+    await quality(page).getByRole('button', { name: 'Minősítés rögzítése', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Selejtezés megerősítése', exact: true })).toBeVisible();
+    expect(await stock(page)).toEqual(before);
+    await page.setViewportSize({ width: 320, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: 'tests/Browser/.runtime/scrap-confirmation-mobile.png', fullPage: true });
+    await page.getByRole('button', { name: 'Vissza a szerkesztéshez', exact: true }).click();
+    await expect(quality(page).getByLabel('Minősítés indoka', { exact: true })).toHaveValue(reason);
+    await expect(quality(page).locator('input[name="request_key"]')).toHaveValue(key);
+    expect(await stock(page)).toEqual(before);
+});
+
+test('confirmation fits extreme values at all breakpoints and a tampered token returns to the editable GET page', async ({ page }) => {
+    const sku = ('CONFIRM-'+randomUUID()).padEnd(50, 'X');
+    expect((await post(page, '/products', { product_name: 'W'.repeat(100), sku, price: '100', category_id: '1' })).status()).toBe(302);
+    const productHtml = await (await page.request.get('/products?search='+sku)).text();
+    const product = productHtml.match(/\/products\/(\d+)\/edit/)[1];
+    await post(page, '/logout', {});
+    await page.goto('/login');
+    await page.getByLabel('Email', { exact: true }).fill('warehouse-admin@example.test');
+    await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
+    await page.getByRole('button', { name: 'Log in', exact: true }).click();
+    await expect(page).toHaveURL(/dashboard/);
+    const warehouseName = 'W'.repeat(64)+randomUUID();
+    expect((await post(page, '/warehouses', { warehouse_name: warehouseName, location: 'Test' })).status()).toBe(302);
+    const warehouseHtml = await (await page.request.get('/warehouses?search='+warehouseName)).text();
+    const warehouse = warehouseHtml.match(/data-warehouse-id="(\d+)"/)[1];
+    const source = await quarantinedReturn(page, 2147483647, product, warehouse);
+    await fillQuality(page, 'scrap', 2147483647, 'W'.repeat(500));
+    await quality(page).getByRole('button', { name: 'Minősítés rögzítése', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Selejtezés megerősítése', exact: true })).toBeVisible();
+    for (const width of [320,375,767,768,1024,1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.screenshot({ path: 'tests/Browser/.runtime/scrap-confirmation-extreme.png', fullPage: true });
+    await page.locator('input[name="confirmation"]').evaluate(el => el.value = 'tampered');
+    await page.getByRole('button', { name: 'Selejtezés véglegesítése', exact: true }).click();
+    await expect(page).toHaveURL(url => url.pathname === source.path && url.hash === '#return-quality');
+    await expect(page.getByRole('alert')).toContainText('A megerősítés lejárt vagy az adatok megváltoztak');
+    await expect(quality(page).getByLabel('Minősítés indoka', { exact: true })).toHaveValue('W'.repeat(500));
+    await expect(page.locator('input[name="confirmation"]')).toHaveCount(0);
+    const current = await (await page.request.get('/movements/stock?product_id='+product+'&warehouse_id='+warehouse)).json();
+    expect(current.physical_quantity).toBe(2147483647);
+    expect(current.quarantined_quantity).toBe(2147483647);
 });
 
 test('inspection works without JavaScript on mobile and escapes its history reason', async ({ page, browser }) => {

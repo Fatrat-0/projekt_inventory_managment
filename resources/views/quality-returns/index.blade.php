@@ -7,12 +7,12 @@
         </div>
         <x-operation-feedback />
         <section aria-label="Minősítési összesítők" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            @foreach(['open' => ['Nyitott', 'open_count'], 'waiting' => ['Várakozik', 'waiting_count'], 'partial' => ['Részben minősítve', 'partial_count'], 'closed' => ['Lezárt', 'closed_count']] as $value => [$label, $key])
+            @foreach(['open' => ['Összes nyitott', 'open_count'], 'waiting' => ['Várakozik', 'waiting_count'], 'partial' => ['Részben minősítve', 'partial_count'], 'closed' => ['Lezárt', 'closed_count']] as $value => [$label, $key])
                 <a href="{{ route('quality-returns.index', array_replace($filters, ['status' => $value])) }}" @click="status('{{ $value }}', $event)"
                     @if($filters['status'] === $value) aria-current="page" @endif
                     class="rounded-lg border bg-white p-4 shadow-sm hover:border-indigo-400 {{ $filters['status'] === $value ? 'border-indigo-400 ring-1 ring-indigo-200' : 'border-gray-200' }}">
                     <span class="block text-xs font-medium text-gray-500">{{ $label }}</span><strong class="mt-2 block text-2xl tabular-nums text-gray-900">{{ number_format($summary[$key], 0, ',', ' ') }}</strong>
-                    @if($value === 'open')<span class="mt-1 block text-xs text-amber-800">{{ number_format($summary['pending_quantity'], 0, ',', ' ') }} db vár minősítésre</span>@endif
+                    @if($value === 'open')<span class="mt-1 block text-xs text-amber-800">{{ number_format($summary['pending_quantity'], 0, ',', ' ') }} db vár minősítésre</span><span class="mt-1 block text-xs text-gray-500">Várakozó és részben minősített tételek</span>@endif
                 </a>
             @endforeach
         </section>
@@ -73,7 +73,7 @@
                         @foreach(['original' => $return->quarantined_quantity, 'released' => $return->released_quantity, 'scrapped' => $return->scrapped_quantity, 'remaining' => $return->remaining_quantity] as $kind => $quantity)
                             <td data-quality-quantity="{{ $kind }}" class="whitespace-nowrap px-4 py-3 text-right tabular-nums {{ $kind === 'remaining' ? 'font-semibold text-amber-800' : '' }}">{{ number_format((int)$quantity, 0, ',', ' ') }} db</td>
                         @endforeach
-                        <td class="px-4 py-3">@include('quality-returns.status')</td><td class="px-4 py-3"><a href="{{ $detailUrl }}" class="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a></td>
+                        <td class="px-4 py-3">@include('quality-returns.status')</td><td class="px-4 py-3"><a href="{{ $detailUrl }}{{ $status === 'closed' ? '' : '#return-quality' }}" class="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a></td>
                     </tr>
                 @empty
                     <tr><td colspan="9" role="status" class="p-8 text-center text-gray-500">Nincs a szűrésnek megfelelő visszáru.</td></tr>
@@ -97,7 +97,7 @@
                             <div><dt class="text-xs text-gray-500">{{ $label }}</dt><dd data-quality-quantity="{{ $kind }}" class="mt-1 font-semibold tabular-nums {{ $kind === 'remaining' ? 'text-amber-800' : 'text-gray-900' }}">{{ number_format((int)$quantity, 0, ',', ' ') }} db</dd></div>
                         @endforeach
                     </dl>
-                    <a href="{{ $detailUrl }}" class="block rounded-md border border-indigo-200 px-3 py-2 text-center text-sm font-semibold text-indigo-600">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a>
+                    <a href="{{ $detailUrl }}{{ $status === 'closed' ? '' : '#return-quality' }}" class="block rounded-md border border-indigo-200 px-3 py-2 text-center text-sm font-semibold text-indigo-600">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a>
                 </article>
             @empty
                 <p role="status" class="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">Nincs a szűrésnek megfelelő visszáru.</p>

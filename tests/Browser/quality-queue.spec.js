@@ -62,11 +62,15 @@ test('queue displays remaining units and preserves its context through inspectio
     await expectAmount(item, 'remaining', 3);
     await page.screenshot({ path: 'tests/Browser/.runtime/quality-queue-desktop.png', fullPage: true });
     await item.getByRole('link', { name: 'Minősítés', exact: true }).click();
+    await expect(page).toHaveURL(url => url.hash === '#return-quality');
+    await expect(quality(page)).toBeFocused();
     await expect(page.getByRole('link', { name: '← Minősítési munkalista', exact: true })).toBeVisible();
     await quality(page).getByLabel('Művelet', { exact: true }).selectOption('scrap');
     await quality(page).getByLabel('Mennyiség', { exact: true }).fill('3');
     await quality(page).getByLabel('Minősítés indoka', { exact: true }).fill('A maradék három darab sérült');
     await quality(page).getByRole('button', { name: 'Minősítés rögzítése', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Selejtezés megerősítése', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Selejtezés véglegesítése', exact: true }).click();
     await expect(quality(page)).toContainText('A teljes visszáru minősítve.');
     await page.getByRole('link', { name: '← Minősítési munkalista', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/quality-returns' && url.searchParams.get('search') === marker

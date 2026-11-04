@@ -1,4 +1,4 @@
-<section aria-label="Visszáru minősítése" class="space-y-4 rounded-lg border border-gray-200 bg-white p-5 text-sm">
+<section id="return-quality" tabindex="-1" aria-label="Visszáru minősítése" class="space-y-4 rounded-lg border border-gray-200 bg-white p-5 text-sm" x-data="{}" x-init="if (window.location.hash === '#return-quality') $nextTick(() => $el.focus({ preventScroll: true }))">
     <div><h3 class="font-semibold text-gray-900">Visszáru minősítése</h3>
         @if($movement->quarantined_quantity > 0)
             <p class="mt-1 text-gray-600">Még elkülönítve: <strong>{{ number_format($qualityRemaining, 0, ',', ' ') }} db</strong> · Eredetileg elkülönítve: {{ number_format($movement->quarantined_quantity, 0, ',', ' ') }} db</p>

@@ -357,37 +357,89 @@ try {
         if ($scrapRace) check($issued === 0, 'Issue consumed quarantined stock while a scrap action ran.');
         echo 'PASS: '.$scenario.PHP_EOL;
     }
-    $qualityProducts = [];
-    $qualityReturns = [];
-    $qualityWarehouse = Warehouse::create(['warehouse_name' => 'Quality cross-product request']);
-    foreach ([1, 2] as $index) {
-        $product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Quality cross-product '.$index,
-            'sku' => 'QUALITY-CROSS-'.$index, 'price' => 100]);
-        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id, 'quantity' => 8]);
-        $original = $service->recordMovement(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id,
-            'user_id' => $user->id, 'type' => 'out', 'quantity' => 6]);
-        $qualityProducts[] = $product->product_id;
-        $qualityReturns[] = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Cross-product inspection', 'user_id' => $user->id]);
+    foreach (['conflicting quality actions by different users', 'compatible quality actions by different users',
+        'quality release versus another customer return'] as $index => $scenario) {
+        $secondUser = User::factory()->create(['role' => 'manager']);
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario,
+            'sku' => 'QUALITY-MULTIUSER-'.$index, 'price' => 100]);
+        $warehouse = Warehouse::create(['warehouse_name' => 'Multiuser '.$index]);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => 10]);
+        $original = $service->recordMovement(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id,
+            'user_id' => $user->id, 'type' => 'out', 'quantity' => 8]);
+        $returned = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Initial customer return', 'user_id' => $user->id]);
+        // Deliberately reuse the UUID across actors: request identity is per user,
+        // whereas quantity limits apply to everyone sharing this return.
+        $key = (string)\Illuminate\Support\Str::uuid();
+        $first = ['action' => 'quality', 'id' => $returned->id, 'outerSnapshot' => true, 'requestKey' => $key,
+            'data' => ['user_id' => $user->id, 'action' => 'release', 'quantity' => $index === 1 ? 2 : 4, 'reason' => 'Accept inspected goods']];
+        $second = ['action' => 'quality', 'id' => $returned->id, 'outerSnapshot' => true, 'requestKey' => $key,
+            'data' => ['user_id' => $secondUser->id, 'action' => 'scrap', 'quantity' => 4, 'reason' => 'Reject damaged goods']];
+        if ($index === 2) {
+            $second = ['action' => 'return', 'id' => $original->id, 'outerSnapshot' => true, 'requestKey' => $key,
+                'data' => ['user_id' => $secondUser->id, 'quantity' => 2, 'return_reason' => 'Remaining goods returned']];
+        }
+        check(race($database, $product->product_id, [$first, $second]) === ($index === 0 ? ['OK', 'REJECTED'] : ['OK', 'OK']),
+            $scenario.': unexpected outcomes.');
+        $actions = ReturnQualityAction::where('return_movement_id', $returned->id)->get();
+        $stock = Stock::where('product_id', $product->product_id)->sole();
+        if ($index === 0) {
+            check($actions->count() === 1 && (int)$actions->sum('quantity') === 4, $scenario.': quota exceeded.');
+            $winner = $actions->sole();
+            check((int)$winner->user_id === ($winner->action === 'release' ? $user->id : $secondUser->id), $scenario.': wrong actor.');
+            check((int)$stock->quantity === ($winner->action === 'release' ? 8 : 4) && (int)$stock->quarantined_quantity === 2,
+                $scenario.': stock or quarantine changed twice.');
+        } elseif ($index === 1) {
+            check($actions->count() === 2 && (int)$actions->sum('quantity') === 6, $scenario.': valid partial actions lost.');
+            check((int)$actions->where('action', 'release')->sole()->user_id === $user->id
+                && (int)$actions->where('action', 'scrap')->sole()->user_id === $secondUser->id, $scenario.': actors lost.');
+            check((int)$stock->quantity === 4 && (int)$stock->quarantined_quantity === 0, $scenario.': wrong final balance.');
+        } else {
+            check($actions->count() === 1 && (int)$actions->sole()->user_id === $user->id && (int)$actions->sum('quantity') === 4,
+                $scenario.': quality action lost.');
+            $returns = $original->returns()->get();
+            check($returns->count() === 2 && (int)$returns->sum('quantity') === 8
+                && $returns->contains(fn ($item) => (int)$item->user_id === $secondUser->id && (int)$item->quantity === 2),
+                $scenario.': new return lost or return limit exceeded.');
+            check((int)$stock->quantity === 10 && (int)$stock->quarantined_quantity === 4, $scenario.': wrong shared balance.');
+        }
+        check(InventoryMovement::where('scrap_of_id', $returned->id)->count() === $actions->where('action', 'scrap')->count(),
+            $scenario.': scrap audit is missing or duplicated.');
+        echo 'PASS: '.$scenario.PHP_EOL;
     }
-    $key = (string)\Illuminate\Support\Str::uuid();
-    $jobs = array_map(fn ($return, $index) => ['action' => 'quality', 'id' => $return->id,
-        'data' => ['user_id' => $user->id, 'action' => 'release', 'quantity' => 4, 'reason' => 'Cross-product request collision'],
-        'requestKey' => $index === 0 ? $key : strtoupper($key), 'outerSnapshot' => true], $qualityReturns, [0, 1]);
-    check(race($database, $qualityProducts, $jobs) === ['OK', 'REJECTED'], 'Quality same key across products was not rejected.');
-    $action = ReturnQualityAction::where('user_id', $user->id)->where('request_key', $key)->sole();
-    check(in_array((int)$action->return_movement_id, array_map(fn ($return) => $return->id, $qualityReturns), true),
-        'Cross-product request points to an unrelated return.');
-    check((int)$action->quantity === 4 && $action->action === 'release', 'Cross-product action is incomplete.');
-    check(ReturnQualityAction::whereIn('return_movement_id', array_map(fn ($return) => $return->id, $qualityReturns))->count() === 1,
-        'Cross-product collision left a second action.');
-    $stocks = Stock::whereIn('product_id', $qualityProducts)->get();
-    check((int)$stocks->sum('quantity') === 16 && (int)$stocks->sum('quarantined_quantity') === 8,
-        'Cross-product collision changed more than one quarantine balance.');
-    check($stocks->pluck('quarantined_quantity')->sort()->values()->all() === [2, 6], 'Both products were released under one key.');
-    check((int)$action->stock_before === 8 && (int)$action->stock_after === 8
-        && (int)$action->quarantined_before === 6 && (int)$action->quarantined_after === 2,
-        'Cross-product collision audit is inconsistent.');
-    echo 'PASS: quality same key different products with outer snapshot'.PHP_EOL;
+    // Repeat the cross-product index-boundary race; which insert wins is nondeterministic.
+    for ($collisionRun = 0; $collisionRun < 5; $collisionRun++) {
+        $qualityProducts = [];
+        $qualityReturns = [];
+        $qualityWarehouse = Warehouse::create(['warehouse_name' => 'Quality cross-product request']);
+        foreach ([1, 2] as $index) {
+            $product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Quality cross-product '.$index,
+                'sku' => 'QUALITY-CROSS-'.$collisionRun.'-'.$index, 'price' => 100]);
+            Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id, 'quantity' => 8]);
+            $original = $service->recordMovement(['product_id' => $product->product_id, 'warehouse_id' => $qualityWarehouse->warehouse_id,
+                'user_id' => $user->id, 'type' => 'out', 'quantity' => 6]);
+            $qualityProducts[] = $product->product_id;
+            $qualityReturns[] = $service->recordReturn($original, ['quantity' => 6, 'return_reason' => 'Cross-product inspection', 'user_id' => $user->id]);
+        }
+        $key = (string)\Illuminate\Support\Str::uuid();
+        $jobs = array_map(fn ($return, $index) => ['action' => 'quality', 'id' => $return->id,
+            'data' => ['user_id' => $user->id, 'action' => 'release', 'quantity' => 4, 'reason' => 'Cross-product request collision'],
+            'requestKey' => $index === 0 ? $key : strtoupper($key), 'outerSnapshot' => true], $qualityReturns, [0, 1]);
+        check(race($database, $qualityProducts, $jobs) === ['OK', 'REJECTED'], 'Quality same key across products was not rejected.');
+        $action = ReturnQualityAction::where('user_id', $user->id)->where('request_key', $key)->sole();
+        check(in_array((int)$action->return_movement_id, array_map(fn ($return) => $return->id, $qualityReturns), true),
+            'Cross-product request points to an unrelated return.');
+        check((int)$action->quantity === 4 && $action->action === 'release', 'Cross-product action is incomplete.');
+        check(ReturnQualityAction::whereIn('return_movement_id', array_map(fn ($return) => $return->id, $qualityReturns))->count() === 1,
+            'Cross-product collision left a second action.');
+        $stocks = Stock::whereIn('product_id', $qualityProducts)->get();
+        check((int)$stocks->sum('quantity') === 16 && (int)$stocks->sum('quarantined_quantity') === 8,
+            'Cross-product collision changed more than one quarantine balance.');
+        check($stocks->pluck('quarantined_quantity')->sort()->values()->all() === [2, 6], 'Both products were released under one key.');
+        check((int)$action->stock_before === 8 && (int)$action->stock_after === 8
+            && (int)$action->quarantined_before === 6 && (int)$action->quarantined_after === 2,
+            'Cross-product collision audit is inconsistent.');
+        echo 'PASS: quality same key different products with outer snapshot ('.($collisionRun + 1).'/5)'.PHP_EOL;
+    }
     foreach (['quality versus account deletion', 'quality versus account deletion with outer snapshot'] as $index => $scenario) {
         $actor = User::factory()->create(['role' => 'worker']);
         $product = Product::create(['category_id' => $category->category_id, 'product_name' => $scenario,
@@ -512,7 +564,7 @@ try {
     }
     check(hash_equals($beforeQueueReads, $queueSnapshot()), 'Queue reads changed stock, movement history or quality actions.');
     echo 'PASS: quality queue MySQL aggregates and filters'.PHP_EOL;
-    echo "36 MySQL concurrency scenarios passed.\n";
+    echo "43 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

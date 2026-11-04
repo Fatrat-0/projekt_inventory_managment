@@ -34,7 +34,15 @@ Az elkülönített mennyiségre kattintva a készletnézetekből közvetlenül m
 
 A mozgáslista eszköztárán is elérhető a munkalista. A fő navigáció nem bővül új menüponttal. Az oldalon lévő hivatkozások a meglévő termék-, raktár- és mozgásnézetek használatát is megőrzik.
 
-## Megjelenítési javítás
+## Feldolgozás és megerősítés
+
+A „Minősítés” művelet közvetlenül a visszáru-adatlap minősítési szakaszára ugrik, billentyűzetes fókuszt is adva. A terméknév, mozgásazonosító és a lezárt tétel „Megtekintés” hivatkozása az adatlap tetejét nyitja meg. Az „Összes nyitott” kártya a várakozó és a részben minősített tételek összege.
+
+A megerősítés a lejárati időpont elérésekor már érvénytelen. Két külön megnyitott megerősítő oldal közül a később véglegesített művelet is a pillanatnyi hátralévő mennyiséghez igazodik; módosított mennyiséghez új megerősítés szükséges. Egy már sikeresen rögzített selejtezés eredeti beküldésének ismétlése készletírás nélkül a meglévő eredményhez tér vissza, és jelzi, hogy a művelet már megtörtént.
+
+Selejtezéskor az első beküldés csak ellenőrző oldalt készít: termék, cikkszám, raktár, mennyiség és indok látható, készletváltozás nélkül. Innen a szerkesztéshez is vissza lehet térni az adatok és beküldési kulcs megtartásával. A véglegesítéshez 30 percig érvényes, titkosított megerősítés szükséges, az adott végrehajtóhoz, visszáruhoz, művelethez, mennyiséghez, indokhoz és beküldési kulcshoz kötve. A végleges készletművelet a meglévő tranzakciós szolgáltatáson halad át, friss mennyiségellenőrzéssel és idempotenciával. A megerősítés és a szerkesztés JavaScript nélkül is használható. Hibás vagy elavult beküldés GET-adatlapra tér vissza; nem kerül GET-kérés egy POST-útvonalra.
+
+## Megjelenítési javítások
 
 A mozgáslista a `0` hivatkozást érvényes szövegként mutatja. Csak a null vagy üres hivatkozás jelenik meg gondolatjelként.
 

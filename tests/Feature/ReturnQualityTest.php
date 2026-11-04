@@ -48,7 +48,12 @@ class ReturnQualityTest extends TestCase
 
     private function process(InventoryMovement $return, array $overrides = [])
     {
-        return $this->postJson(route('movements.quality.store', $return), $this->data($overrides));
+        $data = $this->data($overrides);
+        $response = $this->postJson(route('movements.quality.store', $return), $data);
+        if ($response->isOk() && $data['action'] === 'scrap') {
+            return $this->postJson(route('movements.quality.store', $return), $data + ['confirmation' => $response->viewData('confirmation')]);
+        }
+        return $response;
     }
 
     private function assertBalance(int $physical, int $quarantined, int $available): void

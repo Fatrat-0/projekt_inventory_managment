@@ -153,7 +153,11 @@ class InventoryService
                     || (int)$source->product_id !== (int)$return->product_id) {
                     throw ValidationException::withMessages(['movement' => 'Csak elkülönítve bevételezett vevői visszáru minősíthető.']);
                 }
-                $processed = (int)$source->qualityActions()->whereKeyNot($action->id)->lockForUpdate()->get(['quantity'])->sum('quantity');
+                // The product lock serializes claims for this source, so all previous
+                // actions have smaller IDs. Stop before our own claim: an unbounded
+                // id != scan can lock the next source's in-flight FK index entry and
+                // deadlock with its duplicate request-key check under REPEATABLE READ.
+                $processed = (int)$source->qualityActions()->where('id', '<', $action->id)->lockForUpdate()->get(['quantity'])->sum('quantity');
                 $remaining = max(0, $source->quarantined_quantity - $processed);
                 if ($payload['quantity'] > $remaining) {
                     throw ValidationException::withMessages(['quantity' => 'A még minősíthető mennyiség legfeljebb '.$remaining.' db.']);

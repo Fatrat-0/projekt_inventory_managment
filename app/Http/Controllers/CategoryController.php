@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\CategoryRequest;
 use App\Models\{Category, Product};
 use App\Queries\CategoryListing;
+use App\Services\MasterDataEditor;
 use App\Support\{CategoryListContext, CategoryTree};
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -55,13 +56,16 @@ class CategoryController extends Controller
         DB::transaction(function () use ($request, $category) {
             // Serialize hierarchy edits in a common order before checking ancestry.
             $all = Category::orderBy('category_id')->lockForUpdate()->get();
-            $data = array_replace(['parent_id' => null, 'default_item_min_stock' => null, 'aggregate_min_stock' => null], $request->validated());
+            $data = array_replace(['parent_id' => null, 'default_item_min_stock' => null, 'aggregate_min_stock' => null],
+                $request->safe()->only(['category_name', 'parent_id', 'default_item_min_stock', 'aggregate_min_stock']));
+            $editUrl = $category ? route('categories.edit', ['category' => $category, 'context' => CategoryListContext::token($request->input('context'))]) : '';
+            if ($category) MasterDataEditor::assertCurrent($all->firstWhere('category_id', $category->category_id) ?? Category::findOrFail($category->category_id), $request, $editUrl);
             if ($data['parent_id'] !== null && !$all->contains('category_id', $data['parent_id'])) throw ValidationException::withMessages(['parent_id' => 'A kiválasztott szülő kategória már nem létezik.']);
             if ((new CategoryTree($all))->wouldCreateCycle($category?->category_id, $data['parent_id'] === null ? null : (int) $data['parent_id'])) {
                 throw ValidationException::withMessages(['parent_id' => 'A kiválasztott szülő körkörös hierarchiát eredményezne, vagy már egy hibás, körkörös ág része. Válassz másik szülőt.']);
             }
             if ($category) {
-                Category::findOrFail($category->category_id)->update($data);
+                MasterDataEditor::update($category, $request, $data, $editUrl);
             } else Category::create($data);
         }, 3);
         return redirect(CategoryListContext::url($request->input('context')))->with('success', $category ? 'Kategória frissítve.' : 'Kategória létrehozva.');

@@ -168,7 +168,7 @@ class WarehouseDetailTest extends TestCase
         $return=route('warehouses.show',['warehouse'=>$this->local,'context'=>$context]+$filters).'#local-stock';
         $params=['warehouse'=>$this->local,'context'=>$context,'from'=>'details','detail_context'=>$detailContext];
         $this->get(route('warehouses.edit',$params))->assertOk()->assertViewHas('returnUrl',$return);
-        $this->put(route('warehouses.update',$this->local),['warehouse_name'=>'Helyi új','location'=>'Új cím','from'=>'details','context'=>$context,'detail_context'=>$detailContext])->assertRedirect($return);
+        $this->put(route('warehouses.update',$this->local),['lock_version' => $this->local->fresh()->lock_version, 'warehouse_name'=>'Helyi új','location'=>'Új cím','from'=>'details','context'=>$context,'detail_context'=>$detailContext])->assertRedirect($return);
         $this->show(['context'=>$context])->assertViewHas('returnUrl',WarehouseListContext::url($context));
     }
 

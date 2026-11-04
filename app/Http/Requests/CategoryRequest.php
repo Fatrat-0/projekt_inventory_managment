@@ -8,6 +8,8 @@ class CategoryRequest extends FormRequest
 {
     public function authorize(): bool { return true; }
 
+    public function messages(): array { return \App\Services\MasterDataEditor::messages(); }
+
     public function rules(): array
     {
         return [
@@ -15,11 +17,12 @@ class CategoryRequest extends FormRequest
             'parent_id' => 'nullable|integer|exists:categories,category_id',
             'default_item_min_stock' => 'nullable|integer|min:0|max:2147483647',
             'aggregate_min_stock' => 'nullable|integer|min:0|max:2147483647',
-        ];
+        ] + ($this->isMethod('PUT') || $this->isMethod('PATCH') ? \App\Services\MasterDataEditor::rules() : []);
     }
 
     public function attributes(): array
     {
-        return ['category_name' => 'kategória neve', 'parent_id' => 'szülő kategória', 'default_item_min_stock' => 'termékenkénti minimum', 'aggregate_min_stock' => 'kategória minimum'];
+        return ['category_name' => 'kategória neve', 'parent_id' => 'szülő kategória', 'default_item_min_stock' => 'termékenkénti minimum', 'aggregate_min_stock' => 'kategória minimum']
+            + \App\Services\MasterDataEditor::attributes();
     }
 }

@@ -70,7 +70,7 @@ class PartnerArchiveAndDuplicatesTest extends TestCase
     public function test_archived_partner_is_editable_without_implicitly_restoring_it_and_can_be_deleted(): void
     {
         $this->get(route('partners.edit', $this->archived))->assertOk()->assertSee('Archivált partner.')->assertSee('Visszaállítás');
-        $this->put(route('partners.update', $this->archived), ['name' => 'Átnevezett régi', 'type' => 'supplier', 'archived_at' => null])->assertRedirect();
+        $this->put(route('partners.update', $this->archived), ['lock_version' => $this->archived->fresh()->lock_version, 'name' => 'Átnevezett régi', 'type' => 'supplier', 'archived_at' => null])->assertRedirect();
         $this->assertTrue($this->archived->fresh()->isArchived());
         $this->delete(route('partners.destroy', $this->archived))->assertRedirect();
         $this->assertModelMissing($this->archived);
@@ -81,7 +81,7 @@ class PartnerArchiveAndDuplicatesTest extends TestCase
         $this->post('/partners', ['name' => 'Új aktív', 'type' => 'supplier', 'archived_at' => now()->toDateTimeString()])->assertRedirect();
         $new = Partner::where('name', 'Új aktív')->sole();
         $this->assertFalse($new->isArchived());
-        $this->put(route('partners.update', $new), ['name' => 'Új aktív', 'type' => 'customer', 'archived_at' => now()->toDateTimeString()])->assertRedirect();
+        $this->put(route('partners.update', $new), ['lock_version' => $new->fresh()->lock_version, 'name' => 'Új aktív', 'type' => 'customer', 'archived_at' => now()->toDateTimeString()])->assertRedirect();
         $this->assertFalse($new->fresh()->isArchived());
     }
 
@@ -133,12 +133,12 @@ class PartnerArchiveAndDuplicatesTest extends TestCase
     public function test_duplicate_edit_requires_confirmation_but_unchanged_record_does_not_match_itself(): void
     {
         $data = ['name' => $this->active->name, 'type' => 'customer', 'email' => $this->active->email];
-        $this->put(route('partners.update', $this->active), $data)->assertRedirect()->assertSessionMissing('duplicate_warning');
+        $this->put(route('partners.update', $this->active), array_replace($data, ['lock_version' => $this->active->fresh()->lock_version]))->assertRedirect()->assertSessionMissing('duplicate_warning');
         $data['name'] = $this->archived->name;
-        $this->put(route('partners.update', $this->active), $data)->assertSessionHas('duplicate_warning', true);
+        $this->put(route('partners.update', $this->active), array_replace($data, ['lock_version' => $this->active->fresh()->lock_version]))->assertSessionHas('duplicate_warning', true);
         $this->assertSame('ÁrvÍz  Kft.', $this->active->fresh()->name);
         $check = $this->check($data, $this->active);
-        $this->put(route('partners.update', $this->active), $data + ['confirm_duplicates' => 1, 'duplicate_token' => $check['token']])->assertRedirect();
+        $this->put(route('partners.update', $this->active), array_replace($data, ['lock_version' => $this->active->fresh()->lock_version]) + ['confirm_duplicates' => 1, 'duplicate_token' => $check['token']])->assertRedirect();
         $this->assertSame('Régi partner', $this->active->fresh()->name);
     }
 

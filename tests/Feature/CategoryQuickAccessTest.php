@@ -88,7 +88,7 @@ class CategoryQuickAccessTest extends TestCase
         $a = $this->category('Első'); $b = $this->category('Második'); $child = $this->category('Mozgó ág', $a);
         $product = $this->product($child, 'MOVING');
         $this->get(route('categories.edit', $a))->assertViewHas('branchProductCount', 1);
-        $this->put(route('categories.update', $child), ['category_name' => $child->category_name, 'parent_id' => $b->category_id])->assertRedirect();
+        $this->put(route('categories.update', $child), ['lock_version' => $child->fresh()->lock_version, 'category_name' => $child->category_name, 'parent_id' => $b->category_id])->assertRedirect();
         $this->get(route('categories.edit', $a))->assertViewHas('branchProductCount', 0);
         $this->get(route('categories.edit', $b))->assertViewHas('branchProductCount', 1);
         $product->update(['category_id' => $a->category_id]);

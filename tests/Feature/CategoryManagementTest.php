@@ -70,7 +70,7 @@ class CategoryManagementTest extends TestCase
         $this->post('/categories', ['category_name' => 'Új', 'parent_id' => $this->root->category_id, 'default_item_min_stock' => 0, 'aggregate_min_stock' => 2147483647, 'context' => $context])->assertRedirect(CategoryListContext::url($context));
         $new = Category::where('category_name', 'Új')->firstOrFail();
         $this->assertSame(0, $new->default_item_min_stock);
-        $this->put(route('categories.update', $new), ['category_name' => 'Módosított', 'parent_id' => '', 'default_item_min_stock' => '', 'aggregate_min_stock' => '', 'context' => $context])->assertRedirect(CategoryListContext::url($context));
+        $this->put(route('categories.update', $new), ['lock_version' => $new->fresh()->lock_version, 'category_name' => 'Módosított', 'parent_id' => '', 'default_item_min_stock' => '', 'aggregate_min_stock' => '', 'context' => $context])->assertRedirect(CategoryListContext::url($context));
         $this->assertNull($new->fresh()->parent_id); $this->assertNull($new->fresh()->default_item_min_stock); $this->assertNull($new->fresh()->aggregate_min_stock);
         $this->get(route('categories.edit', ['category' => $new, 'context' => $context]))->assertOk()->assertViewHas('returnUrl', CategoryListContext::url($context));
     }
@@ -78,12 +78,12 @@ class CategoryManagementTest extends TestCase
     public function test_self_child_and_deep_descendant_cannot_become_parent_and_update_is_atomic(): void
     {
         foreach ([$this->root, $this->child, $this->leaf] as $parent) {
-            $this->putJson(route('categories.update', $this->root), ['category_name' => 'Must not change', 'parent_id' => $parent->category_id])->assertUnprocessable()->assertJsonValidationErrors('parent_id');
+            $this->putJson(route('categories.update', $this->root), ['lock_version' => $this->root->fresh()->lock_version, 'category_name' => 'Must not change', 'parent_id' => $parent->category_id])->assertUnprocessable()->assertJsonValidationErrors('parent_id');
             $this->assertSame('Gépek', $this->root->fresh()->category_name);
             $this->assertNull($this->root->fresh()->parent_id);
         }
         $this->get(route('categories.edit', $this->root))->assertViewHas('categories', fn ($options) => $options->isEmpty());
-        $this->putJson(route('categories.update', $this->leaf), ['category_name' => 'Akkus', 'parent_id' => $this->root->category_id])->assertRedirect();
+        $this->putJson(route('categories.update', $this->leaf), ['lock_version' => $this->leaf->fresh()->lock_version, 'category_name' => 'Akkus', 'parent_id' => $this->root->category_id])->assertRedirect();
         $this->assertSame($this->root->category_id, $this->leaf->fresh()->parent_id);
     }
 
@@ -156,20 +156,20 @@ class CategoryManagementTest extends TestCase
         $healthy = Category::create(['category_name' => 'Egészséges ág']);
         $this->postJson('/categories', ['category_name' => 'Új kategória', 'parent_id' => $this->root->category_id])
             ->assertUnprocessable()->assertJsonValidationErrors('parent_id');
-        $this->putJson(route('categories.update', $healthy), ['category_name' => 'Nem menthető', 'parent_id' => $this->child->category_id])
+        $this->putJson(route('categories.update', $healthy), ['lock_version' => $healthy->fresh()->lock_version, 'category_name' => 'Nem menthető', 'parent_id' => $this->child->category_id])
             ->assertUnprocessable()->assertJsonValidationErrors('parent_id');
         $this->assertSame('Egészséges ág', $healthy->fresh()->category_name);
         $this->assertNull($healthy->fresh()->parent_id);
         $this->assertDatabaseCount('categories', 4);
         // Removing an invalid parent repairs the old branch and must remain possible.
-        $this->putJson(route('categories.update', $this->root), ['category_name' => 'Gépek', 'parent_id' => null])->assertRedirect();
+        $this->putJson(route('categories.update', $this->root), ['lock_version' => $this->root->fresh()->lock_version, 'category_name' => 'Gépek', 'parent_id' => null])->assertRedirect();
         $this->postJson('/categories', ['category_name' => 'Most már menthető', 'parent_id' => $this->leaf->category_id])->assertRedirect();
     }
 
     public function test_malformed_form_values_render_safely_after_validation_failure(): void
     {
         $url = route('categories.edit', $this->leaf);
-        $this->from($url)->put(route('categories.update', $this->leaf), [
+        $this->from($url)->put(route('categories.update', $this->leaf), ['lock_version' => $this->leaf->fresh()->lock_version,
             'category_name' => ['bad'], 'parent_id' => ['bad'], 'default_item_min_stock' => ['bad'], 'aggregate_min_stock' => ['bad'], 'context' => ['bad'],
         ])->assertRedirect($url)->assertSessionHasErrors(['category_name', 'parent_id', 'default_item_min_stock', 'aggregate_min_stock']);
         $this->get($url)->assertOk();
@@ -189,7 +189,7 @@ class CategoryManagementTest extends TestCase
         $this->actingAs(User::factory()->create(['role' => 'worker']));
         foreach (['/categories', '/categories/create', route('categories.edit', $this->root)] as $url) $this->get($url)->assertForbidden();
         $this->post('/categories', ['category_name' => 'Forbidden'])->assertForbidden();
-        $this->put(route('categories.update', $this->root), ['category_name' => 'Forbidden'])->assertForbidden();
+        $this->put(route('categories.update', $this->root), ['lock_version' => $this->root->fresh()->lock_version, 'category_name' => 'Forbidden'])->assertForbidden();
         $this->delete(route('categories.destroy', $this->leaf))->assertForbidden();
         $this->actingAs(User::factory()->create(['role' => 'manager']));
         $this->get('/categories')->assertOk();

@@ -30,6 +30,11 @@
             @csrf
             @if($partner) @method('PUT') @endif
             <input type="hidden" name="context" value="{{ $context }}">
+            @if($partner)
+                <x-edit-conflict :record="$partner" :values="['Név / Cégnév' => $partner->name, 'Partner típusa' => \App\Models\Partner::TYPES[$partner->type] ?? $partner->type, 'Állapot' => $partner->isArchived() ? 'Archivált' : 'Aktív', 'E-mail' => $partner->email, 'Telefon' => $partner->phone, 'Kapcsolattartó' => $partner->contact_name, 'Ország' => $partner->country, 'Irányítószám' => $partner->postal_code, 'Település' => $partner->city, 'Utca, házszám' => $partner->street_address, 'Belső megjegyzés' => $partner->notes]"
+                    :field-map="['Név / Cégnév' => 'name', 'Partner típusa' => 'type', 'E-mail' => 'email', 'Telefon' => 'phone', 'Kapcsolattartó' => 'contact_name', 'Ország' => 'country', 'Irányítószám' => 'postal_code', 'Település' => 'city', 'Utca, házszám' => 'street_address', 'Belső megjegyzés' => 'notes']"
+                    :reload-url="route('partners.edit', ['partner' => $partner, 'context' => $context])" />
+            @endif
             <div>
                 <label for="partner-name" class="mb-1 block text-sm font-medium text-gray-700">Név / Cégnév</label>
                 <input id="partner-name" name="name" maxlength="100" required autofocus autocomplete="organization" @input="changed()"

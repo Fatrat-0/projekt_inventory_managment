@@ -48,7 +48,7 @@ class PartnerMovementIntegrationTest extends TestCase
         foreach ($data as $key => $value) $this->assertSame($value, $partner->{$key});
         $this->get(route('partners.edit', $partner))->assertOk()->assertSee('Kiss Anna')->assertSee('0010')->assertDontSee('<script>alert(1)</script>', false);
         $this->get('/partners?search=Kiss+Győr')->assertViewHas('partners', fn ($p) => $p->pluck('id')->all() === [$partner->id]);
-        $this->put(route('partners.update', $partner), ['name' => $data['name'], 'type' => 'both'])->assertRedirect();
+        $this->put(route('partners.update', $partner), ['lock_version' => $partner->fresh()->lock_version, 'name' => $data['name'], 'type' => 'both'])->assertRedirect();
         foreach (array_diff(array_keys($data), ['name', 'type']) as $field) $this->assertNull($partner->fresh()->{$field});
     }
 

@@ -65,7 +65,7 @@ class PartnerContactEdgeCasesTest extends TestCase
         $partner = Partner::where('name', 'Üres kontakt')->sole();
         $this->assertNull($partner->email);
         $this->assertNull($partner->phone);
-        $this->put(route('partners.update', $partner), ['name' => $partner->name, 'type' => 'both', 'email' => 'real@example.test', 'phone' => '0'])->assertSessionHasNoErrors();
+        $this->put(route('partners.update', $partner), ['lock_version' => $partner->fresh()->lock_version, 'name' => $partner->name, 'type' => 'both', 'email' => 'real@example.test', 'phone' => '0'])->assertSessionHasNoErrors();
         $this->get('/partners?contact=complete')->assertViewHas('partners', fn ($p) => $p->pluck('id')->all() === [$partner->id]);
     }
 

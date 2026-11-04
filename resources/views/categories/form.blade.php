@@ -10,6 +10,11 @@
         <form method="POST" action="{{ $category ? route('categories.update', $category) : route('categories.store') }}" x-data="{ submitting: false }" @pageshow.window="if ($event.persisted) submitting = false" @submit="if (submitting) $event.preventDefault(); else submitting = true" class="space-y-5 rounded-lg border border-gray-200 bg-white p-5">
             @csrf @if($category) @method('PUT') @endif
             <input type="hidden" name="context" value="{{ $context }}">
+            @if($category)
+                <x-edit-conflict :record="$category" :values="['Kategória neve' => $category->category_name, 'Szülő kategória' => $category->parent?->category_name ?? 'Főkategória', 'Termékenkénti minimum' => $category->default_item_min_stock, 'Kategória minimum' => $category->aggregate_min_stock]"
+                    :field-map="['Kategória neve' => 'category_name', 'Szülő kategória' => 'parent_id', 'Termékenkénti minimum' => 'default_item_min_stock', 'Kategória minimum' => 'aggregate_min_stock']"
+                    :reload-url="route('categories.edit', ['category' => $category, 'context' => $context])" />
+            @endif
             <div><label for="category-name" class="mb-1 block text-sm font-medium text-gray-700">Kategória neve</label>
                 <input id="category-name" name="category_name" maxlength="100" required autofocus value="{{ is_scalar(old('category_name', $category?->category_name ?? '')) ? old('category_name', $category?->category_name ?? '') : '' }}" aria-describedby="category-name-error" @error('category_name') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
                 <p id="category-name-error" class="mt-1 text-sm text-red-700">@error('category_name'){{ $message }}@enderror</p>

@@ -6,6 +6,7 @@ use App\Http\Requests\PartnerRequest;
 use App\Models\Partner;
 use App\Queries\PartnerListing;
 use App\Services\PartnerDuplicateCheck;
+use App\Services\MasterDataEditor;
 use App\Support\PartnerListContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,7 +65,8 @@ class PartnerController extends Controller
     public function update(PartnerRequest $request, Partner $partner)
     {
         if ($warning = $this->duplicateWarning($request, $partner)) return $warning;
-        $partner->update($this->partnerData($request));
+        MasterDataEditor::update($partner, $request, $this->partnerData($request),
+            route('partners.edit', ['partner' => $partner, 'context' => PartnerListContext::token($request->input('context'))]));
         return redirect(PartnerListContext::url($request->input('context')))->with('success', 'Partner adatai frissítve.');
     }
 
@@ -95,7 +97,7 @@ class PartnerController extends Controller
         $params = ['context' => PartnerListContext::token($request->input('context'))];
         if ($partner) $params['partner'] = $partner;
         return redirect()->route($partner ? 'partners.edit' : 'partners.create', $params)
-            ->withInput($request->only([...self::FIELDS, 'context']))->with('duplicate_warning', true);
+            ->withInput($request->only([...self::FIELDS, 'context', 'lock_version', 'review_version', 'confirm_edit_conflict']))->with('duplicate_warning', true);
     }
 
     private function partnerData(PartnerRequest $request): array
@@ -111,7 +113,7 @@ class PartnerController extends Controller
         DB::transaction(function () use ($partner, $archive) {
             $locked = Partner::lockForUpdate()->findOrFail($partner->id);
             if ($locked->isArchived() === $archive) return;
-            $locked->forceFill(['archived_at' => $archive ? now() : null])->save();
+            $locked->forceFill(['archived_at' => $archive ? now() : null, 'lock_version' => (int) $locked->lock_version + 1])->save();
         }, 3);
         return redirect(PartnerListContext::url($request->input('context'), ['partner_id', 'page']))
             ->with('success', $archive ? 'Partner archiválva. Később visszaállítható.' : 'Partner visszaállítva az aktívak közé.');

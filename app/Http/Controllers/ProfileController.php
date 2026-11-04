@@ -48,9 +48,14 @@ class ProfileController extends Controller
 
         $user = $request->user();
 
-        Auth::logout();
+        try {
+            $user->delete();
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            throw $exception->errorBag('userDeletion');
+        }
 
-        $user->delete();
+        // The row is already deleted; rotating its remember token would save it again.
+        Auth::logoutCurrentDevice();
 
         $request->session()->invalidate();
         $request->session()->regenerateToken();

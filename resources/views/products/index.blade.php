@@ -90,7 +90,7 @@
                                     <select name="stock_status" onchange="this.form.submit()" class="w-full border-gray-300 rounded-md shadow-sm text-sm">
                                         <option value="">Minden állapot</option>
                                         <option value="low" {{ $stockStatus === 'low' ? 'selected' : '' }}>Minimum alatt</option>
-                                        <option value="out" {{ $stockStatus === 'out' ? 'selected' : '' }}>Kifogyott (0 db)</option>
+                                        <option value="out" {{ $stockStatus === 'out' ? 'selected' : '' }}>Nincs kiadható (0 db)</option>
                                         <option value="ok" {{ $stockStatus === 'ok' ? 'selected' : '' }}>Megfelelő készlet</option>
                                     </select>
                                 </div>
@@ -262,7 +262,7 @@
 
                             @if($stockStatus)
                                 <span class="inline-flex items-center gap-1.5 bg-amber-50 text-amber-800 px-2.5 py-1 rounded-md border border-amber-200 font-medium">
-                                    {{ $stockStatus === 'low' ? 'Kritikus hiány' : ($stockStatus === 'out' ? 'Kifogyott (0 db)' : 'Megfelelő készlet') }}
+                                    {{ $stockStatus === 'low' ? 'Kritikus hiány' : ($stockStatus === 'out' ? 'Nincs kiadható (0 db)' : 'Megfelelő készlet') }}
                                     <a href="{{ request()->fullUrlWithQuery(['page' => null, 'stock_status' => null]) }}" class="text-amber-600 hover:text-red-600 font-bold">✕</a>
                                 </span>
                             @endif
@@ -282,6 +282,8 @@
 
                 @php
                     $pageTotalQty = 0;
+                    $pageTotalAvailable = 0;
+                    $pageTotalQuarantined = 0;
                     $pageTotalValue = 0;
                 @endphp
 
@@ -331,7 +333,7 @@
                                         </div>
                                         <div id="total-stock-help" role="tooltip" x-show="helpOpen" style="display: none;"
                                             class="absolute left-0 top-full z-30 w-64 rounded-lg bg-gray-800 px-3 py-2 text-xs font-normal normal-case leading-relaxed text-white shadow-lg">
-                                            A készlet és a minimum minden raktárra összesítve értendő.
+                                            A fizikai készlet és a minimum minden raktárra összesítve értendő. A hiányjelzés a kiadható készletet hasonlítja a minimumhoz.
                                         </div>
                                     </th>
 
@@ -384,12 +386,16 @@
                                 @forelse($products as $product)
                                     @php
                                         $totalStock = (int) ($product->total_stock ?? 0);
+                                        $totalAvailable = (int) ($product->total_available ?? 0);
+                                        $totalQuarantined = (int) ($product->total_quarantined ?? 0);
                                         $effectiveMin = $product->min_stock_override ?? ($product->category->default_item_min_stock ?? 0);
-                                        $isLow = $totalStock < $effectiveMin;
-                                        $stockWarning = $isLow || $totalStock === 0;
+                                        $isLow = $totalAvailable < $effectiveMin;
+                                        $stockWarning = $isLow || $totalAvailable === 0;
                                         $stockValue = $totalStock * $product->price;
 
                                         $pageTotalQty += $totalStock;
+                                        $pageTotalAvailable += $totalAvailable;
+                                        $pageTotalQuarantined += $totalQuarantined;
                                         $pageTotalValue += $stockValue;
                                     @endphp
                                     <tr class="bg-white border-b hover:bg-indigo-50/40 transition">
@@ -411,10 +417,14 @@
                                             <button type="button" @click="stockOpen = !stockOpen"
                                                 class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded border transition shadow-sm {{ $stockWarning ? 'bg-red-100 text-red-800 border-red-300 hover:bg-red-200' : 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100' }}"
                                                 title="Kattints a raktárankénti eloszlás megtekintéséhez!">
-                                                <span>{{ $totalStock === 0 ? 'Kifogyott ·' : ($isLow ? 'Hiány ·' : '') }} {{ $totalStock }} db</span>
+                                                <span>{{ $totalStock === 0 ? 'Kifogyott ·' : ($totalAvailable === 0 ? 'Nem kiadható ·' : ($isLow ? 'Hiány ·' : '')) }} {{ $totalStock }} db</span>
                                                 <span class="font-normal opacity-75">(Min: {{ $effectiveMin }})</span>
                                                 <span class="text-[10px] opacity-60">▼</span>
                                             </button>
+
+                                            @if($totalQuarantined > 0)
+                                                <p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</p>
+                                            @endif
 
                                             <!-- Felugró Raktári Eloszlás Kártya -->
                                             <div x-show="stockOpen" @click.away="stockOpen = false" x-transition style="display: none;"
@@ -427,9 +437,12 @@
                                                 </div>
                                                 <div class="space-y-1.5">
                                                     @forelse($product->stocks as $st)
-                                                        <div class="flex justify-between items-center text-gray-700">
-                                                            <span class="truncate pr-2">{{ optional($st->warehouse)->warehouse_name ?? '-' }}:</span>
-                                                            <span class="font-bold text-gray-900">{{ $st->quantity }} db</span>
+                                                        <div>
+                                                            <div class="flex justify-between items-center text-gray-700">
+                                                                <span class="truncate pr-2">{{ optional($st->warehouse)->warehouse_name ?? '-' }}:</span>
+                                                                <span class="font-bold text-gray-900">{{ $st->quantity }} db</span>
+                                                            </div>
+                                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · Elkülönítve: {{ $st->quarantined_quantity }} db</p>@endif
                                                         </div>
                                                     @empty
                                                         <div class="text-gray-400 italic">Egyik raktárban sincs készleten.</div>
@@ -474,7 +487,7 @@
                                         <td x-show="cols.sku" class="px-5 py-3">ÖSSZESEN (Oldalon):</td>
                                         <td class="px-5 py-3">{{ $products->count() }} tétel</td>
                                         <td x-show="cols.category" class="px-5 py-3"></td>
-                                        <td x-show="cols.stock" class="px-5 py-3 text-indigo-700">{{ number_format($pageTotalQty, 0, ',', ' ') }} db</td>
+                                        <td x-show="cols.stock" class="px-5 py-3 text-indigo-700">{{ number_format($pageTotalQty, 0, ',', ' ') }} db @if($pageTotalQuarantined > 0)<p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($pageTotalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($pageTotalQuarantined, 0, ',', ' ') }} db</p>@endif</td>
                                         <td x-show="cols.price" class="px-5 py-3"></td>
                                         <td x-show="cols.value" class="px-5 py-3 text-right text-indigo-700">{{ number_format($pageTotalValue, 0, ',', ' ') }} Ft</td>
                                         <td class="px-5 py-3"></td>
@@ -490,9 +503,11 @@
                     @forelse($products as $product)
                         @php
                             $totalStock = (int) ($product->total_stock ?? 0);
+                            $totalAvailable = (int) ($product->total_available ?? 0);
+                            $totalQuarantined = (int) ($product->total_quarantined ?? 0);
                             $effectiveMin = $product->min_stock_override ?? ($product->category->default_item_min_stock ?? 0);
-                            $isLow = $totalStock < $effectiveMin;
-                                        $stockWarning = $isLow || $totalStock === 0;
+                            $isLow = $totalAvailable < $effectiveMin;
+                            $stockWarning = $isLow || $totalAvailable === 0;
                         @endphp
                         <div class="bg-white rounded-lg shadow-sm border {{ $stockWarning ? 'border-l-4 border-l-red-500 border-gray-200' : 'border-gray-200' }} p-4 flex flex-col justify-between hover:shadow-md transition">
                             <div>
@@ -501,10 +516,11 @@
                                         {{ $product->sku }}
                                     </span>
                                     <span class="text-xs font-bold px-2 py-0.5 rounded {{ $stockWarning ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800' }}">
-                                        {{ $totalStock === 0 ? 'Kifogyott: ' : ($isLow ? 'Minimum alatt: ' : 'Készlet: ') }}{{ $totalStock }} db (Min: {{ $effectiveMin }})
+                                        {{ $totalStock === 0 ? 'Kifogyott: ' : ($totalAvailable === 0 ? 'Nem kiadható: ' : ($isLow ? 'Minimum alatt: ' : 'Készlet: ')) }}{{ $totalStock }} db (Min: {{ $effectiveMin }})
                                     </span>
                                 </div>
 
+                                @if($totalQuarantined > 0)<p class="mb-2 text-xs text-gray-500">Kiadható: {{ number_format($totalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($totalQuarantined, 0, ',', ' ') }} db</p>@endif
                                 <h3 class="font-semibold text-gray-900 text-base mb-1">{{ $product->product_name }}</h3>
                                 <p class="text-xs text-gray-500 mb-3 leading-relaxed">
                                     {{ optional(optional($product->category)->parent)->category_name ? $product->category->parent->category_name . ' ➔ ' : '' }}{{ optional($product->category)->category_name }}
@@ -514,9 +530,12 @@
                                 <details class="bg-gray-50 rounded-md p-2.5 text-xs space-y-2 border border-gray-100 mb-3">
                                     <summary class="cursor-pointer font-medium text-gray-600">Raktári eloszlás · {{ $product->stocks->count() }} raktár</summary>
                                     @forelse($product->stocks as $st)
-                                        <div class="flex justify-between text-gray-700">
-                                            <span>{{ optional($st->warehouse)->warehouse_name }}</span>
-                                            <span class="font-bold">{{ $st->quantity }} db</span>
+                                        <div>
+                                            <div class="flex justify-between text-gray-700">
+                                                <span>{{ optional($st->warehouse)->warehouse_name }}</span>
+                                                <span class="font-bold">{{ $st->quantity }} db</span>
+                                            </div>
+                                            @if($st->quarantined_quantity > 0)<p class="mt-1 whitespace-normal text-[11px] text-gray-500">Kiadható: {{ $st->available_quantity }} db · Elkülönítve: {{ $st->quarantined_quantity }} db</p>@endif
                                         </div>
                                     @empty
                                         <div class="text-gray-400 italic">0 db készleten</div>

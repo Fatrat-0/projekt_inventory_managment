@@ -19,6 +19,7 @@
         @if($remaining === 0)
             <p class="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">Az eredeti mennyiséget már teljes egészében visszaküldték.</p>
         @else
+            @if($movement->type === 'out')<p class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">A visszavett áru elkülönített készletbe kerül. Minősítés után felszabadítható vagy indoklással selejtezhető.</p>@endif
             <form method="POST" action="{{ route('movements.return.store', $movement) }}"
                 x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)$movement->product_id, 'warehouse' => (string)$movement->warehouse_id, 'type' => $movement->type === 'out' ? 'in' : 'out', 'quantity' => is_scalar(old('quantity', 1)) ? old('quantity', 1) : 1]) }})"
                 @submit="submit($event)" @pageshow.window="restored($event)" class="space-y-5 rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
@@ -26,7 +27,7 @@
                 <input type="hidden" name="request_key" value="{{ $requestKey }}"><input type="hidden" name="context" value="{{ $context }}">
                 @error('request_key')<a href="{{ route('movements.return.create', ['movement' => $movement, 'context' => $context]) }}" class="block text-sm text-indigo-600 underline">Új visszáru-űrlap indítása</a>@enderror
                 <div class="rounded-md bg-gray-50 p-3 text-sm text-gray-600">
-                    <span x-text="stockText">Jelenlegi készlet a raktárban: {{ $stock }} db</span>
+                    <span x-text="stockText">Kiadható készlet a raktárban: {{ $stock }} db</span>
                     <button type="button" x-show="true" style="display:none" @click="loadStock()" class="ml-2 text-indigo-600 underline">Frissítés</button>
                     <p class="mt-1 text-xs">Mentéskor újra ellenőrizzük a készletet és a még visszaküldhető mennyiséget.</p>
                 </div>

@@ -11,10 +11,10 @@ class MovementReturnController extends Controller
 {
     public function create(Request $request, InventoryMovement $movement)
     {
-        abort_if($movement->isReturn(), 404);
+        abort_unless($movement->isReturnable(), 404);
         $movement->load(['product', 'warehouse', 'partner'])->loadSum('returns', 'quantity');
         $remaining = max(0, $movement->quantity - (int)$movement->returns_sum_quantity);
-        $stock = (int)Stock::where('product_id', $movement->product_id)->where('warehouse_id', $movement->warehouse_id)->value('quantity');
+        $stock = (int)Stock::where('product_id', $movement->product_id)->where('warehouse_id', $movement->warehouse_id)->first()?->available_quantity;
         $context = $request->old('context', $request->query('context', ''));
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
         $returnUrl = route('movements.show', ['movement' => $movement, 'context' => $context]);

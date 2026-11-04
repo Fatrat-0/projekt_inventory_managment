@@ -20,7 +20,7 @@ class DatabaseSeederRepeatTest extends TestCase
         foreach (['users' => 'id', 'categories' => 'category_id', 'warehouses' => 'warehouse_id', 'partners' => 'id',
             'products' => 'product_id', 'stocks' => 'id', 'inventory_movements' => 'id',
             'inventory_transfers' => 'id', 'inventory_movement_requests' => 'id', 'inventory_transfer_requests' => 'id',
-            'shipments' => 'id', 'shipment_stops' => 'id', 'shipment_items' => 'id'] as $table => $key) {
+            'shipments' => 'id', 'shipment_stops' => 'id', 'shipment_items' => 'id', 'return_quality_actions' => 'id'] as $table => $key) {
             $result[$table] = DB::table($table)->orderBy($key)->get()->map(fn($row) => (array) $row)->all();
         }
         return $result;

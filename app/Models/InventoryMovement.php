@@ -17,11 +17,12 @@ class InventoryMovement extends Model
         'stock_after',
         'partner_id', 'partner_name',
         'return_of_id', 'return_reason',
+        'quarantined_quantity', 'scrap_of_id',
     ];
 
     protected function casts(): array
     {
-        return ['quantity' => 'integer', 'stock_before' => 'integer', 'stock_after' => 'integer'];
+        return ['quantity' => 'integer', 'stock_before' => 'integer', 'stock_after' => 'integer', 'quarantined_quantity' => 'integer'];
     }
 
     public function getMovementNumberAttribute(): string
@@ -36,6 +37,12 @@ class InventoryMovement extends Model
     public function returns() { return $this->hasMany(self::class, 'return_of_id'); }
 
     public function isReturn(): bool { return $this->return_of_id !== null; }
+
+    public function isScrap(): bool { return $this->scrap_of_id !== null; }
+    public function isReturnable(): bool { return !$this->isReturn() && !$this->isScrap(); }
+    public function scrapOf() { return $this->belongsTo(self::class, 'scrap_of_id'); }
+    public function qualityActions() { return $this->hasMany(ReturnQualityAction::class, 'return_movement_id'); }
+    public function qualityAction() { return $this->hasOne(ReturnQualityAction::class, 'movement_id'); }
 
     public function getOriginalMovementNumberAttribute(): ?string
     {

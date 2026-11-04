@@ -8,6 +8,7 @@ use App\Models\Warehouse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /** Shared filtering contract for the product list and inventory export. */
@@ -73,7 +74,9 @@ class ProductListing
     {
         $f = $this->filters;
         $query = Product::with(['category.parent', 'stocks.warehouse'])
-            ->withSum('stocks as total_stock', 'quantity');
+            ->withSum('stocks as total_stock', 'quantity')
+            ->withSum('stocks as total_quarantined', 'quarantined_quantity')
+            ->withSum('stocks as total_available', DB::raw('quantity - quarantined_quantity'));
         foreach (preg_split('/\s+/u', $f['search'], -1, PREG_SPLIT_NO_EMPTY) as $token) {
             // Escape LIKE metacharacters consistently for MySQL and SQLite.
             $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $token).'%';
@@ -92,11 +95,12 @@ class ProductListing
                 ->where('warehouse_id', $f['warehouse_id'])->where('quantity', '>', 0));
         }
         $sum = '(SELECT COALESCE(SUM(stocks.quantity), 0) FROM stocks WHERE stocks.product_id = products.product_id)';
+        $available = '(SELECT COALESCE(SUM(stocks.quantity - stocks.quarantined_quantity), 0) FROM stocks WHERE stocks.product_id = products.product_id)';
         $min = 'COALESCE(products.min_stock_override, (SELECT categories.default_item_min_stock FROM categories WHERE categories.category_id = products.category_id), 0)';
         match ($f['stock_status']) {
-            'low' => $query->whereRaw("{$sum} < {$min}"),
-            'out' => $query->whereRaw("{$sum} = 0"),
-            'ok' => $query->whereRaw("{$sum} >= {$min} AND {$sum} > 0"),
+            'low' => $query->whereRaw("{$available} < {$min}"),
+            'out' => $query->whereRaw("{$available} = 0"),
+            'ok' => $query->whereRaw("{$available} >= {$min} AND {$available} > 0"),
             default => null,
         };
         if ($f['sort_by'] === 'category_name') {
@@ -124,7 +128,7 @@ class ProductListing
             $info[] = 'Készleten ebben a raktárban: '.Warehouse::findOrFail($f['warehouse_id'])->warehouse_name.' (a mennyiségek minden raktárt tartalmaznak)';
         }
         if ($f['stock_status']) {
-            $info[] = 'Összkészlet állapota: '.['low' => 'Minimum alatt', 'out' => 'Kifogyott', 'ok' => 'Megfelelő'][$f['stock_status']];
+            $info[] = 'Kiadható készlet állapota: '.['low' => 'Minimum alatt', 'out' => 'Nincs kiadható készlet', 'ok' => 'Megfelelő'][$f['stock_status']];
         }
         return $info;
     }

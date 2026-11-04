@@ -68,7 +68,7 @@ Az első nyolc alapforgatókönyv:
 7. Kiadás és átmozgatásindítás ugyanabból a forráskészletből.
 8. Ugyanazon átmozgatás kétszeri visszavonása.
 
-Ezek mellett beküldési kulcsos mozgás/átmozgatás, szállítmány-indítás/átvétel/visszavonás és közös készletért versengő műveletek is szerepelnek. A visszáru hét további esete az összesített korlátot, ismételt vagy eltérő beküldést, normál kiadással való versenyt és külső REPEATABLE READ tranzakciót ellenőrzi. Összesen 26 forgatókönyv fut; a visszáru-esetek részleteit a `visszaru-kezelese.md` tartalmazza.
+Ezek mellett beküldési kulcsos mozgás/átmozgatás, szállítmány-indítás/átvétel/visszavonás és közös készletért versengő műveletek is szerepelnek. A visszáru hét további esete az összesített korlátot, ismételt vagy eltérő beküldést, normál kiadással való versenyt és külső REPEATABLE READ tranzakciót ellenőrzi. A minősítés tíz esete a felszabadítás/selejtezés közös keretét, ismétlését, külső tranzakciót, kiadással való versenyt, ugyanazt a kulcsot két külön terméknél és az első minősítés felhasználótörléssel való ütközését vizsgálja. Összesen 36 forgatókönyv fut; részletek: `visszaru-kezelese.md` és `visszaru-minositese.md`.
 
 A szkript bármely hibánál nem nulla kilépési kóddal fejeződik be. A külön MySQL-tesztek nem részei az alap `php artisan test` futásnak. Ezek célzott helyességi tesztek, nem terhelésmérés és nem általános hibamentességi bizonyítékok.
 

@@ -8,6 +8,13 @@
         </div>
         <a href="{{ route('movements.index', ['product_id' => $movement->product_id]) }}" class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Termék mozgásai</a>
         @if($movement->isReturn()) @include('movements.return-history') @endif
+        @if($movement->isScrap())
+            <section class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900" aria-label="Selejtezés">
+                <h3 class="font-semibold">Selejtezés elkülönített visszáruból</h3>
+                <a href="{{ route('movements.show', ['movement' => $movement->scrap_of_id, 'context' => $context]) }}" class="underline">Kapcsolódó visszáru</a>
+                <p class="mt-2 whitespace-pre-wrap break-words">{{ $movement->qualityAction?->reason }}</p>
+            </section>
+        @endif
         <div class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-6">
             <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 text-sm">
                 <div class="sm:col-span-2"><dt class="text-gray-500">Partner a rögzítéskor</dt><dd class="mt-1 break-words text-gray-900">
@@ -38,6 +45,7 @@
                 @endif
             </section>
         </div>
-        @if(!$movement->isReturn()) @include('movements.return-history') @endif
+        @if($movement->isReturnable()) @include('movements.return-history') @endif
+        @if($movement->isReturn() && $movement->type === 'in') @include('movements.quality') @endif
     </div>
 </x-app-layout>

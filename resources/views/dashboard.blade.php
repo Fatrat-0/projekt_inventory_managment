@@ -51,6 +51,8 @@
                                 @php
                                     $threshold = $product->min_stock_override ?? optional($product->category)->default_item_min_stock;
                                     $current = $product->stocks_sum_quantity ?? 0;
+                                    $available = (int)($product->total_available ?? 0);
+                                    $quarantined = (int)($product->total_quarantined ?? 0);
                                 @endphp
                                 <tr class="border-b hover:bg-gray-50">
                                     <td class="px-6 py-4">
@@ -59,6 +61,7 @@
                                     </td>
                                     <td class="px-6 py-4 text-right">
                                         <span class="font-bold text-red-600 text-lg">{{ $current }} db</span>
+                                        @if($quarantined > 0)<span class="mt-1 block text-xs text-gray-500">Kiadható: {{ number_format($available, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($quarantined, 0, ',', ' ') }} db</span>@endif
                                         <span class="text-xs text-gray-500 block">Min: {{ $threshold }} db</span>
                                     </td>
                                 </tr>
@@ -86,7 +89,9 @@
                             <tbody>
                                 @forelse($lowStockCategories as $category)
                                 @php
-                                    $current = $category->products->sum(function($p) { return $p->stocks->sum('quantity'); });
+                                    $current = $category->products->sum(fn($p) => $p->stocks->sum('quantity'));
+                                    $available = $category->products->sum(fn($p) => $p->stocks->sum('available_quantity'));
+                                    $quarantined = $category->products->sum(fn($p) => $p->stocks->sum('quarantined_quantity'));
                                 @endphp
                                 <tr class="border-b hover:bg-gray-50">
                                     <td class="px-6 py-4">
@@ -95,6 +100,7 @@
                                     </td>
                                     <td class="px-6 py-4 text-right">
                                         <span class="font-bold text-orange-600 text-lg">{{ $current }} db</span>
+                                        @if($quarantined > 0)<span class="mt-1 block text-xs text-gray-500">Kiadható: {{ number_format($available, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($quarantined, 0, ',', ' ') }} db</span>@endif
                                         <span class="text-xs text-gray-500 block">Min: {{ $category->aggregate_min_stock }} db</span>
                                     </td>
                                 </tr>

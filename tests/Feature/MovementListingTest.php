@@ -125,10 +125,10 @@ class MovementListingTest extends TestCase
     public function test_stock_lookup_is_read_only_and_missing_stock_means_zero(): void
     {
         $params = ['product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id];
-        $this->getJson(route('movements.stock', $params))->assertOk()->assertExactJson(['quantity' => 0]);
+        $this->getJson(route('movements.stock', $params))->assertOk()->assertExactJson(['quantity' => 0, 'physical_quantity' => 0, 'quarantined_quantity' => 0]);
         $this->assertDatabaseCount('stocks', 0);
         Stock::create($params + ['quantity' => 17]);
-        $response = $this->getJson(route('movements.stock', $params))->assertOk()->assertExactJson(['quantity' => 17]);
+        $response = $this->getJson(route('movements.stock', $params))->assertOk()->assertExactJson(['quantity' => 17, 'physical_quantity' => 17, 'quarantined_quantity' => 0]);
         $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
         $this->assertDatabaseCount('inventory_movements', 0);
         $this->getJson(route('movements.stock', ['product_id' => 99999]))->assertUnprocessable();

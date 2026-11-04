@@ -155,7 +155,7 @@ test('replaying the same form creates one movement and details show its original
     const csrf = await page.getByRole('main').locator('input[name="_token"]').getAttribute('value');
     const key = await page.locator('input[name="request_key"]').getAttribute('value');
     const stockResponse = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
-    const before = (await stockResponse.json()).quantity;
+    const before = (await stockResponse.json()).physical_quantity;
     const first = await page.request.post('/movements', { form: {
         _token: csrf, request_key: key, product_id: '1', warehouse_id: '1', type: 'in', quantity: '1', reference,
     }});
@@ -164,7 +164,7 @@ test('replaying the same form creates one movement and details show its original
     await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('Mozgás rögzítve: MOZ-');
     const after = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
-    expect((await after.json()).quantity).toBe(before + 1);
+    expect((await after.json()).physical_quantity).toBe(before + 1);
     await page.goto('/movements?search='+reference);
     await expect(page.getByRole('heading', { name: 'Készletmozgások 1 tétel' })).toBeVisible();
     await page.getByRole('link', { name: /^MOZ-/ }).click();

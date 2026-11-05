@@ -1,0 +1,6 @@
+@php $movementKind = $movement->isScrap() ? 'Selejtezés' : ($movement->isReturn() ? ($movement->type === 'in' ? 'Vevői visszáru' : 'Beszállítói visszáru') : ($movement->type === 'in' ? 'Bevételezés' : 'Kiadás')); @endphp
+<li class="space-y-2 border-b border-gray-100 p-4" data-dashboard-row data-recent-movement="{{ $movement->id }}">
+    <div class="flex flex-wrap items-start justify-between gap-2"><a href="{{ route('movements.show', $movement) }}" class="text-sm font-semibold text-indigo-700 hover:underline">{{ $movement->movement_number }}</a><span class="text-sm font-semibold tabular-nums {{ $movement->type === 'in' ? 'text-emerald-700' : 'text-indigo-700' }}">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</span></div>
+    <p class="text-xs font-medium text-gray-600">{{ $movementKind }}</p><p class="break-all text-sm text-gray-900">{{ $movement->product->product_name }}</p><p class="break-all text-xs text-gray-500">{{ $movement->warehouse->warehouse_name }} · {{ $movement->user?->name ?? 'Korábbi felhasználó' }}</p>
+    <p class="text-xs text-gray-500"><time datetime="{{ $movement->created_at->toIso8601String() }}">{{ $movement->created_at->format('Y.m.d. H:i') }}</time></p>
+</li>

@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Keep the native disclosure below the scroll area, including without JavaScript. */
+.dashboard-list:has(> details[open]) > .dashboard-list-preview {
+    display: none;
+}
+
+.dashboard-list-details[open] {
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-list-details > summary {
+    order: 1;
+}
+
+.dashboard-list-details[open] .dashboard-list-scroll {
+    max-height: 70vh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}

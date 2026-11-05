@@ -4,7 +4,7 @@
 // Run: php tests/Concurrency/run.php
 use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
 use App\Services\{InventoryService, MasterDataEditor, ShipmentService};
-use App\Queries\ReturnQualityListing;
+use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Artisan, DB};
@@ -614,6 +614,50 @@ try {
     }
     check(hash_equals($beforeQueueReads, $queueSnapshot()), 'Queue reads changed stock, movement history or quality actions.');
     echo 'PASS: quality queue MySQL aggregates and filters'.PHP_EOL;
+    $dashboardCategory = Category::create(['category_name' => 'Dashboard direct category', 'default_item_min_stock' => 5, 'aggregate_min_stock' => 7]);
+    $dashboardChild = Category::create(['category_name' => 'Dashboard child', 'parent_id' => $dashboardCategory->category_id, 'aggregate_min_stock' => 50]);
+    $dashboardWarehouse = Warehouse::create(['warehouse_name' => 'Dashboard MySQL']);
+    foreach ([[$dashboardCategory, 10, 8, null], [$dashboardCategory, 0, 0, 0], [$dashboardChild, 100, 0, 0]] as $index => [$cat, $physical, $quarantine, $override]) {
+        $product = Product::create(['product_name' => 'Dashboard MySQL '.$index, 'sku' => 'DASH-MYSQL-'.$index, 'price' => 100,
+            'category_id' => $cat->category_id, 'min_stock_override' => $override]);
+        Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $dashboardWarehouse->warehouse_id, 'quantity' => $physical, 'quarantined_quantity' => $quarantine]);
+    }
+    Category::create(['category_name' => 'Dashboard empty', 'aggregate_min_stock' => 3]);
+    $expectedProductAlerts = Product::with(['category', 'stocks'])->get()->map(function ($product) {
+        $minimum = $product->min_stock_override ?? $product->category?->default_item_min_stock;
+        return ['id' => $product->product_id, 'shortage' => $minimum === null ? 0 : $minimum - $product->stocks->sum('available_quantity')];
+    })->filter(fn ($row) => $row['shortage'] > 0)->sort(fn ($a, $b) => $b['shortage'] <=> $a['shortage'] ?: $a['id'] <=> $b['id'])->values();
+    $expectedCategoryAlerts = Category::with('products.stocks')->get()->map(function ($category) {
+        return ['id' => $category->category_id, 'shortage' => $category->aggregate_min_stock === null ? 0
+            : $category->aggregate_min_stock - $category->products->sum(fn ($product) => $product->stocks->sum('available_quantity'))];
+    })->filter(fn ($row) => $row['shortage'] > 0)->sort(fn ($a, $b) => $b['shortage'] <=> $a['shortage'] ?: $a['id'] <=> $b['id'])->values();
+    $beforeDashboardReads = $queueSnapshot();
+    foreach ([7, 30] as $days) {
+        $overview = (new DashboardOverview)->data($days);
+        check($overview['lowStockProductCount'] === $expectedProductAlerts->count()
+            && $overview['lowStockProducts']->pluck('product_id')->all() === $expectedProductAlerts->take(DashboardOverview::LIST_PAGE_SIZE)->pluck('id')->all(), 'Dashboard MySQL product alerts are incorrect.');
+        check($overview['lowStockCategoryCount'] === $expectedCategoryAlerts->count()
+            && $overview['lowStockCategories']->pluck('category_id')->all() === $expectedCategoryAlerts->take(DashboardOverview::LIST_PAGE_SIZE)->pluck('id')->all(), 'Dashboard MySQL category alerts are incorrect.');
+        check($overview['lowStockProductCount'] === (new ProductListing(Request::create('/products', 'GET', ['stock_status' => 'low'])))->query()->count(),
+            'Dashboard/product list minimum semantics diverged.');
+        check($overview['stockSummary']['physical'] === (int)Stock::sum('quantity')
+            && $overview['stockSummary']['quarantined'] === (int)Stock::sum('quarantined_quantity')
+            && $overview['stockSummary']['available'] === $overview['stockSummary']['physical'] - $overview['stockSummary']['quarantined'], 'Dashboard stock balance is inconsistent.');
+        check($overview['transitSummary']['quantity'] === (int)InventoryTransfer::where('status', 'pending')->sum('quantity'), 'Dashboard duplicated pending shipment quantities.');
+        $pendingIds = InventoryTransfer::where('status', 'pending')->orderBy('created_at')->orderBy('id')->pluck('id');
+        check($overview['pendingTransfers']->total() === $pendingIds->count()
+            && $overview['pendingTransfers']->pluck('id')->all() === $pendingIds->take(DashboardOverview::LIST_PAGE_SIZE)->all(), 'Dashboard pending transfer paging is incorrect.');
+        $recentIds = InventoryMovement::where('created_at', '<=', $overview['asOf'])->orderByDesc('created_at')->orderByDesc('id')->pluck('id');
+        check($overview['recentMovements']->total() === $recentIds->count()
+            && $overview['recentMovements']->pluck('id')->all() === $recentIds->take(DashboardOverview::LIST_PAGE_SIZE)->all(), 'Dashboard movement paging is incorrect.');
+        check($overview['dailyActivity']->count() === $days, 'Dashboard MySQL daily buckets are missing.');
+        $movements = InventoryMovement::where('created_at', '>=', $overview['periodStart'])->where('created_at', '<=', $overview['asOf'])->get();
+        check($overview['activitySummary']['count'] === $movements->count()
+            && $overview['activitySummary']['in_quantity'] === (int)$movements->where('type', 'in')->sum('quantity')
+            && $overview['activitySummary']['out_quantity'] === (int)$movements->where('type', 'out')->sum('quantity'), 'Dashboard MySQL activity totals are incorrect.');
+    }
+    check(hash_equals($beforeDashboardReads, $queueSnapshot()), 'Dashboard reads changed stock or history.');
+    echo 'PASS: dashboard MySQL totals, alerts and daily activity'.PHP_EOL;
     echo "54 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);

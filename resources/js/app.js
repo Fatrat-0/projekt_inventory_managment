@@ -9,6 +9,9 @@ import pdfPreview from './components/pdf-preview';
 import rowActions from './components/row-actions';
 import partnerForm from './components/partner-form';
 import movementPartnerPicker from './components/movement-partner-picker';
+import dashboardList from './components/dashboard-list';
+import activityChart from './components/activity-chart';
+import dashboardView from './components/dashboard-view';
 
 window.Alpine = Alpine;
 
@@ -45,5 +48,8 @@ Alpine.data('pdfPreview', pdfPreview);
 Alpine.data('rowActions', rowActions);
 Alpine.data('partnerForm', partnerForm);
 Alpine.data('movementPartnerPicker', movementPartnerPicker);
+Alpine.data('dashboardList', dashboardList);
+Alpine.data('activityChart', activityChart);
+Alpine.data('dashboardView', dashboardView);
 
 Alpine.start();

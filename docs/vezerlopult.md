@@ -1,6 +1,6 @@
 # Vezérlőpult
 
-A `/dashboard` oldal minden raktár készletéről és nyitott feladatairól ad áttekintést. Az oldal megnyitása, az időszakváltás és a frissítés nem módosít üzleti adatot. Új migráció, csomag vagy seeder nem szükséges.
+A `/dashboard` oldal minden raktár készletéről és nyitott feladatairól ad áttekintést. Az oldal megnyitása, az időszakváltás és a frissítés nem módosít üzleti adatot. A személyes elrendezés beállításait és telepítési igényeit külön fejezet ismerteti alább.
 
 ## Aktuális állapot és feladatok
 
@@ -45,6 +45,24 @@ Az összesítő a készletmozgás-naplót dolgozza fel: visszárut és selejtez�
 A diagram típusát két kompakt ikon közül lehet kiválasztani. Az aktív ikon kiemelt, a natív választógombok képernyőolvasóval megnevezettek, billentyűzettel is használhatók; az ikonok fölött böngészős súgó jelenik meg. JavaScripttel a stílusváltás helyben történik, hálózati kérés nélkül. Az időszakváltás csak a diagram adatait és napi részleteit tölti újra: a vezérlők, a görgetés és a kibontott vezérlőpult-listák megmaradnak. A nézet és az időszak az URL-ben, valamint a frissítési és lapozási hivatkozásokban is követi a választást. Gyors időszakváltásnál a korábbi kérést megszakítjuk; elavult válasz nem írhatja felül az újabbat. Sikertelen lekérésnél megmarad a korábbi diagram, az időszakválasztó visszaáll, és újrapróbálható hibaüzenet jelenik meg. A Mutat gomb csak JavaScript nélkül jelenik meg, ekkor mindkét választás ezzel alkalmazható.
 
 A Frissítés hivatkozás megtartja az időszakot és a diagram típusát. A válasz `no-store, private` fejlécet kap; a böngésző visszaállított oldalának `pageshow` eseménye friss lekérést indít. Hibás HTML-paraméternél egyszeri átirányítással a hibás mező alapértékére térünk vissza, JSON-kérésnél 422-es mezőhiba érkezik.
+
+## Személyes elrendezés
+
+A sorok elején lévő fogantyúval egérrel és érintőképernyőn is áthúzhatók a blokkok. A képernyő szélén automatikus görgetés segíti a hosszabb lista rendezését; a fogantyún kívüli érintés továbbra is az oldalt görgeti. Az Escape, az ablak fókuszának elvesztése vagy megszakadó érintés visszaállítja a húzás előtti sorrendet. Húzás közben a Mentés és a többi rendezővezérlő átmenetileg tiltott. A jelölőnégyzetek állapota áthelyezéskor megmarad. Az átrendezést a SortableJS biztosítja, a csomag az npm-függőségek és a Vite-build része. A fel/le gombok billentyűzettel és JavaScript nélkül is használhatók; utóbbi esetben a húzófogantyúk nem jelennek meg.
+
+A Testreszabás hivatkozás külön beállítóoldalt nyit. A feladatösszesítő, készletösszesítő, termékhiányok, kategóriahiányok, átvételek, legutóbbi mozgások és diagram külön kapcsolható, fel/le gombokkal rendezhető. Nagy képernyőn a listák két oszlopban, a teljes szélességű összesítők és diagram saját sorban jelennek meg. A sorrend a dokumentum valódi sorrendje, ezért mobilon és billentyűzettel is következetes.
+
+A mentés a felhasználó users.dashboard_layout JSON-mezőjét és külön dashboard_layout_version számlálóját módosítja. Másik fiókot, készletet vagy jogosultságot nem érint; a következő bejelentkezés és másik böngésző is ugyanazt az elrendezést kapja. Mentés előtt a sorrend és a jelölések csak a szerkesztőben változnak; a Mégse elveti őket. Az Alapértelmezett elrendezés mind a hét blokkot visszaállítja, majd a Mentés alkalmazza. JavaScript nélkül a fel/le és alaphelyzet gombok azonnal mentenek, ezt a felület jelzi.
+
+A PATCH /dashboard/layout kizárólag a hitelesített felhasználó saját beállítását módosítja, CSRF-védelemmel. A hét engedélyezett blokkazonosító teljes, ismétlés nélküli sorrendjét és a látható részhalmazt fogadja el. A mentés egyetlen, az előző verzióra feltételes UPDATE: elavult böngészőfül esetén 409-es válasz érkezik, a frissebb elrendezés felülírása nélkül. A szerkesztő ilyenkor külön hivatkozással kínálja a mentett beállítások betöltését.
+
+Minden blokk elrejthető; az üres állapotból továbbra is elérhető a blokkok kiválasztása. Rejtett listához tartozó oldalszámot eltávolítunk az URL-ből, így nem ugrunk nem létező panelre. Az időszak és diagramtípus a szerkesztésből visszatérve is megmarad. A rejtett kategóriablokkra mutató összesítő a beállítás megfelelő sorához vezet. Ismeretlen vagy hibás tárolt beállításból csak az engedélyezett blokkok kerülhetnek a megjelenítésbe; újonnan bevezetett blokkok a meglévő sorrend végére kerülnek.
+
+A 2026_11_06_010000_add_dashboard_layout_to_users migráció két beállításmezőt ad a users táblához. A DashboardLayoutTest a validációt, fiókok elkülönítését, ütközésvédelmet, visszaállítást és üres állapotot ellenőrzi; a dashboard-layout.spec.js a tényleges átrendezést, másik munkamenetet, két böngészőfület, telefonos elrendezést és JavaScript nélküli használatot is vizsgálja. A dashboard-drag.spec.js egérrel és valódi böngészős érintési eseményekkel ellenőrzi az áthúzást, automatikus görgetést, megszakítást, jelölések megőrzését, mentést és a Mégse működését.
+
+A hibás űrlap utáni vázlat helyreállítása különválik a tárolt elrendezés későbbi bővítésétől: hiányos sorrend esetén sem kapcsoljuk vissza az érvényesen kikapcsolt blokkokat. Más űrlap korábbi adatai nem kerülnek át ide. Hibás vagy hiányzó mentési verzió esetén a mentett elrendezés kifejezett újratöltése szükséges; a szerkesztő nem ad automatikusan friss verziót egy régi vázlathoz. Ütközéskor a módosító vezérlők is le vannak tiltva a betöltésig.
+
+A lapozás normalizáló átirányításai továbbviszik a hibákat és a sikeres mentés visszajelzését. A böngészőtesztek a gyors ismételt elküldést, a visszaállított oldal vázlatának megőrzését és a 320 pixeles nézetet 150%-os alapbetűmérettel is ellenőrzik. A MySQL-futtató két valódi párhuzamos beállításmentést vizsgál normál és már megnyitott ismételhető olvasási tranzakcióban is; mindkét esetben egyetlen mentés nyerhet, profil- vagy készletmódosítás nélkül.
 
 ## Jogosultság és tesztek
 

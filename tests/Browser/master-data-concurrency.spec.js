@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 async function login(page) {
     await page.goto('/login');
@@ -68,7 +69,15 @@ test('conflict review and reloading current data work without JavaScript', async
     const page = await context.newPage();
     try {
         await login(page);
-        const editUrl = '/warehouses/1/edit';
+        // This test edits its own warehouse; later specs still need the shared picker fixture.
+        const name = 'NoJS-'+randomUUID();
+        const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+        const created = await page.request.post('/warehouses', { headers: { 'X-CSRF-TOKEN': token }, form: { warehouse_name: name, location: 'Próbahely' }, maxRedirects: 0 });
+        expect(created.status()).toBe(302);
+        const listing = await page.request.get('/warehouses?search='+encodeURIComponent(name));
+        const match = (await listing.text()).match(/data-warehouse-id="(\d+)"/);
+        expect(match).not.toBeNull();
+        const editUrl = '/warehouses/'+match[1]+'/edit';
         await page.goto(editUrl);
         const other = await context.newPage();
         await other.goto(editUrl);

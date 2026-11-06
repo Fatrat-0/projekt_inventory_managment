@@ -20,7 +20,7 @@ async function scenario(page) {
         expect((await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id, quantity, type: 'in' })).status()).toBe(302);
     }
     await page.goto('/stock?warehouse_id=2');
-    const row = page.getByRole('row').filter({ hasText: sku });
+    const row = page.locator('[data-stock-row]:visible').filter({ hasText: sku });
     const target = await row.locator('[data-stock-minimum]').getAttribute('data-stock-minimum');
     await row.locator('summary').click();
     await row.getByRole('spinbutton').fill('10');
@@ -66,7 +66,7 @@ test('warehouse chart links and replenishment preparation work on mobile and sav
         const warehouse = page.locator('[data-warehouse-stock="2"]:visible');
         await warehouse.getByRole('link', { name: 'Északi tesztraktár', exact: true }).click();
         await expect(page).toHaveURL(/stock\?warehouse_id=2/);
-        await expect(page.getByRole('row').filter({ hasText: state.sku })).toBeVisible();
+        await expect(page.locator('[data-stock-row]:visible').filter({ hasText: state.sku })).toBeVisible();
         await page.goto('/dashboard');
         await proposal.getByRole('link', { name: 'Átmozgatás előkészítése', exact: false }).click();
         await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Utánpótlás teszt '+state.sku+' ('+state.sku+')');

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\{InventoryTransfer, Product, Warehouse};
 use App\Queries\TransferListing;
+use App\Queries\ReplenishmentSuggestions;
 use App\Services\InventoryService;
 use App\Support\TransferListContext;
 use Illuminate\Http\Request;
@@ -31,14 +32,24 @@ class InventoryTransferController extends Controller
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
         $requestKey = $request->old('request_key');
         if (!is_string($requestKey) || !Str::isUuid($requestKey)) $requestKey = (string)Str::uuid();
+        $prefill = [];
+        if ($request->hasAny(['replenishment_stock_id', 'source_stock_id'])) {
+            $selection = $request->validate(['replenishment_stock_id' => 'required|integer|min:1', 'source_stock_id' => 'required|integer|min:1']);
+            $proposal = ReplenishmentSuggestions::query()->where('needs.id', $selection['replenishment_stock_id'])->where('needs.source_stock_id', $selection['source_stock_id'])->first();
+            if (!$proposal) return redirect()->to(route('dashboard').'#replenishment-title')->withErrors(['replenishment' => 'Ez az utánpótlási javaslat már nem aktuális. Válassz a frissített listából.']);
+            $prefill = ['replenishment_stock_id' => (int)$proposal->id, 'product_id' => (int)$proposal->product_id,
+                'from_warehouse_id' => (int)$proposal->source_warehouse_id, 'to_warehouse_id' => (int)$proposal->warehouse_id,
+                'quantity' => min((int)$proposal->shortage, (int)$proposal->surplus)];
+        }
         return view('transfers.create', ['products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
-            'context' => $context, 'returnUrl' => TransferListContext::url($context), 'requestKey' => $requestKey]);
+            'context' => $context, 'returnUrl' => TransferListContext::url($context), 'requestKey' => $requestKey, 'prefill' => $prefill]);
     }
     public function store(Request $request, InventoryService $inventory)
     {
         $data = $request->validate(['request_key' => 'required|uuid', 'product_id' => 'required|integer|exists:products,product_id',
             'from_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
-            'to_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id|different:from_warehouse_id', 'quantity' => 'required|integer|min:1|max:2147483647']);
+            'to_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id|different:from_warehouse_id', 'quantity' => 'required|integer|min:1|max:2147483647',
+            'replenishment_stock_id' => 'sometimes|required|integer|min:1']);
         $data['user_id'] = $request->user()->id;
         $transfer = $inventory->startTransfer($data, $data['request_key']);
         return redirect()->to(TransferListContext::url($request->input('context')))->with('success', 'Átmozgatás elindítva: '.$transfer->transfer_number.'.');

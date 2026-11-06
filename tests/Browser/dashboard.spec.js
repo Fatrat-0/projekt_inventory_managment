@@ -415,6 +415,9 @@ test('pending shipment items link to the shipment and receipt clears the live da
     await page.goto('/dashboard');
     const pending = page.locator('[data-pending-transfer]').filter({ hasText: item.name });
     await expect(pending).toHaveCount(1);
+    if (!(await pending.isVisible())) {
+        await page.locator('[data-dashboard-list="transfer"]').getByText('Több megjelenítése', { exact: true }).click();
+    }
     await pending.getByRole('link').click();
     await expect(page).toHaveURL(url => url.pathname === shipment);
     await expect(page.getByRole('heading', { name: reference, exact: true })).toBeVisible();

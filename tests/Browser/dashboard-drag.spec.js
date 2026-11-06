@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const defaults = ['tasks', 'stock_summary', 'product_alerts', 'category_alerts', 'pending_transfers', 'recent_movements', 'activity'];
+const defaults = ['tasks', 'stock_summary', 'product_alerts', 'category_alerts', 'pending_transfers', 'recent_movements', 'activity', 'warehouse_stocks', 'replenishment'];
 const rows = page => page.locator('ul[aria-label="Vezérlőpult blokkjainak sorrendje"] > [data-layout-row]:not([aria-hidden="true"])');
 const order = page => rows(page).evaluateAll(elements => elements.map(element => element.dataset.layoutRow));
 const row = (page, id) => rows(page).filter({ has: page.locator(`input[name="order[]"][value="${id}"]`) });
@@ -115,7 +115,9 @@ test('touch drag autoscrolls, cancels cleanly and regular swiping still scrolls 
         await touch('touchEnd');
         await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(60);
         expect(await order(page)).toEqual(defaults);
-        await row(page, 'tasks').locator('[data-layout-handle]').scrollIntoViewIfNeeded();
+        await expect.poll(() => row(page, 'tasks').evaluate(element => getComputedStyle(element).transitionDuration)).toBe('0s');
+        await row(page, 'tasks').locator('[data-layout-handle]').evaluate(element => element.scrollIntoView({ block: 'center', behavior: 'instant' }));
+        await row(page, 'tasks').locator('[data-layout-handle]').click({ trial: true });
         const source = await row(page, 'tasks').locator('[data-layout-handle]').boundingBox();
         const target = await row(page, 'category_alerts').boundingBox();
         const start = source.y + source.height / 2;
@@ -123,7 +125,7 @@ test('touch drag autoscrolls, cancels cleanly and regular swiping still scrolls 
         for (let step = 1; step <= 20; step++) { await touch('touchMove', x, start + (target.y + target.height - 8 - start) * step / 20); await frame(); }
         await expect.poll(async () => (await order(page))[0]).not.toBe('tasks');
         await touch('touchEnd');
-        expect(new Set(await order(page)).size).toBe(7);
+        expect(new Set(await order(page)).size).toBe(defaults.length);
         await page.getByRole('button', { name: 'Mentés', exact: true }).click();
         await expect(page).toHaveURL(url => url.pathname === '/dashboard');
         expect(await page.locator('[data-dashboard-panel]').evaluateAll(elements => elements.map(element => element.dataset.dashboardPanel))).not.toEqual(defaults);

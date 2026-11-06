@@ -10,6 +10,7 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Artisan, DB};
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
@@ -66,6 +67,7 @@ if (($argv[1] ?? '') === '--worker') {
                 (new ($job['model']))->findOrFail($job['id']), Request::create('/', 'PUT', ['lock_version' => 1]), $job['data'], '/'),
             'partner_archive' => (new \App\Http\Controllers\PartnerController)->archive(Request::create('/', 'PATCH'), Partner::findOrFail($job['id'])),
             'dashboard_layout' => saveDashboardLayout($job),
+            'stock_minimum' => app(\App\Http\Controllers\StockController::class)->minimum(Request::create('/', 'PATCH', $job['data']), Stock::findOrFail($job['id'])),
         };
         if ($outerSnapshot) DB::commit();
         echo "OK\n";
@@ -683,7 +685,33 @@ try {
         check(hash_equals($beforePreferences, $queueSnapshot()), 'Layout preference changed inventory or history.');
         echo 'PASS: concurrent dashboard preferences'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
     }
-    echo "56 MySQL concurrency checks passed.\n";
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['target', 'source'] as $constraint) {
+            $product = Product::create(['product_name' => 'Replenishment race', 'sku' => 'REPL-'.Str::random(12), 'price' => 1, 'category_id' => $dashboardCategory->category_id]);
+            $origin = Warehouse::create(['warehouse_name' => 'Replenishment origin']);
+            $destination = Warehouse::create(['warehouse_name' => 'Replenishment destination']);
+            $source = Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $origin->warehouse_id, 'quantity' => $constraint === 'source' ? 12 : 20, 'min_quantity' => 5]);
+            $target = Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $destination->warehouse_id, 'quantity' => 0, 'min_quantity' => 7]);
+            $other = $constraint === 'source' ? Stock::create(['product_id' => $product->product_id,
+                'warehouse_id' => Warehouse::create(['warehouse_name' => 'Other destination'])->warehouse_id, 'quantity' => 0, 'min_quantity' => 7]) : $target;
+            $proposal = \App\Queries\ReplenishmentSuggestions::query()->where('needs.id', $target->id)->sole();
+            check((int)$proposal->shortage === 7 && (int)$proposal->source_stock_id === $source->id, 'MySQL replenishment proposal is incorrect.');
+            $jobs = array_map(fn ($row) => ['action' => 'start', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string)\Illuminate\Support\Str::uuid(),
+                'data' => ['product_id' => $product->product_id, 'from_warehouse_id' => $origin->warehouse_id, 'to_warehouse_id' => $row->warehouse_id,
+                    'quantity' => 7, 'user_id' => $layoutUser->id, 'replenishment_stock_id' => $row->id]], [$target, $other]);
+            check(race($database, $product->product_id, $jobs) === ['OK', 'REJECTED'], 'Concurrent replenishment exceeded '.$constraint.' allowance.');
+            check($source->fresh()->quantity === ($constraint === 'source' ? 5 : 13), 'Replenishment stock deducted incorrectly.');
+            check(InventoryTransfer::where('product_id', $product->product_id)->count() === 1, 'Replenishment created duplicate transfers.');
+            check($target->fresh()->quantity === 0 && $other->fresh()->quantity === 0, 'Pending replenishment changed destination stock.');
+            echo 'PASS: replenishment '.$constraint.' guard'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+        $jobs = array_map(fn ($minimum) => ['action' => 'stock_minimum', 'id' => $source->id, 'outerSnapshot' => $outerSnapshot,
+            'data' => ['min_quantity' => $minimum, 'expected_minimum' => 5]], [6, 7]);
+        check(race($database, $product->product_id, $jobs) === ['OK', 'REJECTED'], 'Concurrent local minimum changes overwrote each other.');
+        check(in_array($source->fresh()->min_quantity, [6, 7], true) && $source->fresh()->quantity === 5, 'Minimum edit changed stock.');
+        echo 'PASS: concurrent local minimum changes'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+    echo "62 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

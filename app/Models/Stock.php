@@ -11,7 +11,7 @@ class Stock extends Model
 
     protected function casts(): array
     {
-        return ['quantity' => 'integer', 'quarantined_quantity' => 'integer'];
+        return ['quantity' => 'integer', 'quarantined_quantity' => 'integer', 'min_quantity' => 'integer'];
     }
 
     public function getAvailableQuantityAttribute(): int

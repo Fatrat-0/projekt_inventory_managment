@@ -15,8 +15,10 @@ class DashboardLayout
         'pending_transfers' => ['label' => 'Átvételre váró átmozgatások', 'view' => 'dashboard.pending-transfers', 'wide' => false],
         'recent_movements' => ['label' => 'Legutóbbi készletmozgások', 'view' => 'dashboard.recent-movements', 'wide' => false],
         'activity' => ['label' => 'Készletmozgások diagramja', 'view' => 'dashboard.activity', 'wide' => true],
+        'warehouse_stocks' => ['label' => 'Raktárankénti készlethelyzet', 'view' => 'dashboard.warehouse-stocks', 'wide' => true],
+        'replenishment' => ['label' => 'Utánpótlási javaslatok', 'view' => 'dashboard.replenishment', 'wide' => true],
     ];
-    public const PAGE_PANELS = ['product_alert_page' => 'product_alerts', 'category_alert_page' => 'category_alerts', 'transfer_page' => 'pending_transfers', 'movement_page' => 'recent_movements'];
+    public const PAGE_PANELS = ['product_alert_page' => 'product_alerts', 'category_alert_page' => 'category_alerts', 'transfer_page' => 'pending_transfers', 'movement_page' => 'recent_movements', 'warehouse_page' => 'warehouse_stocks', 'replenishment_page' => 'replenishment'];
 
     public static function defaults(): array
     {

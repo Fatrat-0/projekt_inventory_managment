@@ -17,6 +17,8 @@ class DashboardOverview
         'category_alert_page' => ['data' => 'lowStockCategories', 'anchor' => 'category-alerts-title'],
         'transfer_page' => ['data' => 'pendingTransfers', 'anchor' => 'pending-title'],
         'movement_page' => ['data' => 'recentMovements', 'anchor' => 'recent-title'],
+        'warehouse_page' => ['data' => 'warehouseStocks', 'anchor' => 'warehouse-stocks-title'],
+        'replenishment_page' => ['data' => 'replenishments', 'anchor' => 'replenishment-title'],
     ];
 
     public static function productAlerts(): Builder
@@ -54,6 +56,13 @@ class DashboardOverview
             $productCount = (clone $productAlerts)->count();
             $categoryCount = (clone $categoryAlerts)->count();
             $stock = Stock::query()->selectRaw('COALESCE(SUM(quantity), 0) AS physical, COALESCE(SUM(quarantined_quantity), 0) AS quarantined, COALESCE(SUM(quantity - quarantined_quantity), 0) AS available')->first();
+            $warehouseTotals = DB::table('stocks')->select('warehouse_id')->selectRaw('SUM(quantity) AS physical, SUM(quarantined_quantity) AS quarantined')->groupBy('warehouse_id');
+            $warehouseStocks = Warehouse::query()->leftJoinSub($warehouseTotals, 'totals', 'totals.warehouse_id', '=', 'warehouses.warehouse_id')
+                ->select('warehouses.*')->selectRaw('COALESCE(totals.physical, 0) AS physical, COALESCE(totals.quarantined, 0) AS quarantined, COALESCE(totals.physical - totals.quarantined, 0) AS available')
+                ->orderByDesc('physical')->orderBy('warehouses.warehouse_id');
+            $warehousePeak = max(1, (int)DB::query()->fromSub($warehouseTotals, 'totals')->max('physical'));
+            $replenishments = ReplenishmentSuggestions::query();
+            $replenishmentCount = (clone $replenishments)->count();
             $transit = InventoryTransfer::where('status', 'pending')->selectRaw('COUNT(*) AS transfers_count, COALESCE(SUM(quantity), 0) AS quantity')->first();
             $pending = InventoryTransfer::with(['product', 'fromWarehouse', 'toWarehouse', 'shipmentItem.stop.shipment'])
                 ->where('status', 'pending')->orderBy('created_at')->orderBy('id');
@@ -75,6 +84,10 @@ class DashboardOverview
                 'days' => $days, 'asOf' => $asOf, 'periodStart' => $start,
                 'totalProducts' => Product::count(), 'totalWarehouses' => Warehouse::count(),
                 'stockSummary' => ['physical' => (int)$stock->physical, 'quarantined' => (int)$stock->quarantined, 'available' => (int)$stock->available],
+                'warehouseStocks' => $this->listPage($warehouseStocks, Warehouse::count(), (int)($pages['warehouse_page'] ?? 1), 'warehouse_page'),
+                'warehousePeak' => $warehousePeak,
+                'replenishmentCount' => $replenishmentCount,
+                'replenishments' => $this->listPage($replenishments, $replenishmentCount, (int)($pages['replenishment_page'] ?? 1), 'replenishment_page'),
                 'qualitySummary' => ReturnQualityListing::pendingSummary(),
                 'lowStockProductCount' => $productCount, 'lowStockCategoryCount' => $categoryCount,
                 'lowStockProducts' => $this->listPage($productAlerts->with('category')->orderByDesc('shortage')->orderBy('products.product_id'), $productCount, (int)($pages['product_alert_page'] ?? 1), 'product_alert_page'),
@@ -90,7 +103,7 @@ class DashboardOverview
         });
     }
 
-    private function listPage(Builder $query, int $total, int $requested, string $name): LengthAwarePaginator
+    private function listPage(Builder|\Illuminate\Database\Query\Builder $query, int $total, int $requested, string $name): LengthAwarePaginator
     {
         $page = min(max(1, $requested), max(1, (int)ceil($total / self::LIST_PAGE_SIZE)));
         return new LengthAwarePaginator($query->forPage($page, self::LIST_PAGE_SIZE)->get(), $total, self::LIST_PAGE_SIZE, $page,

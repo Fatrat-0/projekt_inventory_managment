@@ -133,8 +133,8 @@ class DashboardLayoutTest extends TestCase
         $layout = DashboardLayout::normalize(['order' => ['activity', 'activity', '<script>'], 'visible' => []]);
         $this->assertSame('activity', $layout['order'][0]);
         $this->assertNotContains('activity', $layout['visible']);
-        $this->assertCount(7, $layout['order']);
-        $this->assertCount(6, $layout['visible']);
+        $this->assertCount(count(DashboardLayout::PANELS), $layout['order']);
+        $this->assertCount(count(DashboardLayout::PANELS) - 1, $layout['visible']);
     }
 
     public function test_guests_cannot_read_or_write_preferences(): void

@@ -52,9 +52,9 @@ A sorok elején lévő fogantyúval egérrel és érintőképernyőn is áthúzh
 
 A Testreszabás hivatkozás külön beállítóoldalt nyit. A feladatösszesítő, készletösszesítő, termékhiányok, kategóriahiányok, átvételek, legutóbbi mozgások és diagram külön kapcsolható, fel/le gombokkal rendezhető. Nagy képernyőn a listák két oszlopban, a teljes szélességű összesítők és diagram saját sorban jelennek meg. A sorrend a dokumentum valódi sorrendje, ezért mobilon és billentyűzettel is következetes.
 
-A mentés a felhasználó users.dashboard_layout JSON-mezőjét és külön dashboard_layout_version számlálóját módosítja. Másik fiókot, készletet vagy jogosultságot nem érint; a következő bejelentkezés és másik böngésző is ugyanazt az elrendezést kapja. Mentés előtt a sorrend és a jelölések csak a szerkesztőben változnak; a Mégse elveti őket. Az Alapértelmezett elrendezés mind a hét blokkot visszaállítja, majd a Mentés alkalmazza. JavaScript nélkül a fel/le és alaphelyzet gombok azonnal mentenek, ezt a felület jelzi.
+A mentés a felhasználó users.dashboard_layout JSON-mezőjét és külön dashboard_layout_version számlálóját módosítja. Másik fiókot, készletet vagy jogosultságot nem érint; a következő bejelentkezés és másik böngésző is ugyanazt az elrendezést kapja. Mentés előtt a sorrend és a jelölések csak a szerkesztőben változnak; a Mégse elveti őket. Az Alapértelmezett elrendezés mind a kilenc blokkot visszaállítja, majd a Mentés alkalmazza. JavaScript nélkül a fel/le és alaphelyzet gombok azonnal mentenek, ezt a felület jelzi.
 
-A PATCH /dashboard/layout kizárólag a hitelesített felhasználó saját beállítását módosítja, CSRF-védelemmel. A hét engedélyezett blokkazonosító teljes, ismétlés nélküli sorrendjét és a látható részhalmazt fogadja el. A mentés egyetlen, az előző verzióra feltételes UPDATE: elavult böngészőfül esetén 409-es válasz érkezik, a frissebb elrendezés felülírása nélkül. A szerkesztő ilyenkor külön hivatkozással kínálja a mentett beállítások betöltését.
+A PATCH /dashboard/layout kizárólag a hitelesített felhasználó saját beállítását módosítja, CSRF-védelemmel. A kilenc engedélyezett blokkazonosító teljes, ismétlés nélküli sorrendjét és a látható részhalmazt fogadja el. A mentés egyetlen, az előző verzióra feltételes UPDATE: elavult böngészőfül esetén 409-es válasz érkezik, a frissebb elrendezés felülírása nélkül. A szerkesztő ilyenkor külön hivatkozással kínálja a mentett beállítások betöltését.
 
 Minden blokk elrejthető; az üres állapotból továbbra is elérhető a blokkok kiválasztása. Rejtett listához tartozó oldalszámot eltávolítunk az URL-ből, így nem ugrunk nem létező panelre. Az időszak és diagramtípus a szerkesztésből visszatérve is megmarad. A rejtett kategóriablokkra mutató összesítő a beállítás megfelelő sorához vezet. Ismeretlen vagy hibás tárolt beállításból csak az engedélyezett blokkok kerülhetnek a megjelenítésbe; újonnan bevezetett blokkok a meglévő sorrend végére kerülnek.
 
@@ -63,6 +63,22 @@ A 2026_11_06_010000_add_dashboard_layout_to_users migráció két beállításme
 A hibás űrlap utáni vázlat helyreállítása különválik a tárolt elrendezés későbbi bővítésétől: hiányos sorrend esetén sem kapcsoljuk vissza az érvényesen kikapcsolt blokkokat. Más űrlap korábbi adatai nem kerülnek át ide. Hibás vagy hiányzó mentési verzió esetén a mentett elrendezés kifejezett újratöltése szükséges; a szerkesztő nem ad automatikusan friss verziót egy régi vázlathoz. Ütközéskor a módosító vezérlők is le vannak tiltva a betöltésig.
 
 A lapozás normalizáló átirányításai továbbviszik a hibákat és a sikeres mentés visszajelzését. A böngészőtesztek a gyors ismételt elküldést, a visszaállított oldal vázlatának megőrzését és a 320 pixeles nézetet 150%-os alapbetűmérettel is ellenőrzik. A MySQL-futtató két valódi párhuzamos beállításmentést vizsgál normál és már megnyitott ismételhető olvasási tranzakcióban is; mindkét esetben egyetlen mentés nyerhet, profil- vagy készletmódosítás nélkül.
+
+## Raktárankénti készlethelyzet és utánpótlás
+
+A két új, külön kapcsolható és rendezhető blokk a korábban mentett elrendezések végén is megjelenik. A raktárdiagram a fizikai készletet közös, az összes raktár legnagyobb készletéhez igazított skálán bontja kiadható és elkülönített részre. Az üres raktárak is szerepelnek; az úton lévő áru nem része a diagramnak. A darabszám nem térfogatot, kapacitáskihasználást vagy készletértéket jelent. A raktárnév a raktárra szűrt készletlistát nyitja, raktárosként is elérhetően. A színjelölést szöveges darabszámok egészítik ki.
+
+Az utánpótlási szükséglet képlete: helyi minimum − kiadható készlet − ide úton lévő, pending állapotú átmozgatások mennyisége. A szállítmányokhoz tartozó úton lévő tételek is beleszámítanak, a lezárt és visszavont átmozgatások nem. Csak pozitív maradék hiány jelenik meg, kizárólag meglévő készletsoroknál; hiányzó készletsor alapján nem feltételezünk helyi igényt. A termék globális és a kategória minimuma nem helyettesíti a helyi minimumot.
+
+A stocks.min_quantity meglévő mező alapértéke 5 db. Adminisztrátor és manager a Készlet oldal Helyi minimum oszlopában, a Módosítás alatt állíthatja 0 és 2147483647 között; 0 esetén nincs helyi utánpótlási igény. Ez kizárólag beállításmódosítás, nem készletkorrekció. Az előző minimumérték ellenőrzése megakadályozza az egymásra mentést. A módosítás ugyanazt a termékzárat használja, mint a készletműveletek. Raktáros látja a minimumot, de nem módosíthatja.
+
+A javasolt forrás azonos terméket tartó, másik raktár, amelyben a kiadható készlet meghaladja a helyi minimumot. A legnagyobb ilyen többletű forrás kerül előre, egyezésnél a készletsor azonosítója dönt. Az úton lévő árut nem tekintjük már kiadható forrásnak. A javasolt mennyiség a cél hiánya és a forrás többlete közül a kisebb; a felület jelzi a részleges pótlást és a belső forrás hiányát. A javaslatok önálló lehetőségek, nem közös foglalási vagy beszerzési terv: ugyanazt a szabad forrást több cél javaslata is megmutathatja.
+
+Az Átmozgatás előkészítése frissen kiszámolja a javaslatot, majd a meglévő űrlapon kitölti a terméket, forrást, célt és mennyiséget. Ez GET kérésként nem módosít üzleti adatot. Indításkor a termék zárolása után friss zároló olvasás ellenőrzi a cél helyi hiányát, a pending beérkezéseket és a forrás minimum feletti kiadható készletét. Ez már megnyitott MySQL REPEATABLE READ tranzakcióban is aktuális értékeket olvas. Elavult javaslat túltöltést vagy minimum alatti forráskészletet nem okozhat; a felhasználó frissített javaslatot kérhet, vagy csökkentheti a mennyiséget. A normál, kézi átmozgatás meglévő szabályai megmaradnak, ott a helyi minimum tájékoztató küszöb. Az ismételt beküldés elleni védelem az utánpótlási módot is ellenőrzi.
+
+Mindkét lista három sorral indul, kibontva görgethető, és 25 soronként külön lapozható (warehouse_page, replenishment_page). A raktárdiagram skálája lapozáskor sem változik. A lapozás, időszak, diagramtípus, rejtett blokkok és testreszabás a korábbi szabályokat követi. Új migráció és új npm-csomag ehhez a bővítéshez nem szükséges.
+
+A DashboardReplenishmentTest ellenőrzi a minimumokat, elkülönítést, beérkezéseket, részleges és hiányzó forrást, előkitöltést, elavult javaslatot, ismételt beküldést, szerepköröket, szűrt készletlistát és lapozást. A dashboard-replenishment.spec.js a teljes előkészítés–indítás folyamatot, a mobilos megjelenést és a JavaScript nélküli, előkitöltött űrlap beküldését is vizsgálja. A MySQL-futtató normál és már megnyitott olvasási tranzakciókban is versenyeztet két, közös célhiányt vagy forrástöbbletet felhasználó indítást, valamint két minimumszerkesztést.
 
 ## Jogosultság és tesztek
 
@@ -73,8 +89,8 @@ A `DashboardOverview` adatbázisoldali összesítéseket és korlátozott, előr
 Ellenőrzés:
 
 ```powershell
-php artisan test --filter=DashboardOverviewTest
-npm run test:browser -- dashboard.spec.js quality-queue.spec.js
+php artisan test --filter="DashboardOverviewTest|DashboardReplenishmentTest|DashboardLayoutTest"
+npm run test:browser -- dashboard.spec.js dashboard-layout.spec.js dashboard-drag.spec.js dashboard-replenishment.spec.js transfers.spec.js
 php tests/Concurrency/run.php
 ```
 

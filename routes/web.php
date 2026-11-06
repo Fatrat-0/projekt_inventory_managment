@@ -64,6 +64,7 @@ Route::middleware(['auth'])->group(function () {
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja
     Route::middleware(['role:admin,manager'])->group(function () {
+        Route::patch('/stock/{stock}/minimum', [StockController::class, 'minimum'])->name('stock.minimum');
         Route::resource('categories', CategoryController::class)->except(['show']);
         Route::resource('warehouses', WarehouseController::class);
         Route::get('/warehouses/{warehouse}/inventory.pdf', [ExportController::class, 'warehouseInventoryPdf'])->name('warehouses.inventory-pdf');

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-const defaults = ['tasks', 'stock_summary', 'product_alerts', 'category_alerts', 'pending_transfers', 'recent_movements', 'activity'];
+const defaults = ['tasks', 'stock_summary', 'product_alerts', 'category_alerts', 'pending_transfers', 'recent_movements', 'activity', 'warehouse_stocks', 'replenishment'];
 const ids = page => page.locator('[data-dashboard-panel]').evaluateAll(elements => elements.map(element => element.dataset.dashboardPanel));
 const rows = page => page.locator('[data-layout-row]').evaluateAll(elements => elements.map(element => element.dataset.layoutRow));
 
@@ -35,7 +35,7 @@ test('blocks can be toggled and reordered with keyboard, saved, and reopened in 
     await expect(page.getByRole('button', { name: 'Készletmozgások diagramja lejjebb', exact: true })).toBeFocused();
     await page.getByRole('button', { name: 'Mentés', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/dashboard');
-    expect(await ids(page)).toEqual(['activity', 'tasks', 'stock_summary', 'pending_transfers', 'recent_movements']);
+    expect(await ids(page)).toEqual(['activity', 'tasks', 'stock_summary', 'pending_transfers', 'recent_movements', 'warehouse_stocks', 'replenishment']);
     await page.reload();
     expect((await ids(page))[0]).toBe('activity');
     await expect(page.locator('a[href="#category-alerts"]')).toHaveCount(0);

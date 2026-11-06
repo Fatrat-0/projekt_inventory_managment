@@ -194,6 +194,7 @@ class InventoryService
     {
         $payload = ['product_id' => (int)$data['product_id'], 'from_warehouse_id' => (int)$data['from_warehouse_id'],
             'to_warehouse_id' => (int)$data['to_warehouse_id'], 'quantity' => (int)$data['quantity'], 'user_id' => (int)$data['user_id']];
+        if (isset($data['replenishment_stock_id'])) $payload['replenishment_stock_id'] = (int)$data['replenishment_stock_id'];
         $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
         try {
@@ -202,8 +203,11 @@ class InventoryService
                     'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
                 ]);
                 $this->lockProduct($payload['product_id']);
+                if (isset($payload['replenishment_stock_id'])) $this->checkReplenishment($payload);
                 $this->changeStock($payload['product_id'], $payload['from_warehouse_id'], -$payload['quantity']);
-                $transfer = InventoryTransfer::create(array_merge($payload, ['status' => 'pending']));
+                $transferData = $payload;
+                unset($transferData['replenishment_stock_id']);
+                $transfer = InventoryTransfer::create(array_merge($transferData, ['status' => 'pending']));
                 if ($requestId !== null) {
                     DB::table('inventory_transfer_requests')->where('id', $requestId)->update(['transfer_id' => $transfer->id]);
                 }
@@ -215,6 +219,21 @@ class InventoryService
             if (!$previous || !$previous->transfer_id) throw $e;
             if (!hash_equals($previous->payload_hash, $hash)) throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új átmozgatáshoz nyiss új űrlapot.']);
             return InventoryTransfer::findOrFail($previous->transfer_id);
+        }
+    }
+
+    private function checkReplenishment(array $payload): void
+    {
+        // Locking reads stay current even inside an already-open REPEATABLE READ transaction.
+        $target = Stock::whereKey($payload['replenishment_stock_id'])->where('product_id', $payload['product_id'])
+            ->where('warehouse_id', $payload['to_warehouse_id'])->lockForUpdate()->first();
+        $source = Stock::where('product_id', $payload['product_id'])->where('warehouse_id', $payload['from_warehouse_id'])->lockForUpdate()->first();
+        $incoming = InventoryTransfer::where('product_id', $payload['product_id'])->where('to_warehouse_id', $payload['to_warehouse_id'])
+            ->where('status', 'pending')->lockForUpdate()->get(['quantity'])->sum('quantity');
+        $shortage = $target ? $target->min_quantity - $target->available_quantity - $incoming : 0;
+        $surplus = $source ? $source->available_quantity - $source->min_quantity : 0;
+        if ($payload['from_warehouse_id'] === $payload['to_warehouse_id'] || !$target || !$source || $payload['quantity'] > min($shortage, $surplus)) {
+            throw ValidationException::withMessages(['quantity' => 'Az utánpótlási javaslat közben megváltozott. A mennyiség nem haladhatja meg a cél aktuális hiányát és a forrás helyi minimum feletti kiadható készletét. Frissítsd a vezérlőpultot.']);
         }
     }
 

@@ -1,4 +1,4 @@
-@props(['items', 'kind', 'asOf', 'canManage' => false])
+@props(['items', 'kind', 'asOf', 'canManage' => false, 'warehousePeak' => 1])
 @php
     $preview = \App\Queries\DashboardOverview::LIST_PREVIEW_LIMIT;
     $rows = $items->getCollection();
@@ -7,6 +7,8 @@
         'category' => ['Kategóriahiányok', 'category', 'Nincs kategóriaminimum alatti készlet.'],
         'transfer' => ['Átvételre váró átmozgatások', 'transfer', 'Nincs átvételre váró átmozgatás.'],
         'movement' => ['Legutóbbi készletmozgások', 'movement', 'Még nem történt mozgás a rendszerben.'],
+        'warehouse' => ['Raktárankénti készlethelyzet', 'warehouse', 'Még nincs raktár a rendszerben.'],
+        'replenishment' => ['Utánpótlási javaslatok', 'replenishment', 'Nincs további pótlást igénylő készletsor a beállított helyi minimumok alapján.'],
     };
 @endphp
 <div x-data="dashboardList" @resize.window.debounce.100ms="measure()" data-dashboard-list="{{ $kind }}" class="dashboard-list">

@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Prefer word boundaries; unbroken names and identifiers must still fit narrow panels. */
+.dashboard-text {
+    overflow-wrap: anywhere;
+    word-break: normal;
+}
+
 /* Keep the native disclosure below the scroll area, including without JavaScript. */
 .dashboard-list:has(> details[open]) > .dashboard-list-preview {
     display: none;

@@ -12,10 +12,10 @@ const csrf = page => page.locator('meta[name="csrf-token"]').getAttribute('conte
 async function post(page, url, data) {
     return page.request.post(url, { headers: { 'X-CSRF-TOKEN': await csrf(page) }, data, maxRedirects: 0 });
 }
-async function product(page, minimum = 10) {
+async function product(page, minimum = 10, productName = null) {
     const sku = randomUUID()+'W'.repeat(14);
-    const name = 'DASH-'+randomUUID()+'W'.repeat(59);
-    expect(name.length).toBe(100);
+    const name = productName ?? 'DASH-'+randomUUID()+'W'.repeat(59);
+    expect(name.length).toBeLessThanOrEqual(100);
     expect((await post(page, '/products', { product_name: name, sku, price: 100, category_id: 1, min_stock_override: minimum })).status()).toBe(302);
     const listing = await page.request.get('/products?search='+sku);
     const match = (await listing.text()).match(/href="[^"]*\/products\/(\d+)\/edit/);
@@ -333,7 +333,10 @@ test('shortages use available stock, return work opens the queue and long names 
     const transfer = await post(page, '/transfers', { request_key: randomUUID(), product_id: item.id, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 });
     expect(transfer.status()).toBe(302);
     await page.goto('/dashboard');
-    const alert = page.locator('[data-product-alert="'+item.id+'"]');
+    const alerts = page.locator('[data-dashboard-list="product"]');
+    const alert = alerts.locator('[data-product-alert="'+item.id+'"]:visible');
+    if (await alert.count() === 0) await alerts.getByText('Több megjelenítése', { exact: true }).click();
+    await expect(alert).toBeVisible();
     await expect(alert).toContainText('Kiadható: 1 db');
     await expect(alert).toContainText('Fizikai: 7 db');
     await expect(alert).toContainText('Elkülönítve: 6 db');
@@ -357,6 +360,46 @@ test('shortages use available stock, return work opens the queue and long names 
     await page.goto('/dashboard');
     await page.getByRole('region', { name: 'Minősítésre váró visszáruk', exact: true }).getByRole('link', { name: 'Minősítési munkalista', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/quality-returns' && url.searchParams.get('status') === 'open');
+});
+
+test('zero availability includes quarantine and missing stock, waiting ages stay readable and tasks precede the chart', async ({ page }) => {
+    test.setTimeout(60000);
+    await login(page);
+    const quarantined = await product(page, 1000000, 'Ipari szerszámkészlet raktári karbantartáshoz');
+    await movement(page, quarantined.id, 'in', 6);
+    const issued = await movement(page, quarantined.id, 'out', 6);
+    expect((await post(page, issued+'/return', { request_key: randomUUID(), quantity: 6, return_reason: 'Várakozási idő ellenőrzése' })).status()).toBe(302);
+    const missing = await product(page, 1000000, 'Akkumulátoros szerelőkészlet tartozékokkal');
+    const available = await product(page, 1000000, 'Professzionális kéziszerszám raktári munkához');
+    await movement(page, available.id, 'in', 2);
+    expect((await post(page, '/transfers', { request_key: randomUUID(), product_id: available.id, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 })).status()).toBe(302);
+    await page.goto('/dashboard');
+    for (const item of [quarantined, missing]) {
+        const row = page.locator(`[data-product-alert="${item.id}"]:visible`);
+        await expect(row.locator('[data-no-available-stock]')).toHaveText('Nincs kiadható készlet');
+    }
+    const availableRow = page.locator(`[data-product-alert="${available.id}"]:visible`);
+    await expect(availableRow).toBeVisible();
+    await expect(availableRow.locator('[data-no-available-stock]')).toHaveCount(0);
+    const age = page.locator('[data-transfer-waiting]:visible').last();
+    await expect(age).toContainText(/(?:perce|órája|napja) úton/);
+    await expect(age.locator('..').locator('time')).toHaveAttribute('datetime', /T/);
+    await expect(page.locator('[data-quality-waiting]')).toContainText('minősítésre vár');
+    await expect(page.locator('[data-quality-waiting]').locator('..').locator('time')).toHaveAttribute('datetime', /T/);
+    for (const width of [320, 375, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+        const activity = await page.locator('section[aria-labelledby="activity-title"]').boundingBox();
+        for (const id of ['pending-title', 'recent-title']) {
+            const panel = page.locator(`section[aria-labelledby="${id}"]`);
+            const box = await panel.boundingBox();
+            expect(box.y + box.height).toBeLessThanOrEqual(activity.y);
+            expect(await panel.evaluate(element => Boolean(element.compareDocumentPosition(document.querySelector('section[aria-labelledby="activity-title"]')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+        }
+    }
+    await page.setViewportSize({ width: 375, height: 900 });
+    await page.locator('section[aria-labelledby="product-alerts-title"]').screenshot({ path: 'tests/Browser/.runtime/dashboard-refined-shortages-mobile.png' });
+    await page.locator('section[aria-labelledby="pending-title"]').screenshot({ path: 'tests/Browser/.runtime/dashboard-refined-transfers-mobile.png' });
 });
 
 test('pending shipment items link to the shipment and receipt clears the live dashboard task', async ({ page }) => {

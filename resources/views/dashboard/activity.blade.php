@@ -48,7 +48,13 @@
             @endforeach
         </div>
         </div>
-        @if($days === 7)<div class="mt-1 flex gap-1 text-center text-xs text-gray-500" aria-hidden="true">@foreach($dailyActivity as $day)<span class="min-w-0 flex-1">{{ $day['label'] }}</span>@endforeach</div>@endif
+        <div class="mt-1 flex h-4 gap-1 text-xs leading-4 text-gray-500 {{ $days === 7 ? 'text-center' : 'justify-between' }}" aria-hidden="true">
+            @if($days === 7)
+                @foreach($dailyActivity as $day)<span class="min-w-0 flex-1">{{ $day['label'] }}</span>@endforeach
+            @else
+                <span>{{ $dailyActivity->first()['label'] }}</span><span>{{ $dailyActivity[intdiv($dailyActivity->count() - 1, 2)]['label'] }}</span><span>{{ $dailyActivity->last()['label'] }}</span>
+            @endif
+        </div>
         </div>
         @include('dashboard.chart-days')
         </div>

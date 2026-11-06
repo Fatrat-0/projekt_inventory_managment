@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{Category, InventoryMovement, Product, Stock, User, Warehouse};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, Stock, User, Warehouse};
 use App\Queries\ProductListing;
 use App\Services\{InventoryService, ShipmentService};
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -174,6 +174,48 @@ class DashboardOverviewTest extends TestCase
         $response = $this->get('/dashboard')->assertOk()->assertSee('Vevői visszáru')->assertSee('Selejtezés');
         $this->assertSame(['count' => 3, 'in_quantity' => 6, 'out_quantity' => 8], $response->viewData('activitySummary'));
         $this->assertSame(2, $response->viewData('qualitySummary')['quantity']);
+    }
+
+    public function test_no_available_stock_badge_distinguishes_quarantine_and_missing_stock_from_usable_stock(): void
+    {
+        $missing = $this->product(['min_stock_override' => 5]);
+        $quarantined = $this->product(['min_stock_override' => 5]);
+        $this->stock($quarantined, 10, 10);
+        $available = $this->product(['min_stock_override' => 5]);
+        $this->stock($available, 2, 2);
+        $this->stock($available, 1, 0, Warehouse::create(['warehouse_name' => 'Másik']));
+        $this->product(['min_stock_override' => 0]);
+        $this->product(['min_stock_override' => null]);
+
+        $response = $this->get('/dashboard')->assertOk();
+        $this->assertSame(3, $response->viewData('lowStockProductCount'));
+        $document = new \DOMDocument();
+        @$document->loadHTML('<?xml encoding="UTF-8">'.$response->getContent());
+        $xpath = new \DOMXPath($document);
+        foreach ([$missing, $quarantined] as $product) {
+            $this->assertSame(1, $xpath->query("//li[@data-product-alert='{$product->product_id}']//*[@data-no-available-stock]")->length);
+        }
+        $this->assertSame(0, $xpath->query("//li[@data-product-alert='{$available->product_id}']//*[@data-no-available-stock]")->length);
+        $this->assertSame(2, $xpath->query('//*[@data-no-available-stock]')->length);
+    }
+
+    public function test_waiting_labels_use_the_dashboard_snapshot_keep_exact_dates_and_handle_future_records(): void
+    {
+        $product = $this->product();
+        $target = Warehouse::create(['warehouse_name' => 'Fogadó']);
+        $transfer = InventoryTransfer::forceCreate(['product_id' => $product->product_id, 'from_warehouse_id' => $this->warehouse->warehouse_id,
+            'to_warehouse_id' => $target->warehouse_id, 'user_id' => $this->actor->id, 'quantity' => 1, 'status' => 'pending',
+            'created_at' => '2026-11-01 12:00:00', 'updated_at' => '2026-11-01 12:00:00']);
+        $original = $this->movement($product, 'out', 5, '2026-11-01 10:00:00');
+        $return = $this->movement($product, 'in', 5, '2026-11-04 09:30:00', ['return_of_id' => $original->id, 'quarantined_quantity' => 5]);
+
+        $this->get('/dashboard')->assertOk()->assertSee('3 napja úton')->assertSee('2 órája minősítésre vár')
+            ->assertSee('2026.11.01. 12:00')->assertSee('2026.11.04. 09:30')->assertDontSee('késés');
+
+        $transfer->forceFill(['created_at' => '2026-11-05 12:00:00'])->save();
+        $return->forceFill(['created_at' => '2026-11-05 12:00:00'])->save();
+        $response = $this->get('/dashboard')->assertOk()->assertDontSee('-1 napja');
+        $this->assertSame(2, substr_count($response->getContent(), 'Jövőbeli időpont – ellenőrzendő'));
     }
 
     public static function roles(): array { return [['admin', true], ['manager', true], ['worker', false]]; }

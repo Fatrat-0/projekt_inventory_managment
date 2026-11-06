@@ -24,7 +24,9 @@
                 <h2 class="text-sm font-medium text-gray-700">Minősítésre váró visszáruk</h2>
                 <p class="mt-2 text-3xl font-bold tabular-nums text-gray-900" data-quality-summary="returns">{{ number_format($qualitySummary['returns_count'], 0, ',', ' ') }} <span class="text-sm font-normal">tétel</span></p>
                 <p class="mt-1 text-sm text-gray-600"><span data-quality-summary="quantity">{{ number_format($qualitySummary['quantity'], 0, ',', ' ') }} db</span> még elkülönítve</p>
-                @if($qualitySummary['oldest_at'])<p class="mt-1 text-xs text-gray-500">Legkorábbi beérkezés: {{ $qualitySummary['oldest_at']->format('Y.m.d.') }}</p>@else<p class="mt-1 text-xs text-gray-500">Nincs minősítésre váró visszáru.</p>@endif
+                @if($qualitySummary['oldest_at'])
+                    <p class="mt-1 text-xs text-gray-500"><span data-quality-waiting class="font-medium text-gray-700">Legrégebbi: {{ \App\Support\WaitingDuration::label($qualitySummary['oldest_at'], $asOf, 'minősítésre vár') }}</span><br>Beérkezett: <time datetime="{{ $qualitySummary['oldest_at']->toIso8601String() }}">{{ $qualitySummary['oldest_at']->format('Y.m.d. H:i') }}</time></p>
+                @else<p class="mt-1 text-xs text-gray-500">Nincs minősítésre váró visszáru.</p>@endif
                 <a href="{{ route('quality-returns.index', ['status' => 'open']) }}" class="mt-4 inline-block text-sm font-semibold text-indigo-700 hover:underline">Minősítési munkalista</a>
             </section>
             <section aria-label="Úton lévő átmozgatások" class="min-w-0 break-words rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
@@ -52,7 +54,7 @@
             <p class="mt-3 text-xs text-gray-500">Az úton lévő mennyiség már nincs az induló raktárban, és csak átvételkor kerül a célraktár készletébe.</p>
         </section>
         @include('dashboard.alerts')
-        @include('dashboard.activity')
         @include('dashboard.operations')
+        @include('dashboard.activity')
     </div>
 </x-app-layout>

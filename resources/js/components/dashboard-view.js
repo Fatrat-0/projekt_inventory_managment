@@ -19,7 +19,7 @@ export default (initial) => ({
         this.$root.querySelectorAll('a[href]').forEach(link => {
             if (link.getAttribute('href').startsWith('#')) return;
             const target = new URL(link.href, window.location.href);
-            if (target.origin !== url.origin || target.pathname !== url.pathname) return;
+            if (target.origin !== url.origin || (target.pathname !== url.pathname && !link.hasAttribute('data-dashboard-customize'))) return;
             target.searchParams.set('chart', this.chartType);
             target.searchParams.set('days', String(this.days));
             link.href = target.href;

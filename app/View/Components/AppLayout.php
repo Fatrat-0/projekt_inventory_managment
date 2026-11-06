@@ -2,6 +2,7 @@
 
 namespace App\View\Components;
 
+use App\Support\AppNavigation;
 use Illuminate\View\Component;
 use Illuminate\View\View;
 
@@ -12,6 +13,9 @@ class AppLayout extends Component
      */
     public function render(): View
     {
-        return view('layouts.app');
+        return view('layouts.app', [
+            'navigationGroups' => AppNavigation::groups(auth()->user()),
+            'breadcrumbs' => AppNavigation::breadcrumbs(request()),
+        ]);
     }
 }

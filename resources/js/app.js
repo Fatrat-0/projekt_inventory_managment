@@ -12,6 +12,8 @@ import movementPartnerPicker from './components/movement-partner-picker';
 import dashboardList from './components/dashboard-list';
 import activityChart from './components/activity-chart';
 import dashboardView from './components/dashboard-view';
+import dashboardCustomization from './components/dashboard-customization';
+import appShell from './components/app-shell';
 
 window.Alpine = Alpine;
 
@@ -51,5 +53,7 @@ Alpine.data('movementPartnerPicker', movementPartnerPicker);
 Alpine.data('dashboardList', dashboardList);
 Alpine.data('activityChart', activityChart);
 Alpine.data('dashboardView', dashboardView);
+Alpine.data('dashboardCustomization', dashboardCustomization);
+Alpine.data('appShell', appShell);
 
 Alpine.start();

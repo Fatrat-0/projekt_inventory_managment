@@ -152,7 +152,16 @@ test('destinations already used at another stop stay disabled until changed or r
     await expect(second.locator('option[value="2"]')).toBeDisabled();
     await expect(first.locator('option[value="3"]')).toBeDisabled();
     const add = page.getByRole('button', { name: '+ Megálló hozzáadása', exact: true });
+    // Other specs may have created warehouses. Exhaust the actual destination set (or the 20-stop limit).
+    const extraIds = await first.locator('option').evaluateAll(options => options.map(option => option.value).filter(value => value && !['1', '2', '3', '4'].includes(value)).slice(0, 17));
+    for (const id of extraIds) {
+        await add.click();
+        await page.locator('fieldset').last().getByLabel('Célraktár', { exact: true }).selectOption(id);
+    }
     await expect(add).toBeDisabled();
+    for (let remaining = extraIds.length; remaining > 0; remaining--) {
+        await page.getByRole('button', { name: `${3 + remaining}. megálló törlése`, exact: true }).click();
+    }
     await page.getByRole('button', { name: '2. megálló törlése', exact: true }).click();
     await expect(add).toBeEnabled();
     await expect(first.locator('option[value="3"]')).toBeEnabled();

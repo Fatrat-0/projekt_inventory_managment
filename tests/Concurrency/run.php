@@ -5,6 +5,7 @@
 use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
 use App\Services\{InventoryService, MasterDataEditor, ShipmentService};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
+use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\{Artisan, DB};
@@ -25,6 +26,15 @@ function connectTestDatabase(string $name): void
     $config['url'] = null;
     config(['database.connections.inventory_race' => $config, 'database.default' => 'inventory_race']);
     DB::purge('inventory_race');
+}
+
+function saveDashboardLayout(array $job): void
+{
+    $request = Request::create('/dashboard/layout', 'PATCH', $job['data'], server: ['HTTP_ACCEPT' => 'application/json']);
+    $request->setUserResolver(fn () => User::findOrFail($job['id']));
+    $response = app(\App\Http\Controllers\DashboardLayoutController::class)->update($request);
+    if ($response->getStatusCode() === 409) throw ValidationException::withMessages(['version' => 'Stale dashboard layout.']);
+    check($response->getStatusCode() === 200, 'Dashboard layout did not save.');
 }
 
 if (($argv[1] ?? '') === '--worker') {
@@ -55,6 +65,7 @@ if (($argv[1] ?? '') === '--worker') {
             'master_edit' => MasterDataEditor::update(
                 (new ($job['model']))->findOrFail($job['id']), Request::create('/', 'PUT', ['lock_version' => 1]), $job['data'], '/'),
             'partner_archive' => (new \App\Http\Controllers\PartnerController)->archive(Request::create('/', 'PATCH'), Partner::findOrFail($job['id'])),
+            'dashboard_layout' => saveDashboardLayout($job),
         };
         if ($outerSnapshot) DB::commit();
         echo "OK\n";
@@ -658,7 +669,21 @@ try {
     }
     check(hash_equals($beforeDashboardReads, $queueSnapshot()), 'Dashboard reads changed stock or history.');
     echo 'PASS: dashboard MySQL totals, alerts and daily activity'.PHP_EOL;
-    echo "54 MySQL concurrency checks passed.\n";
+    foreach ([false, true] as $outerSnapshot) {
+        $layoutUser = User::factory()->create(['role' => 'worker']);
+        $beforePreferences = $queueSnapshot();
+        $profile = $layoutUser->only(['name', 'email', 'password', 'role']);
+        $a = DashboardLayout::defaults(); $a['visible'] = ['activity'];
+        $b = ['order' => array_reverse(array_keys(DashboardLayout::PANELS)), 'visible' => ['tasks']];
+        $jobs = array_map(fn ($layout) => ['action' => 'dashboard_layout', 'id' => $layoutUser->id, 'outerSnapshot' => $outerSnapshot, 'data' => $layout + ['version' => 0]], [$a, $b]);
+        check(race($database, [], $jobs, userBarrier: $layoutUser->id) === ['OK', 'REJECTED'], 'Concurrent layouts both overwrote the same version.');
+        $layoutUser->refresh();
+        check($layoutUser->dashboard_layout_version === 1 && in_array($layoutUser->dashboard_layout, [$a, $b], true), 'Dashboard layout is mixed or its version advanced twice.');
+        check($profile === $layoutUser->only(array_keys($profile)), 'Layout update changed profile or role.');
+        check(hash_equals($beforePreferences, $queueSnapshot()), 'Layout preference changed inventory or history.');
+        echo 'PASS: concurrent dashboard preferences'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+    echo "56 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

@@ -21,6 +21,11 @@ Route::get('/dashboard', [DashboardController::class, 'index'])
     ->middleware(['auth', 'verified'])
     ->name('dashboard');
 
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/dashboard/customize', [\App\Http\Controllers\DashboardLayoutController::class, 'edit'])->name('dashboard.customize');
+    Route::patch('/dashboard/layout', [\App\Http\Controllers\DashboardLayoutController::class, 'update'])->name('dashboard.layout.update');
+});
+
 // Csak bejelentkezett felhasználóknak (auth), és beállítjuk a jogosultságokat (role)
 Route::middleware(['auth'])->group(function () {
 

@@ -153,7 +153,7 @@ class DashboardReplenishmentTest extends TestCase
         $this->assertSame(15, (int)$rows[$this->source->warehouse_id]->available);
         $this->assertSame(0, (int)$rows[$empty->warehouse_id]->physical);
         $response->assertSee(route('stock.index', ['warehouse_id' => $empty->warehouse_id]), false);
-        $this->get(route('stock.index', ['warehouse_id' => $empty->warehouse_id]))->assertOk()->assertSee('Jelenleg üres a raktárkészlet.');
+        $this->get(route('stock.index', ['warehouse_id' => $empty->warehouse_id]))->assertOk()->assertSee('Nincs a feltételeknek megfelelő készletsor.');
         $this->get(route('stock.index', ['warehouse_id' => $this->target->warehouse_id]))->assertOk()->assertViewHas('stocks', fn ($rows) => $rows->count() === 1 && $rows->first()->id === $this->target->id);
     }
 

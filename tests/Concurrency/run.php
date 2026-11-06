@@ -711,6 +711,42 @@ try {
         check(in_array($source->fresh()->min_quantity, [6, 7], true) && $source->fresh()->quantity === 5, 'Minimum edit changed stock.');
         echo 'PASS: concurrent local minimum changes'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
     }
+    $literalProduct = Product::create(['product_name' => 'Stock MySQL literal', 'sku' => 'STOCK-%_!-LITERAL', 'price' => 1, 'category_id' => $dashboardChild->category_id]);
+    $literalStock = Stock::create(['product_id' => $literalProduct->product_id, 'warehouse_id' => $dashboardWarehouse->warehouse_id, 'quantity' => 3, 'min_quantity' => 0]);
+    $beforeStockReads = $queueSnapshot();
+    $allStocks = Stock::with(['product.category', 'warehouse'])->get();
+    foreach (array_keys(\App\Queries\StockListing::STATUSES) as $status) {
+        $wanted = $allStocks->filter(fn ($row) => match ($status) {
+            'low' => $row->available_quantity < $row->min_quantity,
+            'out' => $row->available_quantity === 0,
+            'positive' => $row->available_quantity > 0,
+            'quarantined' => $row->quarantined_quantity > 0,
+            'zero' => $row->quantity === 0,
+            'ok' => $row->available_quantity >= $row->min_quantity && $row->available_quantity > 0,
+            default => true,
+        });
+        $listing = new \App\Queries\StockListing(Request::create('/stock', 'GET', ['stock_status' => $status]));
+        $actualIds = $listing->query()->pluck('stocks.id')->all(); $expectedIds = $wanted->pluck('id')->all();
+        sort($actualIds); sort($expectedIds);
+        check($actualIds === $expectedIds, 'Stock listing MySQL '.$status.' returned incorrect rows.');
+        $summary = $listing->summary();
+        check((int)$summary->physical === (int)$wanted->sum('quantity') && (int)$summary->available === (int)$wanted->sum('available_quantity')
+            && (int)$summary->quarantined === (int)$wanted->sum('quarantined_quantity')
+            && (int)$summary->products_count === $wanted->pluck('product_id')->unique()->count(), 'Stock listing MySQL '.$status.' totals are incorrect.');
+    }
+    foreach (['quantity', 'available', 'quarantined_quantity', 'min_quantity'] as $field) foreach (['asc', 'desc'] as $direction) {
+        $value = fn ($row) => $field === 'available' ? $row->available_quantity : $row->$field;
+        $expected = $allStocks->sort(function ($a, $b) use ($value, $direction) {
+            $compared = ($value($a) <=> $value($b)) ?: ($a->id <=> $b->id);
+            return $direction === 'asc' ? $compared : -$compared;
+        })->pluck('id')->all();
+        $listing = new \App\Queries\StockListing(Request::create('/stock', 'GET', ['sort_by' => $field, 'sort_dir' => $direction]));
+        check($listing->query()->pluck('stocks.id')->all() === $expected, 'Stock listing MySQL numeric order differs for '.$field.' '.$direction.'.');
+    }
+    $listing = new \App\Queries\StockListing(Request::create('/stock', 'GET', ['search' => 'STOCK-%_! Dashboard MySQL', 'category_id' => $dashboardCategory->category_id]));
+    check($listing->query()->pluck('stocks.id')->all() === [$literalStock->id], 'Stock listing MySQL literal/category search is incorrect.');
+    check(hash_equals($beforeStockReads, $queueSnapshot()), 'Stock listing changed inventory or history.');
+    echo 'PASS: stock listing MySQL statuses, summaries, numeric sorting and literal/category search'.PHP_EOL;
     echo "62 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);

@@ -22,6 +22,16 @@ A hiánylisták a legnagyobb darabszámú hiányt mutatják először. Az átvé
 
 A panelcímek világosszürke fejlécsávon, erősebb alsó elválasztóval és a listaelemeknél nagyobb, sötét betűkkel jelennek meg. A hiányok számlálója külön jelvény, mobilon a navigációs nyíl kör alakú keretet kap. Így az egyoszlopos nézetben is megkülönböztethető a fejléc az első adatsortól; a sorok fehér háttere és hivatkozásai megmaradnak.
 
+## Napi használatot segítő finomítások
+
+A hiánylisták után az átvételi és legutóbbi mozgáslisták következnek, majd a diagram. Ez mobilon előrébb hozza a napi feladatokat. A sorrend minden képernyőméreten és a dokumentumban is azonos, ezért a billentyűzetes navigáció a megjelenést követi.
+
+A termékhiányok között a nulla összesített kiadható készlet külön „Nincs kiadható készlet” jelzést kap. Ez készletsor nélküli és teljesen elkülönített terméknél is megjelenik; másik raktárban elérhető pozitív készlet esetén nem. A jelzés a meglévő minimum alatti listát egészíti ki, új riasztási feltételt nem vezet be.
+
+Az átvételi sorok és a legrégebbi nyitott visszáru várakozási ideje a vezérlőpult asOf pillanatához képest jelenik meg, a pontos dátum mellett. A kijelzés a Frissítéssel frissül, az időszakváltás csak a diagramot módosítja. A WaitingDuration az eltelt teljes perceket, órákat, majd 24 órás napokat számolja; egy percen belül külön szöveg jelenik meg. Az éjfél és a nyári/téli óraátállítás nem kerekít naptári napra. Jövőbeli kezdőidőpontnál „Jövőbeli időpont – ellenőrzendő” jelenik meg, negatív időtartam helyett. Határidő hiányában a várakozást nem nevezzük késésnek.
+
+A dashboard-text stílus szavaknál tördel, de a szóköz nélküli hosszú neveket és azonosítókat is a panelen belül tartja. A diagram dátumtengelye mindkét időszaknál azonos magasságú: hét napnál minden nap, harminc napnál a kezdő, középső és záró nap jelölése látható. A váltás ezért az oldal alján sem vesz el egy sornyi helyet.
+
 ## Időszak és frissítés
 
 A 7 vagy 30 napos mozgásösszesítő a mai nappal együtt vett naptári napokat mutatja, az alkalmazás időzónájában. Az időszak kezdete inkluzív, a jövőbeli bejegyzések kimaradnak. A hiányzó napok értéke nulla. Az alapértelmezett oszlopnézet mellett vonaldiagram is választható: külön, közös nulláról induló skálán jelenik meg a bejövő és a kimenő sorozat. A kimenő vonal szaggatott, az azonos értékű sorozatok is megkülönböztethetők. A napi pontokat egyenes szakaszok kötik össze, simítás nélkül. Az időszak és a diagramtípus az URL-ben tárolódik; a váltás és a Frissítés mindkét választást megőrzi. A váltás nem indít horgonynavigációt, és megőrzi a görgetési helyzetet; JavaScript nélkül a Mutat gomb használható. Hibás paraméternél az érvényes másik beállítást megtartjuk.

@@ -1,4 +1,4 @@
-@props(['items', 'kind', 'canManage' => false])
+@props(['items', 'kind', 'asOf', 'canManage' => false])
 @php
     $preview = \App\Queries\DashboardOverview::LIST_PREVIEW_LIMIT;
     $rows = $items->getCollection();

@@ -29,6 +29,11 @@ class Stock extends Model
         return $this->belongsTo(Product::class, 'product_id', 'product_id');
     }
 
+    public function placements()
+    {
+        return $this->hasMany(WarehousePlacement::class);
+    }
+
     // A készlethez TÖBB mozgás (naplóbejegyzés) is tartozik
     public function movements()
     {

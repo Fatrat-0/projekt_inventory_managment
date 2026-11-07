@@ -1,20 +1,46 @@
 <x-app-layout>
+    @php
+        $field = static function ($key, $default = '') use ($prefill) {
+            $value = old($key, $prefill[$key] ?? $default);
+            return is_scalar($value) ? (string) $value : $default;
+        };
+        $destination = $field('to_warehouse_id');
+        $replenishment = $field('replenishment_stock_id');
+    @endphp
     <div class="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a><h1 class="text-xl font-bold text-gray-900">Új átmozgatás</h1><x-operation-feedback />
         @error('request_key')<a href="{{ route('transfers.create', ['context' => $context]) }}" class="text-indigo-600 underline text-sm">Új átmozgatási űrlap</a>@enderror
-        @if(old('replenishment_stock_id', $prefill['replenishment_stock_id'] ?? null))
+        @if($replenishment !== '')
             <p class="rounded-md border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">Utánpótlási javaslatból előkészített átmozgatás. A mennyiség csökkenthető; indításkor a cél hiányát és a forrás helyi minimumát is újra ellenőrizzük. Másik termékhez vagy célhoz <a href="{{ route('transfers.create') }}" class="font-semibold underline">nyiss normál átmozgatást</a>.</p>
         @endif
         @if($products->isEmpty() || $warehouses->count() < 2)<p class="rounded-md bg-amber-50 p-4 text-sm text-amber-900">Átmozgatáshoz legalább egy termék és két raktár szükséges.</p>@else
-        <form action="{{ route('transfers.store') }}" method="POST" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)old('product_id', $prefill['product_id'] ?? ''), 'warehouse' => (string)old('from_warehouse_id', $prefill['from_warehouse_id'] ?? ''), 'type' => 'out', 'quantity' => old('quantity', $prefill['quantity'] ?? 1)]) }})" @submit="submit($event)" @pageshow.window="restored($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 space-y-5">
-            @if(old('replenishment_stock_id', $prefill['replenishment_stock_id'] ?? null))<input type="hidden" name="replenishment_stock_id" value="{{ old('replenishment_stock_id', $prefill['replenishment_stock_id'] ?? null) }}">@endif
+        <form action="{{ route('transfers.store') }}" method="POST" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => $field('product_id'), 'warehouse' => $field('from_warehouse_id'), 'type' => 'out', 'quantity' => $field('quantity', '1')]) }})" @submit="submit($event)" @pageshow.window="restored($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 space-y-5">
+            @if($replenishment !== '')<input type="hidden" name="replenishment_stock_id" value="{{ $replenishment }}">@endif
             @csrf<input type="hidden" name="request_key" value="{{ $requestKey }}"><input type="hidden" name="context" value="{{ $context }}">
-            <div @product-selected="product = $event.detail.value; loadStock()"><label for="transfer-product" class="block text-sm font-medium mb-1">Termék</label><x-product-picker :products="$products" id="transfer-product" :value="old('product_id', $prefill['product_id'] ?? '')" :required="true" /></div>
-            @php($warehouseItems = $warehouses->map(fn($w) => ['value' => (string)$w->warehouse_id, 'label' => $w->warehouse_name.($w->location ? ' · '.$w->location : '')])->values())
-            <div class="grid sm:grid-cols-2 gap-4"><div @source-selected="warehouse = $event.detail.value; loadStock()"><label for="transfer-source" class="block text-sm font-medium mb-1">Forrásraktár</label><x-autocomplete-picker :items="$warehouseItems" id="transfer-source" name="from_warehouse_id" :value="old('from_warehouse_id', $prefill['from_warehouse_id'] ?? '')" :required="true" event-name="source-selected" placeholder="Raktár neve vagy helye…" /></div>
-                <div><label for="transfer-destination" class="block text-sm font-medium mb-1">Célraktár</label><x-autocomplete-picker :items="$warehouseItems" id="transfer-destination" name="to_warehouse_id" :value="old('to_warehouse_id', $prefill['to_warehouse_id'] ?? '')" :required="true" placeholder="Raktár neve vagy helye…" /></div></div>
+            <div @product-selected="product = $event.detail.value; loadStock()"><label for="transfer-product" class="block text-sm font-medium mb-1">Termék</label><x-product-picker :products="$products" id="transfer-product" :value="$field('product_id')" :required="true" /></div>
+            @php
+                $warehouseItems = $warehouses->map(fn($w) => ['value' => (string)$w->warehouse_id, 'label' => $w->warehouse_name.($w->location ? ' · '.$w->location : '')])->values();
+                $cargo = [];
+                foreach (['to_location_id', 'cargo_weight_kg', 'pallet_slots'] as $key) {
+                    $cargo[$key] = $field($key);
+                }
+            @endphp
+            <div class="space-y-4" x-data="{ destination: @js($destination), cargo: @js($cargo), storageLocations: @js($storageLocations) }"
+                 @destination-selected="if (destination !== $event.detail.value) { destination = $event.detail.value; cargo.to_location_id = ''; cargo.pallet_slots = ''; }">
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div @source-selected="warehouse = $event.detail.value; loadStock()">
+                        <label for="transfer-source" class="mb-1 block text-sm font-medium">Forrásraktár</label>
+                        <x-autocomplete-picker :items="$warehouseItems" id="transfer-source" name="from_warehouse_id" :value="$field('from_warehouse_id')" :required="true" event-name="source-selected" placeholder="Raktár neve vagy helye…" />
+                    </div>
+                    <div>
+                        <label for="transfer-destination" class="mb-1 block text-sm font-medium">Célraktár</label>
+                        <x-autocomplete-picker :items="$warehouseItems" id="transfer-destination" name="to_warehouse_id" :value="$destination" :required="true" event-name="destination-selected" placeholder="Raktár neve vagy helye…" />
+                    </div>
+                </div>
+                <x-storage-cargo-fields warehouse="destination" item="cargo" />
+            </div>
             <div role="status" aria-live="polite" class="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600"><span x-text="stockText">Válassz terméket és forrásraktárt.</span><button type="button" x-show="product && warehouse" @click="loadStock()" class="ml-2 text-indigo-600 underline">Frissítés</button><p class="mt-1 text-xs">Tájékoztató érték; indításkor a rendszer újra ellenőrzi a készletet.</p></div>
-            <div><label for="transfer-quantity" class="block text-sm font-medium mb-1">Mennyiség (db)</label><input id="transfer-quantity" type="number" name="quantity" x-model="quantity" value="{{ old('quantity', $prefill['quantity'] ?? 1) }}" min="1" max="2147483647" step="1" required class="w-full rounded-md border-gray-300" aria-invalid="{{ $errors->has('quantity') ? 'true' : 'false' }}" @if($errors->has('quantity')) aria-describedby="transfer-quantity-error" @endif>@error('quantity')<p id="transfer-quantity-error" class="mt-1 text-sm text-red-700">{{ $message }}</p>@enderror<p x-show="stock !== null && Number(quantity) > stock" style="display:none;" class="mt-1 text-sm text-red-700">Nincs elegendő készlet a legutóbbi lekérdezés alapján.</p></div>
+            <div><label for="transfer-quantity" class="block text-sm font-medium mb-1">Mennyiség (db)</label><input id="transfer-quantity" type="number" name="quantity" x-model="quantity" value="{{ $field('quantity', '1') }}" min="1" max="2147483647" step="1" required class="w-full rounded-md border-gray-300" aria-invalid="{{ $errors->has('quantity') ? 'true' : 'false' }}" @if($errors->has('quantity')) aria-describedby="transfer-quantity-error" @endif>@error('quantity')<p id="transfer-quantity-error" class="mt-1 text-sm text-red-700">{{ $message }}</p>@enderror<p x-show="stock !== null && Number(quantity) > stock" style="display:none;" class="mt-1 text-sm text-red-700">Nincs elegendő készlet a legutóbbi lekérdezés alapján.</p></div>
             <p class="text-xs text-gray-500">Indításkor a mennyiség levonódik a forrásból. A célraktárba az átvételkor kerül be.</p>
             <div class="flex justify-end items-center gap-4 border-t pt-4"><a href="{{ $returnUrl }}" class="text-sm text-gray-600">Mégse</a><button :disabled="submitting" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" x-text="submitting ? 'Indítás…' : 'Átmozgatás indítása'">Átmozgatás indítása</button></div>
         </form>@endif

@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock, User};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock, User, Warehouse};
+use App\Queries\WarehouseStatistics;
 use App\Services\InventoryService;
-use Database\Seeders\DatabaseSeeder;
+use App\Support\WarehouseStatisticsReport;
+use Database\Seeders\{DatabaseSeeder, WarehouseCapacityDemoSeeder};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\{DB, Hash};
 use Tests\TestCase;
@@ -20,7 +22,8 @@ class DatabaseSeederRepeatTest extends TestCase
         foreach (['users' => 'id', 'categories' => 'category_id', 'warehouses' => 'warehouse_id', 'partners' => 'id',
             'products' => 'product_id', 'stocks' => 'id', 'inventory_movements' => 'id',
             'inventory_transfers' => 'id', 'inventory_movement_requests' => 'id', 'inventory_transfer_requests' => 'id',
-            'shipments' => 'id', 'shipment_stops' => 'id', 'shipment_items' => 'id', 'return_quality_actions' => 'id'] as $table => $key) {
+            'shipments' => 'id', 'shipment_stops' => 'id', 'shipment_items' => 'id', 'return_quality_actions' => 'id',
+            'warehouse_locations' => 'id', 'warehouse_placements' => 'id'] as $table => $key) {
             $result[$table] = DB::table($table)->orderBy($key)->get()->map(fn($row) => (array) $row)->all();
         }
         return $result;
@@ -29,6 +32,9 @@ class DatabaseSeederRepeatTest extends TestCase
     public function test_running_full_seed_twice_does_not_change_existing_rows(): void
     {
         $this->seed(DatabaseSeeder::class);
+        $demo = Product::where('sku', 'DEMO-KAP-001')->sole();
+        $this->assertDatabaseCount('warehouse_locations', 4);
+        $this->assertSame(2, InventoryTransfer::where('product_id', $demo->product_id)->where('status', 'pending')->whereNotNull('to_location_id')->count());
         $before = $this->snapshot();
         $this->travel(2)->hours();
         $this->seed(DatabaseSeeder::class);
@@ -85,6 +91,23 @@ class DatabaseSeederRepeatTest extends TestCase
     public static function transferActions(): array
     {
         return ['receipt' => [true], 'cancellation' => [false]];
+    }
+
+    public function test_capacity_demo_shows_all_capacity_and_stock_states_without_reseeding_completed_work(): void
+    {
+        User::factory()->create(['email' => 'worker@raktar.hu', 'role' => 'worker']);
+        $this->seed(WarehouseCapacityDemoSeeder::class);
+        $report = new WarehouseStatisticsReport(WarehouseStatistics::query()->get(), false);
+        $this->assertSame([2135000, 590000, 1275000], $report->charts['weight']['parts']);
+        $this->assertSame([10, 4, 4], $report->charts['pallets']['parts']);
+        $this->assertSame([645, 275, 60], $report->charts['stock']['parts']);
+
+        $transfer = InventoryTransfer::where('status', 'pending')->firstOrFail();
+        app(InventoryService::class)->finalizeTransfer($transfer, true);
+        Warehouse::whereKey($transfer->to_warehouse_id)->update(['warehouse_name' => 'Átnevezett bemutató raktár']);
+        $before = $this->snapshot();
+        $this->seed(WarehouseCapacityDemoSeeder::class);
+        $this->assertSame($before, $this->snapshot());
     }
 
     #[DataProvider('transferActions')]

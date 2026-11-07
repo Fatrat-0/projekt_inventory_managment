@@ -61,6 +61,26 @@ class ShipmentWorkflowTest extends TestCase
         $this->get(route('shipments.show', $s))->assertOk()->assertSeeInOrder(['1. felrakodás · Cél A', '2. felrakodás · Cél B']);
         $this->assertSame(20, $this->qty($this->origin));
     }
+
+    public function test_serialized_maximum_size_draft_keeps_the_last_cargo_item(): void
+    {
+        $items = [];
+        for ($index = 1; $index <= 50; $index++) {
+            $product = Product::create(['product_name' => 'Rakomány '.$index, 'sku' => 'MAX-LOAD-'.$index,
+                'price' => 1, 'category_id' => $this->product->category_id]);
+            $items[] = ['product_id' => $product->product_id, 'quantity' => $index];
+        }
+        $stops = [];
+        for ($index = 1; $index <= 20; $index++) {
+            $warehouse = Warehouse::create(['warehouse_name' => 'Megálló '.$index]);
+            $stops[] = ['warehouse_id' => $warehouse->warehouse_id, 'items' => $items];
+        }
+        $this->post(route('shipments.store'), ['reference' => 'Nagy tervezet', 'origin_warehouse_id' => $this->origin->warehouse_id,
+            'stops_json' => json_encode($stops, JSON_THROW_ON_ERROR)])->assertRedirect()->assertSessionHasNoErrors();
+        $this->assertDatabaseCount('shipment_items', 1000);
+        $lastStop = Shipment::sole()->stops()->where('position', 20)->sole();
+        $this->assertSame(50, $lastStop->items()->where('product_id', $items[49]['product_id'])->sole()->quantity);
+    }
     public function test_start_deducts_all_items_once_and_uses_authenticated_actor(): void
     {
         $s = $this->draft(); $this->start($s); $this->start($s);

@@ -9,6 +9,15 @@
 @media (min-width: 640px) { .app-page { padding-left: 1.5rem; padding-right: 1.5rem; } }
 .app-search-dialog { width: calc(100% - 2rem); max-width: 42rem; max-height: 85vh; max-height: 85dvh; padding: 0; border: 0; border-radius: .75rem; }
 .app-search-dialog::backdrop { background: rgb(17 24 39 / 45%); }
+@media print {
+    .app-shell:has([data-warehouse-statistics]) { display: block; min-height: auto; background: white; }
+    .app-shell:has([data-warehouse-statistics]) :is(.app-sidebar, [data-app-topbar], .app-skip-link, [data-statistics-controls]) { display: none !important; }
+    .app-shell:has([data-warehouse-statistics]) .app-content { margin: 0; }
+    [data-warehouse-statistics] { padding: 0; }
+    [data-statistics-charts] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    [data-statistics-chart] { break-inside: avoid; }
+    [data-statistics-swatch] { print-color-adjust: exact; }
+}
 .app-tasks-menu[style], .app-action-menu[style] { right: auto; bottom: auto; margin: 0; }
 [data-listing-table] { display: none; }
 [data-listing-columns-control] { display: none; }

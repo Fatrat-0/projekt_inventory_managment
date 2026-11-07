@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{Shipment, Stock};
+use App\Models\{InventoryTransfer, Shipment, Stock};
 use Database\Seeders\{DatabaseSeeder, ShipmentDemoSeeder};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -19,10 +19,11 @@ class ShipmentSeederTest extends TestCase
         $this->assertCount(6, $shipment->stops->flatMap->items);
         $before = $shipment->toArray();
         $stocks = Stock::orderBy('id')->get()->toArray();
+        $transfers = InventoryTransfer::count();
         $this->seed(ShipmentDemoSeeder::class);
         $this->assertSame($before, $shipment->fresh()->load('stops.items')->toArray());
         $this->assertSame($stocks, Stock::orderBy('id')->get()->toArray());
         $this->assertDatabaseCount('shipments', 1);
-        $this->assertDatabaseCount('inventory_transfers', 10);
+        $this->assertDatabaseCount('inventory_transfers', $transfers);
     }
 }

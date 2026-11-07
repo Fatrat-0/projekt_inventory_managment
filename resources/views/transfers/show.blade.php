@@ -10,8 +10,15 @@
                 <div><dt class="text-gray-500">Célraktár</dt><dd class="mt-1 font-medium">{{ $transfer->toWarehouse->warehouse_name }}</dd></div>
                 <div><dt class="text-gray-500">Mennyiség</dt><dd class="mt-1 font-semibold">{{ number_format($transfer->quantity, 0, ',', ' ') }} db</dd></div>
                 <div><dt class="text-gray-500">Elindította</dt><dd class="mt-1">{{ $transfer->user->name }} · {{ $transfer->created_at->format('Y.m.d H:i') }}</dd></div>
+                @if($transfer->destinationLocation)
+                    <div><dt class="text-gray-500">Cél tárhely</dt><dd class="mt-1 font-medium"><a class="text-indigo-700 hover:underline" href="{{ route('warehouses.locations.show', ['warehouse' => $transfer->to_warehouse_id, 'warehouseLocation' => $transfer->to_location_id]) }}">{{ $transfer->destinationLocation->code }} · {{ $transfer->destinationLocation->name }}</a></dd></div>
+                    <div><dt class="text-gray-500">Terhelés</dt><dd class="mt-1 font-medium">{{ \App\Models\WarehouseLocation::formatWeight($transfer->cargo_weight_grams) }} kg @if($transfer->pallet_slots) · {{ $transfer->pallet_slots }} raklap @endif</dd></div>
+                @endif
             </dl>
             <p class="text-xs text-gray-500">Az úton lévő mennyiség már nem elérhető a forrásraktárban. A célraktár készlete az átvételkor növekszik.</p>
+            @if($transfer->to_location_id && $transfer->status === 'pending')
+                <p class="text-sm text-indigo-700">A tétel helye az átvételig le van foglalva a cél tárhelyen.</p>
+            @endif
             <x-transfer-actions :transfer="$transfer" :context="$context" />
             <a href="{{ route('export.transfer', $transfer) }}" class="inline-block text-sm text-indigo-600 underline">Szállítólevél letöltése (PDF)</a>
         </div>

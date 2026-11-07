@@ -12,6 +12,10 @@ use Illuminate\Support\Str;
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
 {
+    public function __construct(private WarehouseCapacity $capacity)
+    {
+    }
+
     public function recordMovement(array $data, ?string $requestKey = null): InventoryMovement
     {
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
@@ -195,6 +199,7 @@ class InventoryService
         $payload = ['product_id' => (int)$data['product_id'], 'from_warehouse_id' => (int)$data['from_warehouse_id'],
             'to_warehouse_id' => (int)$data['to_warehouse_id'], 'quantity' => (int)$data['quantity'], 'user_id' => (int)$data['user_id']];
         if (isset($data['replenishment_stock_id'])) $payload['replenishment_stock_id'] = (int)$data['replenishment_stock_id'];
+        $payload += WarehouseCapacity::cargo($data);
         $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
         try {
@@ -203,6 +208,8 @@ class InventoryService
                     'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
                 ]);
                 $this->lockProduct($payload['product_id']);
+                $this->capacity->lockWarehouses([$payload['from_warehouse_id'], $payload['to_warehouse_id']]);
+                $this->capacity->checkReservation($payload);
                 if (isset($payload['replenishment_stock_id'])) $this->checkReplenishment($payload);
                 $this->changeStock($payload['product_id'], $payload['from_warehouse_id'], -$payload['quantity']);
                 $transferData = $payload;
@@ -215,10 +222,10 @@ class InventoryService
             }, 3);
         } catch (UniqueConstraintViolationException $e) {
             if ($requestKey === null) throw $e;
-            $previous = DB::table('inventory_transfer_requests')->where('user_id', $payload['user_id'])->where('request_key', $requestKey)->first();
+            $previous = DB::table('inventory_transfer_requests')->where('user_id', $payload['user_id'])->where('request_key', $requestKey)->sharedLock()->first();
             if (!$previous || !$previous->transfer_id) throw $e;
             if (!hash_equals($previous->payload_hash, $hash)) throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új átmozgatáshoz nyiss új űrlapot.']);
-            return InventoryTransfer::findOrFail($previous->transfer_id);
+            return InventoryTransfer::whereKey($previous->transfer_id)->sharedLock()->firstOrFail();
         }
     }
 
@@ -231,7 +238,7 @@ class InventoryService
         $incoming = InventoryTransfer::where('product_id', $payload['product_id'])->where('to_warehouse_id', $payload['to_warehouse_id'])
             ->where('status', 'pending')->lockForUpdate()->get(['quantity'])->sum('quantity');
         $shortage = $target ? $target->min_quantity - $target->available_quantity - $incoming : 0;
-        $surplus = $source ? $source->available_quantity - $source->min_quantity : 0;
+        $surplus = $source ? $source->available_quantity - max($source->min_quantity, $this->capacity->assignedQuantity($source)) : 0;
         if ($payload['from_warehouse_id'] === $payload['to_warehouse_id'] || !$target || !$source || $payload['quantity'] > min($shortage, $surplus)) {
             throw ValidationException::withMessages(['quantity' => 'Az utánpótlási javaslat közben megváltozott. A mennyiség nem haladhatja meg a cél aktuális hiányát és a forrás helyi minimum feletti kiadható készletét. Frissítsd a vezérlőpultot.']);
         }
@@ -240,17 +247,22 @@ class InventoryService
     public function finalizeTransfer(InventoryTransfer $transfer, bool $complete, bool $shipmentManaged = false): void
     {
         DB::transaction(function () use ($transfer, $complete, $shipmentManaged) {
-            if (!$shipmentManaged && \App\Models\ShipmentItem::where('transfer_id', $transfer->id)->exists()) {
+            // Transfer parties and product are immutable. Lock their warehouses before touching capacity or stock.
+            $this->lockProduct((int) $transfer->product_id);
+            $this->capacity->lockWarehouses([$transfer->from_warehouse_id, $transfer->to_warehouse_id]);
+            $locked = InventoryTransfer::whereKey($transfer->getKey())->lockForUpdate()->firstOrFail();
+            if (!$shipmentManaged && \App\Models\ShipmentItem::where('transfer_id', $locked->id)->sharedLock()->first(['id'])) {
                 throw ValidationException::withMessages(['transfer' => 'Ez a tétel szállítmányhoz tartozik. Az átvételt vagy visszavonást a szállítmány oldalán végezd.']);
             }
-            // Always lock product before transfer/stock to keep the lock order consistent.
-            $this->lockProduct((int) $transfer->product_id);
-            $locked = InventoryTransfer::whereKey($transfer->getKey())->lockForUpdate()->firstOrFail();
             if ($locked->status !== 'pending') {
                 throw ValidationException::withMessages(['transfer' => 'Csak úton lévő átmozgatás vehető át vagy vonható vissza.']);
             }
             $warehouseId = $complete ? $locked->to_warehouse_id : $locked->from_warehouse_id;
             $this->changeStock((int) $locked->product_id, (int) $warehouseId, (int) $locked->quantity);
+            if ($complete && $locked->to_location_id !== null) {
+                $stock = Stock::where('product_id', $locked->product_id)->where('warehouse_id', $warehouseId)->lockForUpdate()->firstOrFail();
+                $this->capacity->receive($locked, $stock);
+            }
             $locked->update(['status' => $complete ? 'completed' : 'cancelled']);
         }, 3);
     }
@@ -277,6 +289,9 @@ class InventoryService
         }
         if ($quarantined < 0 || $quarantined > $quantity) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a kiválasztott raktárban. Az elkülönített visszáru előbb minősítendő.']);
+        }
+        if ($stock && $delta < $quarantineDelta && $quantity - $quarantined < $this->capacity->assignedQuantity($stock)) {
+            throw ValidationException::withMessages(['quantity' => 'Nincs elegendő tárhely nélküli kiadható készlet. A kiadandó tételeket előbb vedd ki a tárhelyükről.']);
         }
         if ($stock) {
             $stock->update(['quantity' => $quantity, 'quarantined_quantity' => $quarantined]);

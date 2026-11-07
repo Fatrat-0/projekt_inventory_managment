@@ -5,10 +5,12 @@ namespace App\Http\Controllers;
 use App\Http\Requests\WarehouseRequest;
 use App\Models\Warehouse;
 use App\Queries\WarehouseListing;
+use App\Queries\WarehouseStatistics;
 use App\Queries\WarehouseStockListing;
 use App\Services\MasterDataEditor;
 use App\Support\WarehouseListContext;
 use App\Support\WarehouseStockContext;
+use App\Support\WarehouseStatisticsReport;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -37,6 +39,26 @@ class WarehouseController extends Controller
 
     public function create(Request $request) { return $this->form($request); }
     public function edit(Request $request, Warehouse $warehouse) { return $this->form($request, $warehouse); }
+
+    public function statistics(Request $request)
+    {
+        $context = WarehouseListContext::token($request->query('context'));
+        try {
+            $filter = $request->validate(['warehouse_id' => WarehouseStatistics::WAREHOUSE_FILTER]);
+        } catch (ValidationException $e) {
+            if ($request->expectsJson()) throw $e;
+            return redirect()->route('warehouses.statistics', $context !== '' ? ['context' => $context] : [])
+                ->withErrors(['warehouse_id' => 'A kiválasztott raktár nem érhető el. Az összes raktár adatai láthatók.']);
+        }
+
+        $warehouseId = isset($filter['warehouse_id']) ? (int) $filter['warehouse_id'] : null;
+        $options = Warehouse::orderBy('warehouse_name')->orderBy('warehouse_id')->get(['warehouse_id', 'warehouse_name']);
+        $rows = WarehouseStatistics::query()->when($warehouseId, fn ($query) => $query->whereKey($warehouseId))->get();
+
+        $report = new WarehouseStatisticsReport($rows, $warehouseId !== null);
+
+        return view('warehouses.statistics', compact('context', 'warehouseId', 'options', 'rows', 'report'));
+    }
 
     public function show(Request $request, Warehouse $warehouse)
     {
@@ -72,6 +94,21 @@ class WarehouseController extends Controller
         ]);
     }
 
+    public function inventoryPreview(Request $request, Warehouse $warehouse)
+    {
+        $context = WarehouseListContext::token($request->query('context'));
+        $detailContext = WarehouseStockContext::token($request->query('detail_context'));
+        try {
+            $filters = (new WarehouseStockListing(new Request(WarehouseStockContext::filters($detailContext)), $warehouse))->filters;
+        } catch (ValidationException $e) {
+            if ($request->expectsJson()) throw $e;
+            return redirect()->route('warehouses.inventory-preview', ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []))
+                ->withErrors(['filters' => 'A készletszűrés egy része már nem érvényes. A szűrőket visszaállítottuk.']);
+        }
+
+        return view('warehouses.pdf-preview', compact('warehouse', 'context', 'detailContext', 'filters'));
+    }
+
     private function form(Request $request, ?Warehouse $warehouse = null)
     {
         $context = WarehouseListContext::token(old('context', $request->query('context', '')));
@@ -99,7 +136,7 @@ class WarehouseController extends Controller
 
     public function destroy(Request $request, Warehouse $warehouse)
     {
-        $message = 'A raktár nem törölhető, mert készletadat, készletmozgás, átmozgatás vagy szállítmány kapcsolódik hozzá. A nulla mennyiségű készletsorok is megőrzendő adatok.';
+        $message = 'A raktár nem törölhető, mert készletadat, készletmozgás, átmozgatás, szállítmány vagy tárhely kapcsolódik hozzá. A nulla mennyiségű készletsorok is megőrzendő adatok.';
         try {
             DB::transaction(function () use ($warehouse, $message) {
                 $locked = Warehouse::withUsage()->lockForUpdate()->findOrFail($warehouse->warehouse_id);

@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-layout :$warehouse :$context :$detailContext>
     <div class="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">{{ $fromDetails ? '← Raktáradatlap' : '← Raktárak' }}</a>
         <div><h1 class="text-xl font-bold text-gray-900">{{ $warehouse ? 'Raktár szerkesztése' : 'Új raktár' }}</h1><p class="mt-1 text-sm text-gray-500">A raktár neve és címe minden készletkezelési műveletnél azonosítja a helyszínt.</p></div>
@@ -30,4 +30,4 @@
             </div>
         </form>
     </div>
-</x-app-layout>
+</x-warehouse-layout>

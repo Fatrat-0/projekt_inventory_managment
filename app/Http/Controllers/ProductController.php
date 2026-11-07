@@ -6,7 +6,9 @@ use App\Models\Category;
 use App\Models\Product;
 use App\Models\Warehouse;
 use App\Services\MasterDataEditor;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class ProductController extends Controller
 {
@@ -107,7 +109,12 @@ class ProductController extends Controller
     public function destroy($id)
     {
         $product = Product::findOrFail($id);
-        $product->delete();
+        try {
+            $product->delete();
+        } catch (QueryException $e) {
+            if (!in_array($e->errorInfo[0] ?? null, ['23000', '23503'], true)) throw $e;
+            throw ValidationException::withMessages(['product' => 'A termék nem törölhető, mert készlet vagy készletkezelési bizonylat kapcsolódik hozzá.']);
+        }
 
         return redirect()->route('products.index')->with('success', 'Termék sikeresen törölve!');
     }

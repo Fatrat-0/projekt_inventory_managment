@@ -2,11 +2,36 @@
 
 namespace App\Http\Requests;
 
+use App\Models\WarehouseLocation;
+use App\Services\WarehouseCapacity;
 use Illuminate\Foundation\Http\FormRequest;
 
 class ShipmentRequest extends FormRequest
 {
     public function authorize(): bool { return true; }
+
+    protected function prepareForValidation(): void
+    {
+        if (!$this->exists('stops_json')) return;
+
+        // One serialized field keeps large route plans below PHP's form-field limit.
+        $this->merge(['stops' => self::decodeStops($this->input('stops_json'))]);
+        $this->offsetUnset('stops_json');
+    }
+
+    public static function decodeStops(mixed $json): ?array
+    {
+        $stops = is_string($json) ? json_decode($json, true, 8) : null;
+        if (!is_array($stops)) return null;
+
+        array_walk_recursive($stops, function (&$value) {
+            if (!is_string($value)) return;
+            $value = trim($value);
+            if ($value === '') $value = null;
+        });
+        return $stops;
+    }
+
     public function rules(): array
     {
         return [
@@ -18,11 +43,14 @@ class ShipmentRequest extends FormRequest
             'stops.*.items' => 'required|array|min:1|max:50',
             'stops.*.items.*.product_id' => 'required|integer|exists:products,product_id',
             'stops.*.items.*.quantity' => 'required|integer|min:1|max:2147483647',
-        ];
+        ] + WarehouseCapacity::cargoRules('stops.*.items.*.');
     }
     public function after(): array
     {
         return [function ($validator) {
+            $locations = WarehouseLocation::whereIntegerInRaw('id', array_filter(data_get($this->input(), 'stops.*.items.*.to_location_id', []),
+                fn ($id) => is_scalar($id) && filter_var($id, FILTER_VALIDATE_INT) !== false))
+                ->pluck('warehouse_id', 'id');
             foreach ((array)$this->input('stops', []) as $index => $stop) {
                 if (!is_array($stop) || !is_array($stop['items'] ?? null)) continue;
                 $seen = [];
@@ -31,9 +59,23 @@ class ShipmentRequest extends FormRequest
                     $id = (string)(int)$item['product_id'];
                     if (isset($seen[$id])) $validator->errors()->add("stops.$index.items.$row.product_id", 'Egy megállón belül egy terméket csak egyszer adj meg.');
                     $seen[$id] = true;
+                    $locationId = $item['to_location_id'] ?? null;
+                    if (is_scalar($locationId) && filter_var($locationId, FILTER_VALIDATE_INT) !== false
+                        && (int) ($locations[(int) $locationId] ?? 0) !== (int) ($stop['warehouse_id'] ?? 0)) {
+                        $validator->errors()->add("stops.$index.items.$row.to_location_id", 'A tárhelynek a megálló célraktárához kell tartoznia.');
+                    }
                 }
             }
         }];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'stops.*.items.*.to_location_id' => 'cél tárhely',
+            'stops.*.items.*.cargo_weight_kg' => 'teljes tömeg',
+            'stops.*.items.*.pallet_slots' => 'raklapok száma',
+        ];
     }
 
     public function messages(): array

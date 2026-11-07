@@ -85,9 +85,13 @@ class InventoryMovementController extends Controller
             'product_id' => 'required|integer|exists:products,product_id',
             'warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
         ]);
-        $stock = \App\Models\Stock::where('product_id', $data['product_id'])->where('warehouse_id', $data['warehouse_id'])->first();
-        return response()->json(['quantity' => $stock?->available_quantity ?? 0, 'physical_quantity' => $stock?->quantity ?? 0,
-            'quarantined_quantity' => $stock?->quarantined_quantity ?? 0])->header('Cache-Control', 'no-store');
+        $stock = \App\Models\Stock::where('product_id', $data['product_id'])->where('warehouse_id', $data['warehouse_id'])
+            ->withSum('placements as assigned_quantity', 'quantity')->first();
+        $balance = ['quantity' => $stock?->available_quantity ?? 0, 'physical_quantity' => $stock?->quantity ?? 0,
+            'quarantined_quantity' => $stock?->quarantined_quantity ?? 0];
+        if ($stock?->assigned_quantity) $balance['assigned_quantity'] = (int) $stock->assigned_quantity;
+
+        return response()->json($balance)->header('Cache-Control', 'no-store');
     }
 
     public function store(Request $request, InventoryService $inventory)

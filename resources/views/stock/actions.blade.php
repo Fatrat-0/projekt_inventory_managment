@@ -5,6 +5,7 @@
         <a role="menuitem" href="{{ route('movements.index', ['product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id]) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Készletmozgások</a>
         <a role="menuitem" href="{{ route('movements.create', ['product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id]) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Új készletmozgás</a>
         <a role="menuitem" href="{{ route('products.edit', $stock->product_id) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Termék szerkesztése</a>
+        <a role="menuitem" href="{{ route('warehouses.locations.index', $stock->warehouse_id) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Raktári tárhelyek</a>
         @if($canManage)
             <a role="menuitem" href="{{ route('stock.index', $filters + ['page' => $stocks->currentPage(), 'edit_minimum' => $stock->id]) }}#stock-minimum-{{ $stock->id }}-{{ $variant }}" @click.prevent="$refs.menu.hidePopover(); $dispatch('stock-minimum-edit', { id: {{ $stock->id }}, variant: '{{ $variant }}' })" class="block rounded-md border-t border-gray-100 px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Helyi minimum módosítása</a>
         @endif

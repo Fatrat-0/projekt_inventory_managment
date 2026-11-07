@@ -10,7 +10,7 @@ class WarehouseStockContext
 {
     public static function token(mixed $token): string { return is_string($token) && strlen($token) <= 4096 ? $token : ''; }
     public static function encode(array $filters): string { return Crypt::encryptString(json_encode($filters, JSON_THROW_ON_ERROR)); }
-    public static function url(Warehouse $warehouse, mixed $token, string $context): string
+    public static function filters(mixed $token): array
     {
         $filters = [];
         try {
@@ -19,6 +19,12 @@ class WarehouseStockContext
                 if (isset($data[$key]) && is_scalar($data[$key])) $filters[$key] = $data[$key];
             }
         } catch (DecryptException $e) {}
-        return route('warehouses.show', ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []) + $filters).'#local-stock';
+        return $filters;
+    }
+
+    public static function url(Warehouse $warehouse, mixed $token, string $context, bool $jumpToStock = true): string
+    {
+        return route('warehouses.show', ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []) + self::filters($token))
+            .($jumpToStock ? '#local-stock' : '');
     }
 }

@@ -8,6 +8,11 @@
                 :aria-haspopup="desktop ? null : 'dialog'"
                 class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600"><x-icon name="menu" class="h-5 w-5" /></button>
         </div>
+        @isset($pageActions)
+            <div class="order-last max-w-full basis-full sm:order-none sm:basis-auto">
+                {{ $pageActions }}
+            </div>
+        @endisset
         <div class="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
             @include('layouts.quick-search')
             @include('layouts.tasks')

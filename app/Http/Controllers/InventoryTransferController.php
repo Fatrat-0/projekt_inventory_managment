@@ -2,10 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\{InventoryTransfer, Product, Warehouse};
+use App\Models\{InventoryTransfer, Product, Warehouse, WarehouseLocation};
 use App\Queries\TransferListing;
 use App\Queries\ReplenishmentSuggestions;
 use App\Services\InventoryService;
+use App\Services\WarehouseCapacity;
 use App\Support\TransferListContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -42,21 +43,23 @@ class InventoryTransferController extends Controller
                 'quantity' => min((int)$proposal->shortage, (int)$proposal->surplus)];
         }
         return view('transfers.create', ['products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
-            'context' => $context, 'returnUrl' => TransferListContext::url($context), 'requestKey' => $requestKey, 'prefill' => $prefill]);
+            'context' => $context, 'returnUrl' => TransferListContext::url($context), 'requestKey' => $requestKey, 'prefill' => $prefill,
+            'storageLocations' => WarehouseLocation::pickerOptions()]);
     }
     public function store(Request $request, InventoryService $inventory)
     {
         $data = $request->validate(['request_key' => 'required|uuid', 'product_id' => 'required|integer|exists:products,product_id',
             'from_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
             'to_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id|different:from_warehouse_id', 'quantity' => 'required|integer|min:1|max:2147483647',
-            'replenishment_stock_id' => 'sometimes|required|integer|min:1']);
+            'replenishment_stock_id' => 'sometimes|required|integer|min:1'] + WarehouseCapacity::cargoRules(),
+            [], ['to_location_id' => 'cél tárhely', 'cargo_weight_kg' => 'teljes tömeg', 'pallet_slots' => 'raklapok száma']);
         $data['user_id'] = $request->user()->id;
         $transfer = $inventory->startTransfer($data, $data['request_key']);
         return redirect()->to(TransferListContext::url($request->input('context')))->with('success', 'Átmozgatás elindítva: '.$transfer->transfer_number.'.');
     }
     public function show(Request $request, InventoryTransfer $transfer)
     {
-        $transfer->load(['product', 'fromWarehouse', 'toWarehouse', 'user', 'shipmentItem.stop.shipment']);
+        $transfer->load(['product', 'fromWarehouse', 'toWarehouse', 'user', 'shipmentItem.stop.shipment', 'destinationLocation']);
         $context = $request->query('context', '');
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
         return view('transfers.show', ['transfer' => $transfer, 'context' => $context, 'returnUrl' => TransferListContext::url($context)]);

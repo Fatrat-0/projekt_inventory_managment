@@ -12,7 +12,7 @@ async function fillShipment(page, reference) {
     await page.getByLabel('Szállítmány hivatkozása', { exact: true }).fill(reference);
     await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('Teszt raktár');
     await page.getByRole('listbox', { name: 'Raktártalálatok', exact: true }).getByRole('option', { name: 'Teszt raktár', exact: true }).click();
-    const stop=page.locator('fieldset').first();
+    const stop=page.getByRole('group', { name: '1. megálló', exact: true });
     await stop.getByLabel('Célraktár', { exact: true }).selectOption('2');
     await stop.getByLabel('Termék', { exact: true }).selectOption('1');
     await stop.getByLabel('Mennyiség (db)', { exact: true }).fill('1');
@@ -21,7 +21,7 @@ async function createShipment(page, reference, secondStop = false) {
     await page.goto('/shipments/create'); await fillShipment(page,reference);
     if (secondStop) {
         await page.getByRole('button',{name:'+ Megálló hozzáadása',exact:true}).click();
-        const stop=page.locator('fieldset').nth(1);
+        const stop=page.getByRole('group', { name: '2. megálló', exact: true });
         await stop.getByLabel('Célraktár',{exact:true}).selectOption('3');
         await stop.getByLabel('Termék',{exact:true}).selectOption('2');
     }

@@ -213,7 +213,7 @@ test('quick date filters preserve other filters, reset pagination and accept cus
     await page.getByLabel('Dátumig (beleértve)', { exact: true }).fill('2020-01-02');
     await page.getByRole('button', { name: 'Szűrés alkalmazása', exact: true }).click();
     await expect(presets.locator('[aria-current]')).toHaveCount(0);
-    await expect(page.getByText('Nincs a feltételeknek megfelelő készletmozgás.')).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Nincs a feltételeknek megfelelő készletmozgás.' })).toBeVisible();
 });
 
 test('quick date filters submit edited fields and respect product picker validation on mobile', async ({ page }) => {

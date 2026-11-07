@@ -1,9 +1,9 @@
 <x-app-layout>
-    <div x-data="{ filtersOpen: {{ count($filterLabels) ? 'true' : 'false' }} }">
+    <div data-listing-page="movements" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('movements', { filtersOpen: {{ count($filterLabels) ? 'true' : 'false' }} })">
         <div class="bg-white border-b border-gray-200">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-3">
+            <div data-page-toolbar class="app-page py-3 space-y-3">
                 <div class="flex flex-col lg:flex-row lg:items-center gap-3">
-                    <h2 class="text-xl font-bold text-gray-800 whitespace-nowrap">Készletmozgások <span class="text-xs font-medium text-gray-500">{{ $movements->total() }} tétel</span></h2>
+                    <h1 class="dashboard-text text-xl font-bold text-gray-900">Készletmozgások <span class="text-xs font-medium text-gray-500">{{ $movements->total() }} tétel</span></h1>
                     <form id="movement-filters" x-ref="filtersForm" method="GET" action="{{ route('movements.index') }}" class="flex-1">
                         <input type="hidden" name="sort_by" value="{{ $filters['sort_by'] }}">
                         <input type="hidden" name="sort_dir" value="{{ $filters['sort_dir'] }}">
@@ -16,6 +16,7 @@
                         <a href="{{ route('quality-returns.index') }}" class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Minősítési munkalista</a>
                         <a href="{{ $createUrl }}" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">+ Új mozgás</a>
                         @include('movements.pdf-options')
+                        <x-listing-view-toggle />
                     </div>
                 </div>
                 <div id="movement-filter-panel" x-show="filtersOpen" @if(!count($filterLabels)) style="display: none;" @endif class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 border-t border-gray-100 pt-3">
@@ -74,7 +75,7 @@
                 @endif
             </div>
         </div>
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
+        <div class="app-page py-4 space-y-4">
             @if(session('success'))<div role="status" class="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">{{ session('success') }}</div>@endif
             @if($errors->any())<div role="alert" class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
             <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600">
@@ -82,40 +83,31 @@
                 <span>Bevételezés <strong class="text-green-700">+{{ number_format($totalIn, 0, ',', ' ') }} db</strong></span>
                 <span>Kiadás <strong class="text-red-700">−{{ number_format($totalOut, 0, ',', ' ') }} db</strong></span>
             </div>
-            <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+            <x-listing-card-sort :sorts="$sortOptions" :filters="$filters" form="movement-filters" />
+            <div data-listing-table class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                 @if($movements->isNotEmpty())
                 <table class="w-full text-sm text-left text-gray-600">
                     <thead class="bg-gray-50 text-xs uppercase text-gray-600 border-b">
                         <tr>
                             @foreach($sortOptions as $key => $label)
-                                <th scope="col" class="px-4 py-3 {{ $key === 'quantity' ? 'text-right' : '' }}" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}">
-                                    <a class="whitespace-nowrap hover:text-indigo-600" href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => $key, 'sort_dir' => $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc']) }}">{{ $label }} <span class="{{ $filters['sort_by'] === $key ? 'text-indigo-600' : 'text-gray-400' }}">{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</span></a>
-                                </th>
+                                <th data-listing-column="{{ $key }}" x-show="columnVisible('{{ $key }}')" scope="col" class="px-4 py-3 {{ $key === 'quantity' ? 'text-right' : '' }}" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}">
+                                    <div class="flex items-center justify-between gap-2"><a class="whitespace-nowrap hover:text-indigo-600" href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => $key, 'sort_dir' => $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc']) }}">{{ $label }} <span class="{{ $filters['sort_by'] === $key ? 'text-indigo-600' : 'text-gray-400' }}">{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</span></a>
+                                @if($key === 'product_name')<x-listing-columns />@endif</div></th>
                             @endforeach
-                            <th scope="col" class="px-4 py-3">Hivatkozás</th>
+                            <th data-listing-column="reference" x-show="columnVisible('reference')" scope="col" class="px-4 py-3">Hivatkozás</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         @foreach($movements as $movement)
-                            <tr class="hover:bg-indigo-50/30">
-                                <td class="px-4 py-3 whitespace-nowrap">{{ $movement->created_at->format('Y.m.d H:i') }}</td>
-                                <td class="px-4 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span></td>
-                                <td class="px-4 py-3 min-w-[180px]"><a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="block font-semibold text-gray-900 hover:text-indigo-600 hover:underline">{{ $movement->product->product_name }}</a>
+                            <tr data-movement-id="{{ $movement->id }}" class="hover:bg-indigo-50/30">
+                                <td data-listing-column="created_at" x-show="columnVisible('created_at')" class="px-4 py-3 whitespace-nowrap">{{ $movement->created_at->format('Y.m.d H:i') }}</td>
+                                <td data-listing-column="type" x-show="columnVisible('type')" class="px-4 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span></td>
+                                <td data-listing-column="product_name" x-show="columnVisible('product_name')" class="px-4 py-3 min-w-[180px]"><a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="block font-semibold text-gray-900 hover:text-indigo-600 hover:underline">{{ $movement->product->product_name }}</a>
                                     <a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="text-xs font-mono text-indigo-600 hover:underline">{{ $movement->movement_number }}</a><div class="text-xs font-mono text-gray-500">{{ $movement->product->sku }}</div></td>
-                                <td class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
-                                <td class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
-                                <td class="px-4 py-3">{{ $movement->user->name }}</td>
-                                <td class="px-4 py-3 break-words max-w-xs">{{ $movement->reference !== null && $movement->reference !== '' ? $movement->reference : '—' }}
-                                    @if($movement->isReturn())
-                                        <a href="{{ route('movements.show', ['movement' => $movement->return_of_id, 'context' => $listContext]) }}" class="mt-1 block text-xs font-medium text-amber-800 underline">Visszáru · {{ $movement->original_movement_number }}</a>
-                                        <p class="mt-1 text-xs text-gray-500">{{ $movement->return_reason }}</p>
-                                    @endif
-                                    @if($movement->isScrap())
-                                        <a href="{{ route('movements.show', ['movement' => $movement->scrap_of_id, 'context' => $listContext]) }}" class="mt-1 block text-xs font-medium text-red-800 underline">Selejtezés · Kapcsolódó visszáru</a>
-                                        <p class="mt-1 text-xs text-gray-500">{{ $movement->qualityAction?->reason }}</p>
-                                    @endif
-                                    @if($movement->partner_id)<a href="{{ route('partners.edit', $movement->partner_id) }}" class="mt-1 block text-xs text-indigo-600 hover:underline">Partner: {{ $movement->partner_name }}@if($movement->partner?->isArchived()) · Archivált @endif</a>@endif
-                                </td>
+                                <td data-listing-column="warehouse_name" x-show="columnVisible('warehouse_name')" class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
+                                <td data-listing-column="quantity" x-show="columnVisible('quantity')" class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
+                                <td data-listing-column="user_name" x-show="columnVisible('user_name')" class="px-4 py-3">{{ $movement->user->name }}</td>
+                                <td data-listing-column="reference" x-show="columnVisible('reference')" class="px-4 py-3 break-words max-w-xs">@include('movements.list-reference')</td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -124,6 +116,7 @@
                     <div class="px-4 py-12 text-center text-sm text-gray-600" role="status">Nincs a feltételeknek megfelelő készletmozgás. @if($filterLabels)<a href="{{ route('movements.index') }}" class="block mt-2 text-indigo-600 underline">Szűrők törlése</a>@endif</div>
                 @endif
             </div>
+            @include('movements.cards')
             <div class="flex flex-col sm:flex-row sm:flex-wrap gap-3 sm:items-center sm:justify-between">
                 <div class="flex items-center gap-3 text-sm text-gray-600">
                     <span>{{ $movements->firstItem() ?? 0 }}–{{ $movements->lastItem() ?? 0 }} / {{ $movements->total() }} találat</span>

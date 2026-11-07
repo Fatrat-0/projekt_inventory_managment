@@ -14,31 +14,22 @@ import activityChart from './components/activity-chart';
 import dashboardView from './components/dashboard-view';
 import dashboardCustomization from './components/dashboard-customization';
 import appShell from './components/app-shell';
+import appSearch from './components/app-search';
+import stockListing from './components/stock-listing';
+import listingView from './components/listing-view';
+import listingColumns from './components/listing-columns';
 
 window.Alpine = Alpine;
 
+Alpine.data('listingView', listingView);
+Alpine.data('listingColumns', listingColumns);
+
 Alpine.data('productListing', () => ({
+    ...listingView('products'),
     filtersOpen: false,
-    colMenuOpen: false,
-    viewMode: 'list',
-    cols: { sku: true, category: true, stock: true, price: true, value: true },
     init() {
+        listingView('products').init.call(this);
         this.filtersOpen = ['category_id', 'warehouse_id', 'stock_status'].some(key => new URLSearchParams(location.search).get(key));
-        try {
-            const mode = localStorage.getItem('productViewMode');
-            if (['list', 'kanban'].includes(mode)) this.viewMode = mode;
-            const saved = JSON.parse(localStorage.getItem('productColumns') || '{}');
-            for (const key of Object.keys(this.cols)) {
-                if (typeof saved?.[key] === 'boolean') this.cols[key] = saved[key];
-            }
-        } catch { /* Storage may be unavailable or contain outdated preferences. */ }
-        this.$watch('cols', value => {
-            try { localStorage.setItem('productColumns', JSON.stringify(value)); } catch {}
-        });
-    },
-    setView(mode) {
-        this.viewMode = mode;
-        try { localStorage.setItem('productViewMode', mode); } catch {}
     },
 }));
 
@@ -55,5 +46,7 @@ Alpine.data('activityChart', activityChart);
 Alpine.data('dashboardView', dashboardView);
 Alpine.data('dashboardCustomization', dashboardCustomization);
 Alpine.data('appShell', appShell);
+Alpine.data('appSearch', appSearch);
+Alpine.data('stockListing', stockListing);
 
 Alpine.start();

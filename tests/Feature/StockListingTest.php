@@ -162,7 +162,8 @@ class StockListingTest extends TestCase
     {
         return [['search', ['bad']], ['search', str_repeat('a', 201)], ['product_id', 99999], ['category_id', 99999],
             ['warehouse_id', 99999], ['warehouse_id', ['1']], ['stock_status', 'bad'], ['sort_by', 'stocks.id desc'],
-            ['sort_dir', 'sideways'], ['per_page', 99999], ['per_page', ['25']], ['page', 0], ['page', 2147483648]];
+            ['sort_dir', 'sideways'], ['per_page', 99999], ['per_page', ['25']], ['page', 0], ['page', 2147483648],
+            ['edit_minimum', ['1']], ['edit_minimum', 999999]];
     }
     #[DataProvider('invalidFilters')]
     public function test_invalid_filters_return_json_errors_and_html_recovers_once(string $key, mixed $value): void
@@ -208,5 +209,50 @@ class StockListingTest extends TestCase
         $this->assertSame(4294967322, (int)$this->get('/stock')->viewData('summary')->physical);
         $this->assertSame($before, Stock::orderBy('id')->get()->toArray());
         auth()->logout(); $this->get('/stock')->assertRedirect(route('login'));
+    }
+
+    public function test_stock_actions_are_a_real_menu_with_correct_product_and_warehouse_and_no_direct_deletion(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+        $html = $this->get('/stock')->assertOk()->getContent();
+        $document = new \DOMDocument; @$document->loadHTML('<?xml encoding="UTF-8">'.$html); $xpath = new \DOMXPath($document);
+        $id = 'stock-actions-'.$this->rows[0]->id.'-table';
+        $this->assertCount(1, $xpath->query("//button[@popovertarget='{$id}']"));
+        $this->assertCount(4, $xpath->query("//*[@id='{$id}']//a[@role='menuitem']"));
+        $this->assertCount(0, $xpath->query("//*[@id='{$id}']//form[@method='POST']"));
+        $this->assertCount(0, $xpath->query("//*[@id='{$id}']//*[contains(text(),'Törlés')]"));
+        $html = $this->get('/stock?product_id='.$this->rows[0]->product_id.'&warehouse_id='.$this->budapest->warehouse_id)->assertOk()->getContent();
+        $this->assertStringContainsString(htmlspecialchars(route('movements.create', ['product_id' => $this->rows[0]->product_id, 'warehouse_id' => $this->budapest->warehouse_id])), $html);
+    }
+
+    public function test_workers_cannot_open_a_minimum_editor_by_using_the_native_fallback_url(): void
+    {
+        $html = $this->get('/stock?edit_minimum='.$this->rows[0]->id)->assertOk()->getContent();
+        $this->assertStringNotContainsString('Helyi minimum módosítása', $html);
+        $this->assertStringNotContainsString('name="expected_minimum"', $html);
+        $this->assertStringContainsString('Termék szerkesztése', $html);
+    }
+
+    public function test_minimum_editor_has_a_server_rendered_fallback_without_modifying_stock(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'manager']));
+        $before = Stock::get()->toArray();
+        $html = $this->get('/stock?edit_minimum='.$this->rows[0]->id)->assertOk()->getContent();
+        $document = new \DOMDocument; @$document->loadHTML('<?xml encoding="UTF-8">'.$html); $xpath = new \DOMXPath($document);
+        $editors = $xpath->query("//*[@data-stock-minimum='{$this->rows[0]->id}']/div[@x-show]");
+        $this->assertCount(2, $editors);
+        foreach ($editors as $editor) $this->assertFalse($editor->hasAttribute('style'));
+        $this->assertSame($before, Stock::get()->toArray());
+    }
+
+    public function test_new_movement_prefills_are_validated_and_do_not_change_stock(): void
+    {
+        $before = Stock::get()->toArray();
+        $params = ['product_id' => $this->rows[0]->product_id, 'warehouse_id' => $this->budapest->warehouse_id];
+        $this->get(route('movements.create', $params))->assertOk()->assertViewHas('prefill', $params);
+        $this->getJson(route('movements.create', ['product_id' => 999999]))->assertUnprocessable();
+        $this->getJson(route('movements.create', ['warehouse_id' => ['1']]))->assertUnprocessable();
+        $this->assertSame($before, Stock::get()->toArray());
+        $this->assertDatabaseCount('inventory_movements', 0);
     }
 }

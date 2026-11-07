@@ -1,7 +1,7 @@
 <x-app-layout>
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Készletmozgások</a>
-        <h2 class="mt-3 mb-5 text-xl font-bold text-gray-900">Új készletmozgás</h2>
+        <h1 class="mt-3 mb-5 text-xl font-bold text-gray-900">Új készletmozgás</h1>
         @if($errors->any())<div role="alert" class="mb-4 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         @error('request_key')
             <a href="{{ route('movements.create', ['context' => $context]) }}" class="mb-4 inline-block text-sm font-medium text-indigo-600 underline">Új készletmozgás indítása</a>
@@ -9,7 +9,7 @@
         @if($products->isEmpty() || $warehouses->isEmpty())
             <div role="status" class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Mozgás rögzítéséhez legalább egy termék és egy raktár szükséges.</div>
         @else
-            <form method="POST" action="{{ route('movements.store') }}" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)old('product_id', ''), 'warehouse' => (string)old('warehouse_id', ''), 'type' => old('type', 'in'), 'quantity' => old('quantity', 1)]) }})" @submit="submit($event)" @pageshow.window="restored($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-5">
+            <form method="POST" action="{{ route('movements.store') }}" x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)old('product_id', $prefill['product_id'] ?? ''), 'warehouse' => (string)old('warehouse_id', $prefill['warehouse_id'] ?? ''), 'type' => old('type', 'in'), 'quantity' => old('quantity', 1)]) }})" @submit="submit($event)" @pageshow.window="restored($event)" class="rounded-lg border border-gray-200 bg-white p-5 sm:p-6 shadow-sm space-y-4">
                 @csrf
                 <input type="hidden" name="request_key" value="{{ $requestKey }}">
                 <input type="hidden" name="context" value="{{ $context }}">
@@ -24,12 +24,12 @@
                 </div>
                 <div @product-selected="product = $event.detail.value; loadStock()">
                     <label for="movement-product" class="block text-sm font-medium text-gray-700 mb-1">Termék</label>
-                    <x-product-picker :products="$products" id="movement-product" :value="old('product_id', '')" :required="true" />
+                    <x-product-picker :products="$products" id="movement-product" :value="old('product_id', $prefill['product_id'] ?? '')" :required="true" />
                 </div>
                 <div @warehouse-selected="warehouse = $event.detail.value; loadStock()">
                     <label for="movement-warehouse" class="block text-sm font-medium text-gray-700 mb-1">Raktár</label>
                     @php($warehouseItems = $warehouses->map(fn($warehouse) => ['value' => (string)$warehouse->warehouse_id, 'label' => $warehouse->warehouse_name.($warehouse->location ? ' · '.$warehouse->location : '')])->values())
-                    <x-autocomplete-picker :items="$warehouseItems" id="movement-warehouse" name="warehouse_id" :value="old('warehouse_id', '')" :required="true" placeholder="Raktár neve vagy helye…" event-name="warehouse-selected" />
+                    <x-autocomplete-picker :items="$warehouseItems" id="movement-warehouse" name="warehouse_id" :value="old('warehouse_id', $prefill['warehouse_id'] ?? '')" :required="true" placeholder="Raktár neve vagy helye…" event-name="warehouse-selected" />
                 </div>
                 <div role="status" aria-live="polite" class="rounded-md border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
                     <span x-text="stockText">Válassz terméket és raktárt a készlet megtekintéséhez.</span>

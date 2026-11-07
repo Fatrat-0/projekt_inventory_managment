@@ -1,10 +1,10 @@
 <x-app-layout>
-    <div class="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8" @pageshow.window="if ($event.persisted) window.location.reload()"
-        x-data="{ status(value, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.status.value = value; this.$refs.filtersForm.requestSubmit(); }, sort(value, direction, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.sortBy.value = value; this.$refs.sortDir.value = direction; this.$refs.filtersForm.requestSubmit(); } }">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <div><h2 class="text-xl font-bold text-gray-900">Minősítési munkalista</h2><p class="mt-1 text-sm text-gray-500">Vevői visszáruk vizsgálata és az elkülönített készlet feldolgozása.</p></div>
+    <div class="app-page space-y-4 py-4" @pageshow.window="if ($event.persisted) window.location.reload()"
+        data-listing-page="quality-returns" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('quality-returns', { status(value, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.status.value = value; this.$refs.filtersForm.requestSubmit(); }, sort(value, direction, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.sortBy.value = value; this.$refs.sortDir.value = direction; this.$refs.filtersForm.requestSubmit(); } })">
+        <x-page-toolbar title="Minősítési munkalista" description="Vevői visszáruk vizsgálata és az elkülönített készlet feldolgozása.">
             <a href="{{ route('movements.index') }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Készletmozgások</a>
-        </div>
+            <x-listing-view-toggle />
+        </x-page-toolbar>
         <x-operation-feedback />
         <section aria-label="Minősítési összesítők" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             @foreach(['open' => ['Összes nyitott', 'open_count'], 'waiting' => ['Várakozik', 'waiting_count'], 'partial' => ['Részben minősítve', 'partial_count'], 'closed' => ['Lezárt', 'closed_count']] as $value => [$label, $key])
@@ -35,7 +35,7 @@
                 </select></div>
                 <div class="flex items-end"><button type="submit" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Szűrés alkalmazása</button></div>
             </div>
-            <div class="grid grid-cols-2 gap-3 md:hidden">
+            <div data-listing-card-sort="grid" class="grid grid-cols-2 gap-3">
                 <div><label for="quality-mobile-sort" class="mb-1 block text-xs font-medium text-gray-600">Rendezés</label><select id="quality-mobile-sort" onchange="this.form.elements.namedItem('sort_by').value=this.value; this.form.requestSubmit()" class="w-full rounded-md border-gray-300 text-sm">
                     @foreach(\App\Queries\ReturnQualityListing::SORTS as $value => $label)<option value="{{ $value }}" @selected($filters['sort_by'] === $value)>{{ $label }}</option>@endforeach
                 </select></div>
@@ -48,17 +48,17 @@
                 <a href="{{ route('quality-returns.index') }}" class="text-xs text-gray-600 underline">Szűrők visszaállítása</a>
             </div>
         @endif
-        <div class="relative hidden overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm md:block">
+        <div data-listing-table class="relative overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
             <table class="w-full text-left text-sm text-gray-600"><thead class="border-b bg-gray-50 text-xs uppercase text-gray-600"><tr>
                 @foreach(\App\Queries\ReturnQualityListing::SORTS as $key => $label)
                     @php
                         $direction = $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc';
                     @endphp
-                    <th scope="col" class="whitespace-nowrap px-4 py-3 {{ str_ends_with($key, '_quantity') ? 'text-right' : '' }}" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}">
+                    <th data-listing-column="{{ $key }}" x-show="columnVisible('{{ $key }}')" scope="col" class="whitespace-nowrap px-4 py-3 {{ str_ends_with($key, '_quantity') ? 'text-right' : '' }}" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}">
                         <a href="{{ route('quality-returns.index', array_replace($filters, ['sort_by' => $key, 'sort_dir' => $direction])) }}" @click="sort('{{ $key }}', '{{ $direction }}', $event)" class="hover:text-indigo-600">{{ $label }} <span class="{{ $filters['sort_by'] === $key ? 'text-indigo-600' : 'text-gray-400' }}">{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</span></a>
                     </th>
                 @endforeach
-                <th scope="col" class="px-4 py-3">Állapot</th><th scope="col" class="px-4 py-3"><span class="sr-only">Művelet</span></th>
+                <th data-listing-column="status" x-show="columnVisible('status')" scope="col" class="px-4 py-3">Állapot</th><th data-listing-column="actions" x-show="columnVisible('actions')" scope="col" class="px-4 py-3"><span class="sr-only">Műveletek</span><x-listing-columns /></th>
             </tr></thead><tbody class="divide-y divide-gray-100">
                 @forelse($returns as $return)
                     @php
@@ -67,20 +67,20 @@
                         $detailUrl = route('movements.show', ['movement' => $return, 'context' => $listContext]);
                     @endphp
                     <tr data-quality-return-id="{{ $return->id }}" class="hover:bg-indigo-50/30">
-                        <td class="whitespace-nowrap px-4 py-3">{{ $return->created_at->format('Y.m.d H:i') }}@if($status !== 'closed')<span class="mt-1 block text-xs text-gray-500">{{ $days === 0 ? 'Ma érkezett' : $days.' napja vár' }}</span>@endif</td>
-                        <td class="min-w-[180px] max-w-xs px-4 py-3 break-all"><a href="{{ $detailUrl }}" class="block font-medium text-gray-900 hover:text-indigo-600">{{ $return->product->product_name }}</a><span class="mt-1 block font-mono text-xs text-gray-500">{{ $return->product->sku }}</span><a href="{{ $detailUrl }}" class="mt-1 block font-mono text-xs text-indigo-600 hover:underline">{{ $return->movement_number }}</a>@if($return->partner_name !== null)<span class="mt-1 block max-w-xs break-words text-xs text-gray-500">{{ $return->partner_name }}</span>@endif</td>
-                        <td class="px-4 py-3 break-words">{{ $return->warehouse->warehouse_name }}</td>
+                        <td data-listing-column="created_at" x-show="columnVisible('created_at')" class="whitespace-nowrap px-4 py-3">{{ $return->created_at->format('Y.m.d H:i') }}@if($status !== 'closed')<span class="mt-1 block text-xs text-gray-500">{{ $days === 0 ? 'Ma érkezett' : $days.' napja vár' }}</span>@endif</td>
+                        <td data-listing-column="product_name" x-show="columnVisible('product_name')" class="min-w-[180px] max-w-xs px-4 py-3 break-all"><a href="{{ $detailUrl }}" class="block font-medium text-gray-900 hover:text-indigo-600">{{ $return->product->product_name }}</a><span class="mt-1 block font-mono text-xs text-gray-500">{{ $return->product->sku }}</span><a href="{{ $detailUrl }}" class="mt-1 block font-mono text-xs text-indigo-600 hover:underline">{{ $return->movement_number }}</a>@if($return->partner_name !== null)<span class="mt-1 block max-w-xs break-words text-xs text-gray-500">{{ $return->partner_name }}</span>@endif</td>
+                        <td data-listing-column="warehouse_name" x-show="columnVisible('warehouse_name')" class="px-4 py-3 break-words">{{ $return->warehouse->warehouse_name }}</td>
                         @foreach(['original' => $return->quarantined_quantity, 'released' => $return->released_quantity, 'scrapped' => $return->scrapped_quantity, 'remaining' => $return->remaining_quantity] as $kind => $quantity)
-                            <td data-quality-quantity="{{ $kind }}" class="whitespace-nowrap px-4 py-3 text-right tabular-nums {{ $kind === 'remaining' ? 'font-semibold text-amber-800' : '' }}">{{ number_format((int)$quantity, 0, ',', ' ') }} db</td>
+                            <td data-listing-column="{{ $kind }}_quantity" x-show="columnVisible('{{ $kind }}_quantity')" data-quality-quantity="{{ $kind }}" class="whitespace-nowrap px-4 py-3 text-right tabular-nums {{ $kind === 'remaining' ? 'font-semibold text-amber-800' : '' }}">{{ number_format((int)$quantity, 0, ',', ' ') }} db</td>
                         @endforeach
-                        <td class="px-4 py-3">@include('quality-returns.status')</td><td class="px-4 py-3"><a href="{{ $detailUrl }}{{ $status === 'closed' ? '' : '#return-quality' }}" class="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a></td>
+                        <td data-listing-column="status" x-show="columnVisible('status')" class="px-4 py-3">@include('quality-returns.status')</td><td data-listing-column="actions" x-show="columnVisible('actions')" class="px-4 py-3"><a href="{{ $detailUrl }}{{ $status === 'closed' ? '' : '#return-quality' }}" class="whitespace-nowrap text-sm font-medium text-indigo-600 hover:underline">{{ $status === 'closed' ? 'Megtekintés' : 'Minősítés' }}</a></td>
                     </tr>
                 @empty
-                    <tr><td colspan="9" role="status" class="p-8 text-center text-gray-500">Nincs a szűrésnek megfelelő visszáru.</td></tr>
+                    <tr><td colspan="9" :colspan="visibleColumnCount()" role="status" class="p-8 text-center text-gray-500">Nincs a szűrésnek megfelelő visszáru.</td></tr>
                 @endforelse
             </tbody></table>
         </div>
-        <div class="space-y-3 md:hidden">
+        <div data-listing-cards>
             @forelse($returns as $return)
                 @php
                     $status = \App\Queries\ReturnQualityListing::status($return);

@@ -48,6 +48,7 @@ class AppNavigation
             'quality-returns' => ['Visszáru-minősítés', 'quality-returns.index', null],
             'users' => ['Felhasználók', 'users.index', 'Új felhasználó'],
             'profile' => ['Profil', 'profile.edit', null],
+            'app-search' => ['Gyorskereső', 'app-search.index', null],
             default => ['Vezérlőpult', 'dashboard', null],
         };
         $detail = match (true) {

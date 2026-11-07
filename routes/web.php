@@ -22,6 +22,7 @@ Route::get('/dashboard', [DashboardController::class, 'index'])
     ->name('dashboard');
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/search', [\App\Http\Controllers\AppSearchController::class, 'index'])->name('app-search.index');
     Route::get('/dashboard/customize', [\App\Http\Controllers\DashboardLayoutController::class, 'edit'])->name('dashboard.customize');
     Route::patch('/dashboard/layout', [\App\Http\Controllers\DashboardLayoutController::class, 'update'])->name('dashboard.layout.update');
 });

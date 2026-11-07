@@ -1,5 +1,5 @@
 <x-app-layout>
-    <div class="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6" x-data="dashboardCustomization({{ \Illuminate\Support\Js::from(['order' => $layout['order'], 'defaults' => $defaults, 'readOnly' => $conflict]) }})" @pageshow.window="restorePage()" @keydown.escape.window="cancelDrag()" @blur.window="cancelDrag()">
+    <div class="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6" x-data="dashboardCustomization({{ \Illuminate\Support\Js::from(['order' => $layout['order'], 'defaults' => $defaults, 'readOnly' => $conflict]) }})" @pageshow.window="restorePage()" @keydown.escape.window="cancelDrag()" @blur.window="cancelDrag()">
         <header>
             <a href="{{ route('dashboard', $context) }}" class="text-sm font-medium text-indigo-700 hover:underline">← Vezérlőpult</a>
             <h1 id="layout-form-title" class="mt-3 text-2xl font-bold text-gray-900">Vezérlőpult testreszabása</h1>

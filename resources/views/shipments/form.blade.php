@@ -1,7 +1,7 @@
 <x-app-layout>
-    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Szállítmányok</a>
-        <h2 class="text-xl font-bold text-gray-900">{{ $shipment ? 'Rakodási terv szerkesztése' : 'Új rakodási terv' }}</h2><x-operation-feedback />
+        <h1 class="text-xl font-bold text-gray-900">{{ $shipment ? 'Rakodási terv szerkesztése' : 'Új rakodási terv' }}</h1><x-operation-feedback />
         @if($products->isEmpty() || $warehouses->count() < 2)<p class="rounded-md bg-amber-50 p-4 text-sm text-amber-900">A tervezéshez legalább egy termék és két raktár szükséges.</p>@else
         @php($warehouseItems = $warehouses->map(fn($w) => ['value' => (string)$w->warehouse_id, 'label' => $w->warehouse_name])->values())
         <form method="POST" action="{{ $shipment ? route('shipments.update', $shipment) : route('shipments.store') }}" x-data="shipmentBuilder({{ Illuminate\Support\Js::from(['stops' => $stops, 'origin' => $values['origin_warehouse_id'], 'warehouses' => $warehouseItems]) }})" @submit="if (submitting) { $event.preventDefault(); } else { submitting = true; }" class="space-y-5">

@@ -45,7 +45,7 @@ test('shipment status cards preserve filters, reset page and show receipt progre
     await page.getByRole('button',{name:'Megálló átvétele',exact:true}).click();
     await page.getByRole('link',{name:'← Szállítmányok',exact:true}).click();
     await expect(page.getByRole('progressbar',{name:'Átvett megállók'})).toHaveAttribute('aria-valuenow','1');
-    await expect(page.getByText('Következő: Déli tesztraktár',{exact:true})).toBeVisible();
+    await expect(page.locator('[data-listing-cards]').getByText('Következő: Déli tesztraktár',{exact:true})).toBeVisible();
     await page.screenshot({path:'tests/Browser/.runtime/shipment-operation-overview.png',fullPage:true});
 });
 
@@ -85,7 +85,7 @@ test('shipment quick dates submit pending filter edits and custom dates fit mobi
     await page.getByLabel('Dátumtól',{exact:true}).fill('2020-01-01');
     await page.getByLabel('Dátumig (beleértve)',{exact:true}).fill('2020-01-02');
     await page.getByRole('button',{name:'Szűrés alkalmazása',exact:true}).click();
-    await expect(page.getByText('Nincs a feltételeknek megfelelő szállítmány.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('status').filter({hasText:'Nincs a feltételeknek megfelelő szállítmány.'})).toBeVisible();
     await expect(presets.locator('[aria-current]')).toHaveCount(0);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.screenshot({path:'tests/Browser/.runtime/shipment-overview-mobile.png',fullPage:true});
@@ -111,6 +111,6 @@ test('transfer identifier, quick dates and status cards retain exact results and
     const params=new URL(page.url()).searchParams;
     expect(params.get('search')).toBe(number.toLowerCase()); expect(params.get('date_from')).toBeTruthy(); expect(params.get('status')).toBe('pending');
     await states.getByRole('link',{name:'Megérkezett 0',exact:true}).click();
-    await expect(page.getByText('Nincs a feltételeknek megfelelő átmozgatás.',{exact:true})).toBeVisible();
+    await expect(page.getByRole('status').filter({hasText:'Nincs a feltételeknek megfelelő átmozgatás.'})).toBeVisible();
     await expect(states.getByRole('link',{name:'Úton 1',exact:true})).toBeVisible();
 });

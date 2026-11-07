@@ -101,8 +101,13 @@ test('touch drag autoscrolls, cancels cleanly and regular swiping still scrolls 
         const grip = await row(page, 'tasks').locator('[data-layout-handle]').boundingBox();
         const x = grip.x + grip.width / 2;
         const y = grip.y + grip.height / 2;
+        const edge = page.viewportSize().height - 8;
         await touch('touchStart', x, y);
-        for (let step = 1; step <= 18; step++) { await touch('touchMove', x, y + (715 - y) * step / 18); await frame(); }
+        for (let step = 1; step <= 18; step++) { await touch('touchMove', x, y + (edge - y) * step / 18); await frame(); }
+        // Hold at the viewport edge as a user would; do not depend on one throttled move frame.
+        for (let step = 0; step < 60 && await page.evaluate(() => window.scrollY) < 80; step++) {
+            await touch('touchMove', x, edge - step % 2); await frame();
+        }
         await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(60);
         await expect.poll(async () => (await order(page))[0]).not.toBe('tasks');
         await touch('touchCancel');

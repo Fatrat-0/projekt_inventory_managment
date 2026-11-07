@@ -1,8 +1,8 @@
 <x-app-layout>
-    <div class="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
+    <div class="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Partnerek</a>
         <div>
-            <h2 class="text-xl font-bold text-gray-900">{{ $partner ? 'Partner szerkesztése' : 'Új partner' }}</h2>
+            <h1 class="text-xl font-bold text-gray-900">{{ $partner ? 'Partner szerkesztése' : 'Új partner' }}</h1>
             <p class="mt-1 text-sm text-gray-500">Vevők és beszállítók alapadatai és elérhetőségei.</p>
         </div>
         @if($partner?->isArchived())

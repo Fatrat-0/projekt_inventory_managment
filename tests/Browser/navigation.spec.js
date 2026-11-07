@@ -129,21 +129,23 @@ test('all main pages and forms fit narrow viewports and the smaller desktop work
     expect((await page.locator('#category-alerts').boundingBox()).y).toBeGreaterThanOrEqual(64);
 });
 
-test('related pages highlight their main section and show usable breadcrumbs', async ({ page }) => {
+test('related pages highlight their section, show one page heading and retain contextual Back links', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await login(page);
-    for (const [path, section, label] of [
-        ['/shipments/create', 'Átmozgatások', 'Új rakodási terv'],
-        ['/quality-returns', 'Készletmozgások', 'Visszáru-minősítés'],
-        ['/products/1/edit', 'Termékek', 'Szerkesztés'],
-        ['/warehouses/1', 'Raktárak', 'Adatlap'],
+    for (const [path, section, label, back] of [
+        ['/shipments/create', 'Átmozgatások', 'Új rakodási terv', '← Szállítmányok'],
+        ['/quality-returns', 'Készletmozgások', 'Visszáru-minősítés', null],
+        ['/products/1/edit', 'Termékek', 'Szerkesztés', '← Termékek'],
+        ['/warehouses/1', 'Raktárak', 'Adatlap', '← Raktárak'],
     ]) {
         await page.goto(path);
         await expect(page.getByRole('navigation', { name: 'Főmenü', exact: true }).locator('[aria-current="page"]')).toHaveText(section);
-        const crumbs = page.getByRole('navigation', { name: 'Aktuális hely', exact: true });
-        await expect(crumbs.locator('[aria-current="page"]')).toHaveText(label);
-        const href = await crumbs.getByRole('link').last().getAttribute('href');
-        expect((await page.request.get(href)).status()).toBe(200);
+        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(0);
+        await expect(page.locator('main h1')).toHaveCount(1); await expect(page).toHaveTitle(new RegExp(label));
+        if (back) {
+            const href = await page.locator('main').getByRole('link', { name: back, exact: true }).first().getAttribute('href');
+            expect((await page.request.get(href)).status()).toBe(200);
+        }
     }
 });
 

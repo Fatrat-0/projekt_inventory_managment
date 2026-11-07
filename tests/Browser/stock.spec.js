@@ -9,6 +9,62 @@ async function login(page, admin = false) {
     await expect(page).toHaveURL(/dashboard/);
 }
 const rows = page => page.locator('[data-stock-row]:visible');
+async function editMinimum(row) {
+    await row.getByRole('button', { name: /^Műveletek:/ }).click();
+    await row.getByRole('menuitem', { name: 'Helyi minimum módosítása', exact: true }).click();
+}
+
+test('minimum editing opens from the menu on desktop and mobile and Cancel discards the draft and restores focus', async ({ page }) => {
+    await login(page, true);
+    await page.goto('/stock?product_id=1&warehouse_id=1');
+    let writes = 0;
+    page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.includes('/minimum')) writes++; });
+    for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 800 });
+        const row = rows(page);
+        const trigger = row.getByRole('button', { name: /^Műveletek:/ });
+        await expect(row.getByRole('spinbutton')).toBeHidden();
+        await trigger.click();
+        const menu = row.getByRole('menu', { name: 'Készletsor műveletei', exact: true });
+        await expect(menu.getByRole('menuitem')).toHaveCount(4);
+        await expect(menu.getByRole('menuitem', { name: 'Törlés', exact: true })).toHaveCount(0);
+        const box = await menu.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
+        if (width === 390) await page.screenshot({ path: 'tests/Browser/.runtime/stock-actions-mobile.png' });
+        await menu.getByRole('menuitem', { name: 'Helyi minimum módosítása', exact: true }).click();
+        await expect(row.getByRole('spinbutton')).toBeFocused();
+        await row.getByRole('spinbutton').fill('42');
+        await row.getByRole('link', { name: 'Mégse', exact: true }).click();
+        await expect(row.getByRole('spinbutton')).toBeHidden(); await expect(trigger).toBeFocused();
+        await editMinimum(row); await expect(row.getByRole('spinbutton')).toHaveValue('5');
+        await row.getByRole('link', { name: 'Mégse', exact: true }).click();
+    }
+    expect(writes).toBe(0);
+});
+
+test('row actions open a keyboard accessible menu and prefill a movement without changing stock', async ({ page }) => {
+    await login(page);
+    await page.goto('/stock?product_id=1&warehouse_id=1');
+    const row = rows(page);
+    const trigger = row.getByRole('button', { name: /^Műveletek:/ });
+    const url = page.url();
+    await trigger.focus(); await page.keyboard.press('ArrowDown');
+    await expect(page).toHaveURL(url);
+    const menu = row.getByRole('menu', { name: 'Készletsor műveletei', exact: true });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem')).toHaveCount(3);
+    await expect(menu.getByRole('menuitem', { name: 'Készletmozgások', exact: true })).toBeFocused();
+    await expect(menu.getByRole('menuitem', { name: /minimum|Törlés/ })).toHaveCount(0);
+    await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();
+    await trigger.click();
+    const before = await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json();
+    await menu.getByRole('menuitem', { name: 'Új készletmozgás', exact: true }).click();
+    await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Alpha teszttermék (ALPHA-001)');
+    await expect(page.getByRole('combobox', { name: 'Raktár', exact: true })).toHaveValue('Teszt raktár · Test');
+    await expect(page.getByRole('status')).toContainText(before.quantity+' db');
+    const after = await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json();
+    expect(after).toEqual(before);
+});
+
 async function post(page, path, data) {
     return page.request.post(path, { headers: { 'X-CSRF-TOKEN': await page.locator('meta[name="csrf-token"]').getAttribute('content') }, data, maxRedirects: 0 });
 }
@@ -61,7 +117,7 @@ test('pagination and minimum editing preserve search filters sorting and page si
     await expect(rows(page)).toHaveCount(2);
     const row = rows(page).first();
     const id = await row.getAttribute('data-stock-row');
-    await row.getByText('Módosítás', { exact: true }).click();
+    await editMinimum(row);
     await row.getByRole('spinbutton').fill('14');
     await row.getByRole('button', { name: 'Mentés', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('A helyi minimum frissítve');
@@ -79,7 +135,7 @@ test('stale minimum edits fail clearly and do not overwrite another users saved 
     const other = await context.newPage();
     try {
         await other.goto('/stock?product_id='+item.id);
-        for (const tab of [page, other]) await rows(tab).getByText('Módosítás', { exact: true }).click();
+        for (const tab of [page, other]) await editMinimum(rows(tab));
         await rows(page).getByRole('spinbutton').fill('12');
         await rows(page).getByRole('button', { name: 'Mentés', exact: true }).click();
         await rows(other).getByRole('spinbutton').fill('3');
@@ -118,12 +174,12 @@ test('mobile cards and sorting fit narrow screens and enlarged text with long na
     await page.setViewportSize({ width: 320, height: 740 });
     await page.screenshot({ path: 'tests/Browser/.runtime/stock-mobile.png', fullPage: true });
     await page.evaluate(() => { document.documentElement.style.fontSize = '24px'; });
-    await rows(page).getByText('Módosítás', { exact: true }).click();
+    await editMinimum(rows(page));
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: 'tests/Browser/.runtime/stock-mobile-large-text.png', fullPage: true });
     await page.evaluate(() => { document.documentElement.style.fontSize = ''; });
     await page.locator('summary').filter({ hasText: /^Rendezés:/ }).click();
-    await page.locator('.md\\:hidden').getByRole('link', { name: 'Kiadható', exact: false }).click();
+    await page.locator('[data-stock-card-sort]').getByRole('link', { name: 'Kiadható', exact: false }).click();
     await expect(page).toHaveURL(url => url.searchParams.get('sort_by') === 'available');
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.screenshot({ path: 'tests/Browser/.runtime/stock-desktop.png', fullPage: true });
@@ -140,9 +196,9 @@ test('native filters mobile sorting and minimum save work without JavaScript', a
         await page.getByRole('button', { name: 'Szűrés alkalmazása', exact: true }).click();
         await expect(rows(page)).toHaveCount(1);
         await page.locator('summary').filter({ hasText: /^Rendezés:/ }).click();
-        await page.locator('.md\\:hidden').getByRole('link', { name: 'Kiadható', exact: false }).click();
+        await page.locator('[data-stock-card-sort]').getByRole('link', { name: 'Kiadható', exact: false }).click();
         await expect(page).toHaveURL(url => url.searchParams.get('sort_by') === 'available' && url.searchParams.get('stock_status') === 'low');
-        await rows(page).getByText('Módosítás', { exact: true }).click();
+        await editMinimum(rows(page));
         await rows(page).getByRole('spinbutton').fill('8');
         await rows(page).getByRole('button', { name: 'Mentés', exact: true }).click();
         await expect(page.getByRole('status')).toContainText('A helyi minimum frissítve');

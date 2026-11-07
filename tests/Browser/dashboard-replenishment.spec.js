@@ -22,7 +22,8 @@ async function scenario(page) {
     await page.goto('/stock?warehouse_id=2');
     const row = page.locator('[data-stock-row]:visible').filter({ hasText: sku });
     const target = await row.locator('[data-stock-minimum]').getAttribute('data-stock-minimum');
-    await row.locator('summary').click();
+    await row.getByRole('button', { name: /^Műveletek:/ }).click();
+    await row.getByRole('menuitem', { name: 'Helyi minimum módosítása', exact: true }).click();
     await row.getByRole('spinbutton').fill('10');
     await row.getByRole('button', { name: 'Mentés', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('A helyi minimum frissítve');

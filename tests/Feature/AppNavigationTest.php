@@ -59,7 +59,7 @@ class AppNavigationTest extends TestCase
     }
 
     #[DataProvider('pages')]
-    public function test_active_item_and_breadcrumbs_follow_subpages_and_related_workflows(string $path, ?string $active, string $label): void
+    public function test_active_item_and_document_title_follow_subpages_without_repeating_the_page_heading(string $path, ?string $active, string $label): void
     {
         $this->actingAs(User::factory()->create(['role' => 'admin']));
         $response = $this->get($path)->assertOk();
@@ -67,10 +67,10 @@ class AppNavigationTest extends TestCase
         $selected = $xpath->query("//nav[@aria-label='Főmenü']//a[@aria-current='page']");
         $this->assertCount($active ? 1 : 0, $selected);
         if ($active) $this->assertSame(route($active), $selected->item(0)->getAttribute('href'));
-        $current = $xpath->query("//nav[@aria-label='Aktuális hely']//*[@aria-current='page']");
-        $this->assertCount(1, $current);
-        $this->assertSame($label, trim($current->item(0)->textContent));
-        foreach ($xpath->query("//nav[@aria-label='Aktuális hely']//a") as $link) $this->get($link->getAttribute('href'))->assertOk();
+        $this->assertCount(0, $xpath->query("//header[@data-app-topbar]//nav"));
+        $this->assertCount(1, $xpath->query('//main//h1'));
+        $this->assertStringContainsString($label, $xpath->query('//title')->item(0)->textContent);
+        foreach ($xpath->query('//main//a[@data-parent-navigation]') as $link) $this->get($link->getAttribute('href'))->assertOk();
     }
 
     public function test_user_content_is_escaped_and_logout_remains_a_csrf_protected_post(): void

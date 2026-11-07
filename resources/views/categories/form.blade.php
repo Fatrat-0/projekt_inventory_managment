@@ -1,7 +1,7 @@
 <x-app-layout>
-    <div class="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
+    <div class="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Kategóriák</a>
-        <h2 class="text-xl font-bold text-gray-900">{{ $category ? 'Kategória szerkesztése' : 'Új kategória' }}</h2>
+        <h1 class="text-xl font-bold text-gray-900">{{ $category ? 'Kategória szerkesztése' : 'Új kategória' }}</h1>
         @if($category)
             <div><a href="{{ route('products.index', ['category_id' => $category->category_id, 'sort_by' => 'product_name', 'sort_dir' => 'asc']) }}" class="inline-flex items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100">Termékek az ágban: <span class="tabular-nums">{{ number_format($branchProductCount, 0, ',', ' ') }}</span></a>
                 <p class="mt-1 text-xs text-gray-500">A mentett kategória és összes alkategóriája termékei, készlettől függetlenül.</p></div>

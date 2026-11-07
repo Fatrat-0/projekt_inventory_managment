@@ -9,11 +9,36 @@ use App\Models\InventoryMovement;
 use App\Models\InventoryTransfer;
 use App\Models\Warehouse;
 use App\Queries\WarehouseStockListing;
+use App\Queries\WarehouseStatistics;
 use App\Support\WarehouseInventoryPdfOptions;
+use App\Support\{WarehouseStatisticsPdfOptions, WarehouseStatisticsReport};
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Validation\ValidationException;
 
 class ExportController extends Controller
 {
+    public function warehouseStatisticsPdf(Request $request)
+    {
+        try {
+            $options = WarehouseStatisticsPdfOptions::fromRequest($request);
+        } catch (ValidationException $e) {
+            if ($request->expectsJson()) throw $e;
+            abort(422, $e->validator->errors()->first());
+        }
+
+        $warehouseId = $options['warehouse_id'] ?? null;
+        $rows = WarehouseStatistics::query()->when($warehouseId, fn ($query) => $query->whereKey($warehouseId))->get();
+        if ($warehouseId !== null && $rows->isEmpty()) abort(404);
+
+        $report = new WarehouseStatisticsReport($rows, $warehouseId !== null);
+        $scope = $warehouseId !== null ? $rows->first()->warehouse_name : 'Összes raktár';
+        $exportedAt = now();
+        $pdf = Pdf::loadView('pdf.warehouse-statistics', compact('report', 'scope', 'options', 'exportedAt'))->setPaper('a4', $options['orientation']);
+        $filename = 'raktari-statisztika'.($warehouseId !== null ? '-'.$warehouseId : '').'-'.$exportedAt->format('Y-m-d').'.pdf';
+
+        return !empty($options['preview']) ? $pdf->stream($filename) : $pdf->download($filename);
+    }
+
     public function warehouseInventoryPdf(Request $request, Warehouse $warehouse)
     {
         $options = WarehouseInventoryPdfOptions::fromRequest($request);

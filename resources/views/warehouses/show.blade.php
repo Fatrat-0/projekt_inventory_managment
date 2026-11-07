@@ -1,10 +1,10 @@
-<x-app-layout>
-    @php($baseParams = ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []))
+@php($baseParams = ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []))
+<x-warehouse-layout :$warehouse :$context :$detailContext>
     <div class="app-page space-y-4 py-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Raktárak</a>
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0"><h1 class="break-words text-xl font-bold text-gray-900">{{ $warehouse->warehouse_name }}</h1><p class="mt-1 whitespace-pre-line break-words text-sm text-gray-500">{{ $warehouse->location ?: 'Cím nincs megadva' }}</p></div>
-            <div class="flex flex-wrap items-center gap-2">@include('warehouses.pdf-preview')<a href="{{ route('warehouses.edit', $baseParams + ['from' => 'details', 'detail_context' => $detailContext]) }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Raktár szerkesztése</a></div>
+            <a href="{{ route('warehouses.edit', $baseParams + ['from' => 'details', 'detail_context' => $detailContext]) }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Raktár szerkesztése</a>
         </div>
         <x-operation-feedback />
         <section aria-label="Raktári összesítők" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -42,4 +42,4 @@
             <ul class="divide-y divide-gray-100">@forelse($movements as $movement)<li class="flex flex-wrap items-center gap-3 py-3"><div class="min-w-0 flex-1"><a href="{{ route('movements.show', $movement) }}" class="text-xs font-medium text-indigo-600 hover:underline">{{ $movement->movement_number }}</a><p class="break-words text-sm text-gray-900">{{ $movement->product->product_name }}</p><p class="text-xs text-gray-500">{{ $movement->created_at->format('Y.m.d H:i') }} · {{ $movement->user->name }}</p></div><span class="whitespace-nowrap text-sm font-medium {{ $movement->type === 'in' ? 'text-green-700' : 'text-red-700' }}">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</span></li>@empty<li class="py-4 text-sm text-gray-500">Ebben a raktárban még nincs készletmozgás.</li>@endforelse</ul>
         </section>
     </div>
-</x-app-layout>
+</x-warehouse-layout>

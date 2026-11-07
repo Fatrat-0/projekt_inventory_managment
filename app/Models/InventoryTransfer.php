@@ -10,8 +10,9 @@ class InventoryTransfer extends Model
     use HasFactory;
 
     public const STATUSES = ['pending' => 'Úton', 'completed' => 'Megérkezett', 'cancelled' => 'Visszavonva'];
-    protected function casts(): array { return ['quantity' => 'integer']; }
+    protected function casts(): array { return ['quantity' => 'integer', 'cargo_weight_grams' => 'integer', 'pallet_slots' => 'integer']; }
     public function shipmentItem() { return $this->hasOne(ShipmentItem::class, 'transfer_id'); }
+    public function destinationLocation() { return $this->belongsTo(WarehouseLocation::class, 'to_location_id'); }
     public function getTransferNumberAttribute(): string { return 'ATM-'.str_pad((string)$this->id, 6, '0', STR_PAD_LEFT); }
 
     protected $fillable = [
@@ -21,6 +22,9 @@ class InventoryTransfer extends Model
         'quantity',
         'status',
         'user_id',
+        'to_location_id',
+        'cargo_weight_grams',
+        'pallet_slots',
     ];
 
     // Kapcsolat a Termékkel

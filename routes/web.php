@@ -39,6 +39,10 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager,worker'])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+        Route::get('/warehouses/{warehouse}/locations', [\App\Http\Controllers\WarehouseLocationController::class, 'index'])->name('warehouses.locations.index');
+        Route::get('/warehouses/{warehouse}/locations/{warehouseLocation}', [\App\Http\Controllers\WarehouseLocationController::class, 'show'])->name('warehouses.locations.show');
+        Route::post('/warehouses/{warehouse}/locations/{warehouseLocation}/placements', [\App\Http\Controllers\WarehouseLocationController::class, 'place'])->name('warehouses.locations.place');
+        Route::delete('/warehouses/{warehouse}/locations/{warehouseLocation}/placements/{placement}', [\App\Http\Controllers\WarehouseLocationController::class, 'release'])->name('warehouses.locations.release');
         Route::get('/quality-returns', [\App\Http\Controllers\ReturnQualityQueueController::class, 'index'])->name('quality-returns.index');
         Route::get('/movements/stock', [InventoryMovementController::class, 'stock'])->name('movements.stock');
         Route::get('/movements/{movement}/return', [\App\Http\Controllers\MovementReturnController::class, 'create'])->name('movements.return.create');
@@ -67,7 +71,12 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager'])->group(function () {
         Route::patch('/stock/{stock}/minimum', [StockController::class, 'minimum'])->name('stock.minimum');
         Route::resource('categories', CategoryController::class)->except(['show']);
+        Route::get('/warehouses/statistics', [WarehouseController::class, 'statistics'])->name('warehouses.statistics');
+        Route::get('/warehouses/statistics.pdf', [ExportController::class, 'warehouseStatisticsPdf'])->name('warehouses.statistics-pdf');
         Route::resource('warehouses', WarehouseController::class);
+        Route::post('/warehouses/{warehouse}/locations', [\App\Http\Controllers\WarehouseLocationController::class, 'store'])->name('warehouses.locations.store');
+        Route::patch('/warehouses/{warehouse}/locations/{warehouseLocation}', [\App\Http\Controllers\WarehouseLocationController::class, 'update'])->name('warehouses.locations.update');
+        Route::get('/warehouses/{warehouse}/inventory-preview', [WarehouseController::class, 'inventoryPreview'])->name('warehouses.inventory-preview');
         Route::get('/warehouses/{warehouse}/inventory.pdf', [ExportController::class, 'warehouseInventoryPdf'])->name('warehouses.inventory-pdf');
         Route::resource('users', UserController::class)->except(['show', 'edit', 'update']);
     });

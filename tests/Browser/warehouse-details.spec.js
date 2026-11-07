@@ -116,7 +116,7 @@ test('shipment-managed incoming items open the shipment workflow', async ({ page
     await page.getByLabel('Szállítmány hivatkozása', { exact: true }).fill('DETAILS-SHIPMENT');
     await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('DETAILS-SHIPMENT-B');
     await page.getByRole('listbox', { name: 'Raktártalálatok', exact: true }).getByRole('option', { name: 'DETAILS-SHIPMENT-B', exact: true }).click();
-    const stop = page.locator('fieldset').first();
+    const stop = page.getByRole('group', { name: '1. megálló', exact: true });
     await stop.getByLabel('Célraktár', { exact: true }).selectOption(local);
     await stop.getByLabel('Termék', { exact: true }).selectOption('1');
     await stop.getByLabel('Mennyiség (db)', { exact: true }).fill('2');

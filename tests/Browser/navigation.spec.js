@@ -137,10 +137,11 @@ test('related pages highlight their section, show one page heading and retain co
         ['/quality-returns', 'Készletmozgások', 'Visszáru-minősítés', null],
         ['/products/1/edit', 'Termékek', 'Szerkesztés', '← Termékek'],
         ['/warehouses/1', 'Raktárak', 'Adatlap', '← Raktárak'],
+        ['/warehouses/statistics', 'Raktárak', 'Statisztika', null],
     ]) {
         await page.goto(path);
         await expect(page.getByRole('navigation', { name: 'Főmenü', exact: true }).locator('[aria-current="page"]')).toHaveText(section);
-        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(0);
+        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(path.startsWith('/warehouses/') ? 1 : 0);
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page).toHaveTitle(new RegExp(label));
         if (back) {
             const href = await page.locator('main').getByRole('link', { name: back, exact: true }).first().getAttribute('href');

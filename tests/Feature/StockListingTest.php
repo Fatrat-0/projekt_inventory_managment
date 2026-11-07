@@ -218,7 +218,9 @@ class StockListingTest extends TestCase
         $document = new \DOMDocument; @$document->loadHTML('<?xml encoding="UTF-8">'.$html); $xpath = new \DOMXPath($document);
         $id = 'stock-actions-'.$this->rows[0]->id.'-table';
         $this->assertCount(1, $xpath->query("//button[@popovertarget='{$id}']"));
-        $this->assertCount(4, $xpath->query("//*[@id='{$id}']//a[@role='menuitem']"));
+        $this->assertCount(5, $xpath->query("//*[@id='{$id}']//a[@role='menuitem']"));
+        $locationsUrl = route('warehouses.locations.index', $this->rows[0]->warehouse_id);
+        $this->assertCount(1, $xpath->query("//*[@id='{$id}']//a[@href='{$locationsUrl}']"));
         $this->assertCount(0, $xpath->query("//*[@id='{$id}']//form[@method='POST']"));
         $this->assertCount(0, $xpath->query("//*[@id='{$id}']//*[contains(text(),'Törlés')]"));
         $html = $this->get('/stock?product_id='.$this->rows[0]->product_id.'&warehouse_id='.$this->budapest->warehouse_id)->assertOk()->getContent();

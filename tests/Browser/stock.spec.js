@@ -26,7 +26,7 @@ test('minimum editing opens from the menu on desktop and mobile and Cancel disca
         await expect(row.getByRole('spinbutton')).toBeHidden();
         await trigger.click();
         const menu = row.getByRole('menu', { name: 'Készletsor műveletei', exact: true });
-        await expect(menu.getByRole('menuitem')).toHaveCount(4);
+        await expect(menu.getByRole('menuitem')).toHaveCount(5);
         await expect(menu.getByRole('menuitem', { name: 'Törlés', exact: true })).toHaveCount(0);
         const box = await menu.boundingBox(); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
         if (width === 390) await page.screenshot({ path: 'tests/Browser/.runtime/stock-actions-mobile.png' });
@@ -51,7 +51,7 @@ test('row actions open a keyboard accessible menu and prefill a movement without
     await expect(page).toHaveURL(url);
     const menu = row.getByRole('menu', { name: 'Készletsor műveletei', exact: true });
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole('menuitem')).toHaveCount(3);
+    await expect(menu.getByRole('menuitem')).toHaveCount(4);
     await expect(menu.getByRole('menuitem', { name: 'Készletmozgások', exact: true })).toBeFocused();
     await expect(menu.getByRole('menuitem', { name: /minimum|Törlés/ })).toHaveCount(0);
     await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();

@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-layout :$context>
     <div class="app-page space-y-4 py-4" data-listing-page="warehouses" x-data="listingView('warehouses')" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()">
         <x-page-toolbar title="Raktárak" :count="$warehouses->total()">
             <a href="{{ route('warehouses.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">+ Új raktár</a>
@@ -61,4 +61,4 @@
         </div>
         <p class="text-xs text-gray-500">A termékfajták száma a pozitív készletű termékeket jelenti. Az összkészlet az adott raktár fizikai mennyisége, az elkülönített készlettel együtt, az úton lévő áru nélkül. Kapcsolódó készletadat vagy bizonylat esetén a raktár nem törölhető.</p>
     </div>
-</x-app-layout>
+</x-warehouse-layout>

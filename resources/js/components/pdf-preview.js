@@ -1,10 +1,11 @@
 export default (initial) => {
     let reloadTimer = null;
     return {
-        open: false,
+        open: Boolean(initial.inline),
         settingsOpen: true,
         frameUrl: '',
         options: { ...initial.options },
+        init() { if (this.open) this.frameUrl = this.previewUrl + '#zoom=page-width'; },
         get downloadUrl() {
             const url = new URL(initial.url);
             url.searchParams.delete('preview');
@@ -26,6 +27,10 @@ export default (initial) => {
             }, 200);
         },
         resetOptions() { this.options = { ...initial.options }; this.updateOptions(); },
+        toggleSettings() {
+            this.settingsOpen = !this.settingsOpen;
+            this.$nextTick(() => (this.settingsOpen ? this.$refs.settingsCollapse : this.$refs.settingsExpand).focus({ preventScroll: true }));
+        },
         show() {
             this.$refs.dialog.showModal();
             this.frameUrl = this.previewUrl + '#zoom=page-width';

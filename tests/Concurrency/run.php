@@ -2,8 +2,8 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse};
-use App\Services\{InventoryService, MasterDataEditor, ShipmentService};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse, WarehouseLocation};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentService, WarehouseCapacity};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
@@ -58,6 +58,7 @@ if (($argv[1] ?? '') === '--worker') {
             'quality' => $service->processReturnQuality(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'user_delete' => User::findOrFail($job['id'])->delete(),
             'start' => $service->startTransfer($job['data'], $job['requestKey'] ?? null),
+            'place' => app(WarehouseCapacity::class)->place(WarehouseLocation::findOrFail($job['id']), $job['data']),
             'complete' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), true),
             'cancel' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), false),
             'shipment_start' => app(ShipmentService::class)->start(Shipment::findOrFail($job['id']), $job['actor'], 1),
@@ -152,7 +153,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items'];
+    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -758,7 +759,39 @@ try {
         && $tasks['transfers'] === InventoryTransfer::where('status', 'pending')->get()->count(), 'Topbar tasks differ from current business state.');
     check(hash_equals($searchBefore, $queueSnapshot()), 'Global search or task counts changed business records.');
     echo 'PASS: global search MySQL accents/literals and topbar task counts'.PHP_EOL;
-    echo "62 MySQL concurrency checks passed.\n";
+    foreach (['weight', 'slots'] as $limit) {
+        $destination = Warehouse::create(['warehouse_name' => 'Capacity destination '.$limit]);
+        $location = $destination->storageLocations()->create(['code' => 'R-1', 'name' => 'Raklaphely', 'kind' => 'pallet',
+            'max_weight_grams' => $limit === 'weight' ? 100000 : 200000, 'max_pallet_slots' => $limit === 'slots' ? 1 : 2]);
+        $jobs = [];
+        $balances = [];
+        for ($i = 0; $i < 2; $i++) {
+            $source = Warehouse::create(['warehouse_name' => "Capacity source $limit $i"]);
+            $product = Product::create(['category_id' => $category->category_id, 'product_name' => "Capacity $limit $i", 'sku' => "CAP-$limit-$i", 'price' => 1]);
+            $balances[] = Stock::create(['warehouse_id' => $source->warehouse_id, 'product_id' => $product->product_id, 'quantity' => 10]);
+            $jobs[] = ['action' => 'start', 'outerSnapshot' => true, 'requestKey' => (string) Str::uuid(),
+                'data' => ['from_warehouse_id' => $source->warehouse_id, 'to_warehouse_id' => $destination->warehouse_id,
+                    'product_id' => $product->product_id, 'quantity' => 5, 'user_id' => $user->id,
+                    'to_location_id' => $location->id, 'cargo_weight_kg' => 60, 'pallet_slots' => 1]];
+        }
+        check(race($database, [], $jobs, recordBarrier: $destination) === ['OK', 'REJECTED'], 'Concurrent products exceeded shared '.$limit.' capacity.');
+        $usage = WarehouseLocation::withCapacityUsage()->findOrFail($location->id);
+        check((int) $usage->reserved_weight === 60000 && (int) $usage->reserved_slots === 1, 'Capacity reservation was lost or duplicated.');
+        check(array_sum(array_map(fn ($stock) => $stock->fresh()->quantity, $balances)) === 15, 'Rejected reservation changed source stock.');
+        echo 'PASS: shared warehouse '.$limit.' capacity across different products and outer snapshots'.PHP_EOL;
+    }
+    $placeWarehouse = Warehouse::create(['warehouse_name' => 'Repeated placement']);
+    $placeLocation = $placeWarehouse->storageLocations()->create(['code' => 'P-1', 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
+    $placeProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Repeated placement', 'sku' => 'CAP-PLACE', 'price' => 1]);
+    Stock::create(['warehouse_id' => $placeWarehouse->warehouse_id, 'product_id' => $placeProduct->product_id, 'quantity' => 10]);
+    $placement = ['action' => 'place', 'outerSnapshot' => true, 'id' => $placeLocation->id, 'data' => [
+        'request_key' => (string) Str::uuid(), 'product_id' => $placeProduct->product_id, 'user_id' => $user->id,
+        'quantity' => 4, 'cargo_weight_kg' => 25,
+    ]];
+    check(race($database, $placeProduct->product_id, [$placement, $placement]) === ['OK', 'OK'], 'Concurrent placement replay failed.');
+    check($placeLocation->placements()->count() === 1 && $placeLocation->placements()->sole()->quantity === 4, 'Concurrent placement replay assigned stock twice.');
+    echo "PASS: identical placement with overlapping requests and outer snapshots\n";
+    echo "65 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

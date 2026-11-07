@@ -16,7 +16,7 @@ class AppNavigation
         ]]];
         if ($work) {
             $groups[] = ['label' => 'Készletkezelés', 'items' => [
-                ['route' => 'stock.index', 'label' => 'Készlet', 'icon' => 'layers', 'patterns' => ['stock.*']],
+                ['route' => 'stock.index', 'label' => 'Készlet', 'icon' => 'layers', 'patterns' => $manage ? ['stock.*'] : ['stock.*', 'warehouses.locations.*']],
                 ['route' => 'movements.index', 'label' => 'Készletmozgások', 'icon' => 'activity', 'patterns' => ['movements.*', 'quality-returns.*']],
                 ['route' => 'transfers.index', 'label' => 'Átmozgatások', 'icon' => 'truck', 'patterns' => ['transfers.*', 'shipments.*']],
             ]];
@@ -53,6 +53,7 @@ class AppNavigation
         };
         $detail = match (true) {
             $request->routeIs('dashboard.customize', 'dashboard.layout.update') => 'Testreszabás',
+            $request->routeIs('warehouses.statistics') => 'Statisztika',
             $request->routeIs('movements.return.*') => 'Visszáru rögzítése',
             $request->routeIs('*.create') => $create,
             $request->routeIs('*.edit') && $section !== 'profile' => 'Szerkesztés',

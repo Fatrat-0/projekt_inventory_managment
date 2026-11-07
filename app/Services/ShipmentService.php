@@ -9,6 +9,10 @@ use Illuminate\Validation\ValidationException;
 /** Shipment lock precedes sorted product locks; every state transition is atomic. */
 class ShipmentService
 {
+    public function __construct(private InventoryService $inventory, private WarehouseCapacity $capacity)
+    {
+    }
+
     public function save(array $data, int $actor, ?Shipment $shipment = null): Shipment
     {
         return DB::transaction(function () use ($data, $actor, $shipment) {
@@ -26,7 +30,9 @@ class ShipmentService
             $shipment->save();
             foreach (array_values($data['stops']) as $index => $stopData) {
                 $stop = $shipment->stops()->create(['warehouse_id' => $stopData['warehouse_id'], 'position' => $index + 1]);
-                foreach ($stopData['items'] as $item) $stop->items()->create(collect($item)->only(['product_id', 'quantity'])->all());
+                foreach ($stopData['items'] as $item) {
+                    $stop->items()->create(collect($item)->only(['product_id', 'quantity'])->all() + WarehouseCapacity::cargo($item));
+                }
             }
             return $shipment;
         }, 3);
@@ -42,12 +48,12 @@ class ShipmentService
             $items = $locked->stops->flatMap->items;
             if ($items->isEmpty()) $this->fail('Üres szállítmány nem indítható.');
             $this->lockProducts($items);
-            $inventory = app(InventoryService::class);
+            $this->capacity->lockWarehouses([$locked->origin_warehouse_id, ...$locked->stops->pluck('warehouse_id')->all()]);
             foreach ($locked->stops as $stop) {
                 foreach ($stop->items as $item) {
-                    $transfer = $inventory->startTransfer(['product_id' => $item->product_id,
+                    $transfer = $this->inventory->startTransfer(['product_id' => $item->product_id,
                         'from_warehouse_id' => $locked->origin_warehouse_id, 'to_warehouse_id' => $stop->warehouse_id,
-                        'quantity' => $item->quantity, 'user_id' => $actor]);
+                        'quantity' => $item->quantity, 'user_id' => $actor] + WarehouseCapacity::cargo($item->getAttributes()));
                     $item->update(['transfer_id' => $transfer->id]);
                 }
             }
@@ -66,7 +72,8 @@ class ShipmentService
             if ($next->id !== $stop->id) $this->fail('Előbb az útvonal korábbi megállóját kell átvenni.');
             $stop->load('items.transfer');
             $this->lockProducts($stop->items);
-            foreach ($stop->items as $item) app(InventoryService::class)->finalizeTransfer($item->transfer, true, true);
+            $this->capacity->lockWarehouses([$locked->origin_warehouse_id, $stop->warehouse_id]);
+            foreach ($stop->items as $item) $this->inventory->finalizeTransfer($item->transfer, true, true);
             $stop->update(['received_at' => now(), 'received_by' => $actor]);
             if (!$locked->stops()->whereNull('received_at')->exists()) $locked->update(['status' => 'completed', 'finished_at' => now()]);
         }, 3);
@@ -80,9 +87,11 @@ class ShipmentService
             if ($locked->status === 'completed') $this->fail('Teljesített szállítmány nem vonható vissza.');
             if ($locked->status === 'in_transit') {
                 $locked->load('stops.items.transfer');
-                $items = $locked->stops->whereNull('received_at')->flatMap->items;
+                $pendingStops = $locked->stops->whereNull('received_at');
+                $items = $pendingStops->flatMap->items;
                 $this->lockProducts($items);
-                foreach ($items as $item) app(InventoryService::class)->finalizeTransfer($item->transfer, false, true);
+                $this->capacity->lockWarehouses([$locked->origin_warehouse_id, ...$pendingStops->pluck('warehouse_id')->all()]);
+                foreach ($items as $item) $this->inventory->finalizeTransfer($item->transfer, false, true);
             }
             $locked->update(['status' => 'cancelled', 'finished_at' => now()]);
         }, 3);

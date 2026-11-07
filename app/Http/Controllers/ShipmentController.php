@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ShipmentRequest;
-use App\Models\{Product, Shipment, ShipmentStop, Warehouse};
+use App\Models\{Product, Shipment, ShipmentStop, Warehouse, WarehouseLocation};
 use App\Services\ShipmentService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -30,9 +30,13 @@ class ShipmentController extends Controller
     {
         $shipment?->load('stops.items');
         $defaults = $shipment?->stops->map(fn($stop) => ['warehouse_id' => $stop->warehouse_id,
-            'items' => $stop->items->map(fn($item) => ['product_id' => $item->product_id, 'quantity' => $item->quantity])->all()])->all()
+            'items' => $stop->items->map(fn($item) => [
+                'product_id' => $item->product_id, 'quantity' => $item->quantity, 'to_location_id' => $item->to_location_id,
+                'cargo_weight_kg' => $item->cargo_weight_grams === null ? '' : $item->cargo_weight_grams / 1000,
+                'pallet_slots' => $item->pallet_slots ?: '',
+            ])->all()])->all()
             ?? [['warehouse_id' => '', 'items' => [['product_id' => '', 'quantity' => 1]]]];
-        $stops = old('stops', $defaults);
+        $stops = ShipmentRequest::decodeStops(old('stops_json')) ?? old('stops', $defaults);
         $stops = is_array($stops) ? array_slice(array_values($stops), 0, 20) : $defaults;
         $scalar = fn($value) => is_scalar($value) ? (string)$value : '';
         $stops = array_map(function ($stop) use ($scalar) {
@@ -41,6 +45,9 @@ class ShipmentController extends Controller
             return ['warehouse_id' => $scalar($stop['warehouse_id'] ?? ''), 'items' => array_map(fn($item) => [
                 'product_id' => $scalar(is_array($item) ? ($item['product_id'] ?? '') : ''),
                 'quantity' => $scalar(is_array($item) ? ($item['quantity'] ?? 1) : 1),
+                'to_location_id' => $scalar(is_array($item) ? ($item['to_location_id'] ?? '') : ''),
+                'cargo_weight_kg' => $scalar(is_array($item) ? ($item['cargo_weight_kg'] ?? '') : ''),
+                'pallet_slots' => $scalar(is_array($item) ? ($item['pallet_slots'] ?? '') : ''),
             ], $items) ?: [['product_id' => '', 'quantity' => 1]]];
         }, $stops) ?: $defaults;
         $values = [];
@@ -48,7 +55,7 @@ class ShipmentController extends Controller
         $context = ShipmentListContext::token(old('context', $request->query('context', '')));
         $returnUrl = $shipment ? route('shipments.show', ['shipment' => $shipment] + ($context !== '' ? ['context' => $context] : [])) : ShipmentListContext::url($context);
         return view('shipments.form', ['shipment' => $shipment, 'values' => $values, 'stops' => $stops,
-            'context' => $context, 'returnUrl' => $returnUrl,
+            'context' => $context, 'returnUrl' => $returnUrl, 'storageLocations' => WarehouseLocation::pickerOptions(),
             'products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get()]);
     }
     public function store(ShipmentRequest $request, ShipmentService $service)
@@ -63,7 +70,7 @@ class ShipmentController extends Controller
     }
     public function show(Request $request, Shipment $shipment)
     {
-        $shipment->load(['origin', 'user', 'stops.warehouse', 'stops.receiver', 'stops.items.product']);
+        $shipment->load(['origin', 'user', 'stops.warehouse', 'stops.receiver', 'stops.items.product', 'stops.items.destinationLocation']);
         $context = ShipmentListContext::token($request->query('context', ''));
         $returnUrl = ShipmentListContext::url($context);
         return view('shipments.show', compact('shipment', 'context', 'returnUrl'));

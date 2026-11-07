@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\{Category, Product, Stock, User, Warehouse};
 use App\Support\WarehouseInventoryPdfOptions;
+use App\Support\WarehouseStockContext;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -171,15 +172,27 @@ class WarehouseInventoryPdfTest extends TestCase
 
     public function test_permissions_match_warehouse_details(): void
     {
+        $preview = route('warehouses.inventory-preview', $this->warehouse);
         foreach (['worker', 'invalid'] as $role) {
             $user = User::factory()->create(['role' => 'worker']);
             $user->role = $role;
             $this->actingAs($user);
             $this->get($this->url())->assertForbidden();
+            $this->get($preview)->assertForbidden();
         }
         $this->actingAs(User::factory()->create(['role' => 'manager']));
         $this->get($this->url())->assertOk();
+        $this->get($preview)->assertOk();
         auth()->forgetGuards();
         $this->get($this->url())->assertRedirect(route('login'));
+        $this->get($preview)->assertRedirect(route('login'));
+    }
+
+    public function test_preview_recovers_when_the_saved_exact_product_is_no_longer_local(): void
+    {
+        $params = ['warehouse' => $this->warehouse];
+        $token = WarehouseStockContext::encode(['product_id' => $this->foreign->product_id]);
+        $this->get(route('warehouses.inventory-preview', $params + ['detail_context' => $token]))
+            ->assertRedirect(route('warehouses.inventory-preview', $params))->assertSessionHasErrors('filters');
     }
 }

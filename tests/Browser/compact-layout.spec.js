@@ -14,7 +14,8 @@ test('global search sits on the right and each list has a single page heading in
         await page.goto('/'+path);
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page.locator('main h1')).toBeVisible();
         const topbar = page.locator('[data-app-topbar]');
-        await expect(topbar.getByRole('heading')).toHaveCount(0); await expect(topbar.getByRole('navigation')).toHaveCount(0);
+        await expect(topbar.getByRole('heading')).toHaveCount(0);
+        await expect(topbar.getByRole('navigation')).toHaveCount(path === 'warehouses' ? 1 : 0);
         await expect(search(page)).toBeVisible();
         const bar = await topbar.boundingBox(); const field = await search(page).boundingBox();
         expect(field.x, path).toBeGreaterThan(bar.x + bar.width / 2); expect(bar.height, path).toBeLessThanOrEqual(60);

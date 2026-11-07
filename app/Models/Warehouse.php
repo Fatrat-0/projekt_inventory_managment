@@ -19,6 +19,7 @@ class Warehouse extends Model
         'incomingTransfers' => 'has_incoming_transfers',
         'shipments' => 'has_shipments',
         'shipmentStops' => 'has_shipment_stops',
+        'storageLocations' => 'has_storage_locations',
     ];
 
     public function movements() { return $this->hasMany(InventoryMovement::class, 'warehouse_id', 'warehouse_id'); }
@@ -26,6 +27,7 @@ class Warehouse extends Model
     public function incomingTransfers() { return $this->hasMany(InventoryTransfer::class, 'to_warehouse_id', 'warehouse_id'); }
     public function shipments() { return $this->hasMany(Shipment::class, 'origin_warehouse_id', 'warehouse_id'); }
     public function shipmentStops() { return $this->hasMany(ShipmentStop::class, 'warehouse_id', 'warehouse_id'); }
+    public function storageLocations() { return $this->hasMany(WarehouseLocation::class, 'warehouse_id', 'warehouse_id'); }
 
     public function scopeWithUsage($query)
     {

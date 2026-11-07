@@ -1,6 +1,6 @@
 <x-app-layout>
     @php($canManage = in_array(auth()->user()->role, ['admin', 'manager'], true))
-    <div class="app-page space-y-4 py-4" x-data="stockListing" :data-stock-view="viewMode" data-listing-page="stock" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()">
+    <div class="app-page space-y-4 py-4" x-data="stockListing" :data-stock-view="viewMode" data-listing-page="stock" :data-listing-view="viewMode" @resize.window="closeMenus()">
         <x-page-toolbar title="Készlet" description="Termékek raktárankénti készlete és helyi minimuma." :count="$stocks->total()" unit="készletsor">
             <a href="{{ route('movements.create') }}" class="inline-flex min-h-11 items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Új készletmozgás</a>
             <x-listing-view-toggle label="Készlet megjelenítése" />

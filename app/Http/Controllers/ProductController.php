@@ -67,7 +67,8 @@ class ProductController extends Controller
      */
     public function show(string $id)
     {
-        //
+        $product = Product::with('category')->withSum('stocks', 'quantity')->withSum('stocks', 'quarantined_quantity')->withCount('stocks')->findOrFail($id);
+        return response()->view('products.show', compact('product'))->header('Cache-Control', 'no-store, private');
     }
 
     /**

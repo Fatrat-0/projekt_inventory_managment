@@ -747,6 +747,17 @@ try {
     check($listing->query()->pluck('stocks.id')->all() === [$literalStock->id], 'Stock listing MySQL literal/category search is incorrect.');
     check(hash_equals($beforeStockReads, $queueSnapshot()), 'Stock listing changed inventory or history.');
     echo 'PASS: stock listing MySQL statuses, summaries, numeric sorting and literal/category search'.PHP_EOL;
+    $accentProduct = Product::create(['product_name' => 'ÉKEZETES ŐRLŐ MySQL', 'sku' => 'ACCENT-MYSQL', 'price' => 1, 'category_id' => $dashboardCategory->category_id]);
+    $searchBefore = $queueSnapshot();
+    $search = \App\Support\AppSearch::results($layoutUser, 'ekezetes orlo');
+    check(array_column($search['results'], 'url') === [route('products.show', $accentProduct)], 'Global search MySQL accent normalization differs.');
+    $search = \App\Support\AppSearch::results($layoutUser, 'stock-%_!');
+    check(array_column($search['results'], 'url') === [route('products.show', $literalProduct)], 'Global search MySQL literal matching differs.');
+    $tasks = \App\Support\AppTasks::summary($layoutUser);
+    check($tasks['returns'] === $summaryExpected['open_count'] && $tasks['returnQuantity'] === $summaryExpected['pending_quantity']
+        && $tasks['transfers'] === InventoryTransfer::where('status', 'pending')->get()->count(), 'Topbar tasks differ from current business state.');
+    check(hash_equals($searchBefore, $queueSnapshot()), 'Global search or task counts changed business records.');
+    echo 'PASS: global search MySQL accents/literals and topbar task counts'.PHP_EOL;
     echo "62 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);

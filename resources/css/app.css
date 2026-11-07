@@ -4,7 +4,43 @@
 
 [x-cloak] { display: none !important; }
 .app-skip-link:focus { position: fixed; }
-.app-content :target { scroll-margin-top: 5rem; }
+.app-content :target { scroll-margin-top: calc(var(--app-topbar-height, 4rem) + 1rem); }
+.app-page { width: 100%; min-width: 0; padding-left: 1rem; padding-right: 1rem; }
+@media (min-width: 640px) { .app-page { padding-left: 1.5rem; padding-right: 1.5rem; } }
+.app-search-dialog { width: calc(100% - 2rem); max-width: 42rem; max-height: 85vh; max-height: 85dvh; padding: 0; border: 0; border-radius: .75rem; }
+.app-search-dialog::backdrop { background: rgb(17 24 39 / 45%); }
+.app-tasks-menu[style], .app-action-menu[style] { right: auto; bottom: auto; margin: 0; }
+[data-listing-table] { display: none; }
+[data-listing-columns-control] { display: none; }
+[data-listing-cards] {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+    align-items: start;
+    gap: 1rem;
+}
+[data-listing-cards] > * { min-width: 0; overflow-wrap: anywhere; }
+[data-listing-cards] > [role="status"] { grid-column: 1 / -1; }
+@media (min-width: 768px) {
+    [data-listing-columns-control] { display: block; }
+    [data-listing-default="cards"] [data-listing-columns-control],
+    [data-listing-view="cards"] [data-listing-columns-control] { display: none; }
+    [data-listing-view="table"] [data-listing-columns-control] { display: block; }
+    [data-listing-table] { display: block; }
+    [data-listing-cards], [data-listing-card-sort] { display: none; }
+    [data-listing-default="cards"] [data-listing-table],
+    [data-listing-view="cards"] [data-listing-table] { display: none; }
+    [data-listing-default="cards"] [data-listing-cards],
+    [data-listing-view="cards"] [data-listing-cards] { display: grid; }
+    [data-listing-default="cards"] [data-listing-card-sort],
+    [data-listing-view="cards"] [data-listing-card-sort] { display: flex; }
+    [data-listing-view="table"] [data-listing-table] { display: block; }
+    [data-listing-view="table"] [data-listing-cards],
+    [data-listing-view="table"] [data-listing-card-sort] { display: none; }
+    [data-listing-view="cards"] [data-listing-card-sort="grid"],
+    [data-listing-default="cards"]:not([data-listing-view="table"]) [data-listing-card-sort="grid"] { display: grid; }
+    [data-listing-view="cards"] [data-listing-card-sort="block"],
+    [data-listing-default="cards"]:not([data-listing-view="table"]) [data-listing-card-sort="block"] { display: block; }
+}
 
 .app-sidebar { display: none; }
 @media (min-width: 1280px) {

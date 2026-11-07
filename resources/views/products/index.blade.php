@@ -1,10 +1,10 @@
 <x-app-layout>
     <!-- Közös Alpine.js állapot a Nézetváltónak (Lista/Kanban) és az Oszlopválasztónak -->
-    <div x-data="productListing" @keydown.escape.window="filtersOpen = false; colMenuOpen = false">
+    <div data-listing-page="products" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="productListing" @keydown.escape.window="filtersOpen = false">
 
         <!-- FEJLÉC SÁV (Odoo Control Panel) -->
         <div class="bg-white border-b border-gray-200 shadow-sm">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 space-y-3">
+            <div data-page-toolbar class="app-page py-3 space-y-3">
                 @php
                     $activeFilterCount = collect([$categoryId, $warehouseId, $stockStatus])->filter()->count();
                     $selectedWarehouseObj = $warehouseId ? $warehouses->firstWhere('warehouse_id', $warehouseId) : null;
@@ -15,9 +15,9 @@
 
                     <!-- Bal oldal: Oldalcím és találatszám -->
                     <div class="flex items-center gap-3">
-                        <h2 class="font-bold text-xl text-gray-800 leading-tight">
+                        <h1 class="font-bold text-xl text-gray-900 leading-tight">
                             <span class="inline-flex items-center gap-2"><x-icon name="box" class="w-5 h-5 text-indigo-600" /> Termékek</span>
-                        </h2>
+                        </h1>
                         <span class="bg-gray-100 text-gray-700 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-300">
                             {{ $products->total() }} tétel
                         </span>
@@ -100,7 +100,7 @@
                     </div>
 
                     <!-- Jobb oldal: Új termék + PDF Leltárív + Odoo Nézetváltó (Lista / Kanban) -->
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
                         <a href="{{ route('products.create') }}" class="bg-indigo-600 text-white font-semibold text-sm px-4 py-2 rounded-md hover:bg-indigo-700 shadow-sm transition whitespace-nowrap">
                             + Új termék
                         </a>
@@ -198,23 +198,11 @@
                             </div>
                         </div>
 
-                        <!-- ODOO NÉZETVÁLTÓ GOMBOK (Lista vs. Kanban) -->
-                        <div class="inline-flex rounded-md shadow-sm border border-gray-300 bg-white overflow-hidden">
-                            <button type="button" @click="setView('list')"
-                                :class="viewMode === 'list' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'"
-                                class="px-3 py-2 text-sm font-bold transition" title="Táblázatos nézet" aria-label="Táblázatos nézet" :aria-pressed="viewMode === 'list'">
-                                <x-icon name="list" />
-                            </button>
-                            <button type="button" @click="setView('kanban')"
-                                :class="viewMode === 'kanban' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'"
-                                class="px-3 py-2 text-sm font-bold border-l border-gray-300 transition" title="Kártyás nézet" aria-label="Kártyás nézet" :aria-pressed="viewMode === 'kanban'">
-                                <x-icon name="grid" />
-                            </button>
-                        </div>
+                        <x-listing-view-toggle />
                     </div>
                 </div>
 
-                <div x-show="viewMode === 'kanban'" style="display: none;" class="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 border-t border-gray-100 pt-3 text-sm">
+                <div data-listing-card-sort class="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3 text-sm">
                     <label for="product-sort" class="col-span-2 sm:col-span-1 text-gray-500">Rendezés</label>
                     <select id="product-sort" name="sort_by" form="product-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">
                         @foreach($sortOptions as $key => $label)
@@ -277,8 +265,8 @@
         </div>
 
         <!-- TARTALMI RÉSZ -->
-        <div class="py-6">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="py-4">
+            <div class="app-page ">
 
                 @php
                     $pageTotalQty = 0;
@@ -288,33 +276,33 @@
                 @endphp
 
                 <!-- A) TÁBLÁZATOS (LISTA) NÉZET -->
-                <div x-show="viewMode === 'list'" class="bg-white shadow-sm sm:rounded-lg border border-gray-200">
-                    <div class="relative overflow-x-auto sm:rounded-lg">
+                <div data-listing-table class="bg-white shadow-sm sm:rounded-lg border border-gray-200">
+                    <div data-listing-scroll class="relative overflow-x-auto sm:rounded-lg">
                         <table class="w-full text-sm text-left text-gray-600">
                             <thead class="text-xs text-gray-700 uppercase bg-gray-100 border-b border-gray-200">
                                 <tr>
-                                    <th x-show="cols.sku" scope="col" class="px-5 py-3.5">
+                                    <th data-listing-column="sku" x-show="columnVisible('sku')" scope="col" class="px-5 py-3.5">
                                         <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'sku', 'sort_dir' => ($sortBy == 'sku' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900">
                                             Cikkszám
                                             <span class="{{ $sortBy == 'sku' ? 'text-blue-600 font-bold' : 'text-gray-400' }}">{{ $sortBy == 'sku' ? ($sortDir == 'asc' ? '↑' : '↓') : '↕' }}</span>
                                         </a>
                                     </th>
 
-                                    <th scope="col" class="px-5 py-3.5">
+                                    <th data-listing-column="product_name" x-show="columnVisible('product_name')" scope="col" class="px-5 py-3.5">
                                         <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'product_name', 'sort_dir' => ($sortBy == 'product_name' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900">
                                             Terméknév
                                             <span class="{{ $sortBy == 'product_name' ? 'text-blue-600 font-bold' : 'text-gray-400' }}">{{ $sortBy == 'product_name' ? ($sortDir == 'asc' ? '↑' : '↓') : '↕' }}</span>
                                         </a>
                                     </th>
 
-                                    <th x-show="cols.category" scope="col" class="px-5 py-3.5">
+                                    <th data-listing-column="category" x-show="columnVisible('category')" scope="col" class="px-5 py-3.5">
                                         <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'category_name', 'sort_dir' => ($sortBy == 'category_name' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center gap-1 hover:text-gray-900">
                                             Kategória
                                             <span class="{{ $sortBy == 'category_name' ? 'text-blue-600 font-bold' : 'text-gray-400' }}">{{ $sortBy == 'category_name' ? ($sortDir == 'asc' ? '↑' : '↓') : '↕' }}</span>
                                         </a>
                                     </th>
 
-                                    <th x-show="cols.stock" scope="col" class="px-5 py-3.5 relative"
+                                    <th data-listing-column="stock" x-show="columnVisible('stock')" scope="col" class="px-5 py-3.5 relative"
                                         x-data="{ helpOpen: false, helpPinned: false }"
                                         @mouseenter="helpOpen = true" @mouseleave="if (!helpPinned) helpOpen = false"
                                         @focusin="if ($event.target.matches(':focus-visible')) helpOpen = true"
@@ -337,49 +325,20 @@
                                         </div>
                                     </th>
 
-                                    <th x-show="cols.price" scope="col" class="px-5 py-3.5 text-right">
+                                    <th data-listing-column="price" x-show="columnVisible('price')" scope="col" class="px-5 py-3.5 text-right">
                                         <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'price', 'sort_dir' => ($sortBy == 'price' && $sortDir == 'asc') ? 'desc' : 'asc']) }}" class="flex items-center justify-end gap-1 hover:text-gray-900">
                                             Egységár
                                             <span class="{{ $sortBy == 'price' ? 'text-blue-600 font-bold' : 'text-gray-400' }}">{{ $sortBy == 'price' ? ($sortDir == 'asc' ? '↑' : '↓') : '↕' }}</span>
                                         </a>
                                     </th>
 
-                                    <th x-show="cols.value" scope="col" class="px-5 py-3.5 text-right">
+                                    <th data-listing-column="value" x-show="columnVisible('value')" scope="col" class="px-5 py-3.5 text-right">
                                         <a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => 'stock_value', 'sort_dir' => ($sortBy === 'stock_value' && $sortDir === 'asc') ? 'desc' : 'asc']) }}" class="inline-flex items-center gap-1 hover:text-gray-900">
                                             Készletérték <span class="{{ $sortBy === 'stock_value' ? 'text-indigo-600' : 'text-gray-400' }}">{{ $sortBy === 'stock_value' ? ($sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
                                         </a>
                                     </th>
 
-                                    <!-- Műveletek + Odoo Oszlopválasztó Gomb (⚙️) -->
-                                    <th scope="col" class="px-5 py-3.5 text-right relative">
-                                        <div class="inline-flex items-center justify-end gap-2">
-                                            <span>Műveletek</span>
-                                            <button type="button" @click="colMenuOpen = !colMenuOpen" class="p-1 rounded hover:bg-gray-200 text-gray-600 transition" title="Oszlopok testreszabása" aria-label="Látható oszlopok" :aria-expanded="colMenuOpen">
-                                                <x-icon name="columns" />
-                                            </button>
-                                        </div>
-
-                                        <!-- Lenyíló Oszlopválasztó Menü -->
-                                        <div x-show="colMenuOpen" @click.away="colMenuOpen = false" style="display: none;"
-                                            class="absolute right-4 top-11 z-30 w-52 bg-white rounded-md shadow-lg border border-gray-200 p-3 text-left normal-case font-normal space-y-2">
-                                            <div class="text-xs font-bold text-gray-400 uppercase border-b pb-1">Látható oszlopok</div>
-                                            <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                                <input type="checkbox" x-model="cols.sku" class="rounded border-gray-300 text-indigo-600"> Cikkszám (SKU)
-                                            </label>
-                                            <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                                <input type="checkbox" x-model="cols.category" class="rounded border-gray-300 text-indigo-600"> Kategória
-                                            </label>
-                                            <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                                <input type="checkbox" x-model="cols.stock" class="rounded border-gray-300 text-indigo-600"> Készlet és Minimum
-                                            </label>
-                                            <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                                <input type="checkbox" x-model="cols.price" class="rounded border-gray-300 text-indigo-600"> Egységár
-                                            </label>
-                                            <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                                <input type="checkbox" x-model="cols.value" class="rounded border-gray-300 text-indigo-600"> Készletérték (Összesen)
-                                            </label>
-                                        </div>
-                                    </th>
+                                    <th data-listing-column="actions" x-show="columnVisible('actions')" scope="col" class="px-5 py-3.5 text-right"><span class="sr-only">Műveletek</span><x-listing-columns /></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -398,14 +357,14 @@
                                         $pageTotalQuarantined += $totalQuarantined;
                                         $pageTotalValue += $stockValue;
                                     @endphp
-                                    <tr class="bg-white border-b hover:bg-indigo-50/40 transition">
-                                        <td x-show="cols.sku" class="px-5 py-3.5 font-mono font-normal text-gray-600 whitespace-nowrap">
+                                    <tr data-product-id="{{ $product->product_id }}" class="bg-white border-b hover:bg-indigo-50/40 transition">
+                                        <td data-listing-column="sku" x-show="columnVisible('sku')" class="px-5 py-3.5 font-mono font-normal text-gray-600 whitespace-nowrap">
                                             {{ $product->sku }}
                                         </td>
-                                        <td class="px-5 py-3.5 font-semibold text-gray-900">
+                                        <td data-listing-column="product_name" x-show="columnVisible('product_name')" class="px-5 py-3.5 font-semibold text-gray-900">
                                             {{ $product->product_name }}
                                         </td>
-                                        <td x-show="cols.category" class="px-5 py-3.5">
+                                        <td data-listing-column="category" x-show="columnVisible('category')" class="px-5 py-3.5">
                                             @if($product->category && $product->category->parent)
                                                 <span class="text-xs text-gray-400 block">{{ $product->category->parent->category_name }} ➔</span>
                                             @endif
@@ -413,7 +372,7 @@
                                         </td>
 
                                         <!-- KATTINTHATÓ RAKTÁRI KÉSZLETBONTÁS (Odoo Popover) -->
-                                        <td x-show="cols.stock" class="px-5 py-3.5 whitespace-nowrap relative" x-data="{ stockOpen: false }">
+                                        <td data-listing-column="stock" x-show="columnVisible('stock')" class="px-5 py-3.5 whitespace-nowrap relative" x-data="{ stockOpen: false }">
                                             <button type="button" @click="stockOpen = !stockOpen"
                                                 class="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded border transition shadow-sm {{ $stockWarning ? 'bg-red-100 text-red-800 border-red-300 hover:bg-red-200' : 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100' }}"
                                                 title="Kattints a raktárankénti eloszlás megtekintéséhez!">
@@ -451,15 +410,15 @@
                                             </div>
                                         </td>
 
-                                        <td x-show="cols.price" class="px-5 py-3.5 whitespace-nowrap text-right font-medium text-gray-700">
+                                        <td data-listing-column="price" x-show="columnVisible('price')" class="px-5 py-3.5 whitespace-nowrap text-right font-medium text-gray-700">
                                             {{ number_format($product->price, 0, ',', ' ') }} Ft
                                         </td>
 
-                                        <td x-show="cols.value" class="px-5 py-3.5 whitespace-nowrap text-right font-semibold text-gray-900">
+                                        <td data-listing-column="value" x-show="columnVisible('value')" class="px-5 py-3.5 whitespace-nowrap text-right font-semibold text-gray-900">
                                             {{ number_format($stockValue, 0, ',', ' ') }} Ft
                                         </td>
 
-                                        <td class="px-5 py-3.5 text-right whitespace-nowrap">
+                                        <td data-listing-column="actions" x-show="columnVisible('actions')" class="px-5 py-3.5 text-right whitespace-nowrap">
                                             <div class="inline-flex items-center gap-3">
                                                 <a href="{{ route('products.edit', $product) }}" class="font-semibold text-blue-600 hover:underline">Szerkesztés</a>
                                                 <form action="{{ route('products.destroy', $product) }}" method="POST" class="inline" onsubmit="return confirm('Biztosan törölni szeretnéd ezt a terméket?');">
@@ -472,7 +431,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="7" class="px-6 py-10 text-center text-gray-500">
+                                        <td colspan="7" :colspan="visibleColumnCount()" role="status" class="px-6 py-10 text-center text-gray-500">
                                             Nincs a szűrési feltételeknek megfelelő termék.
                                             <a href="{{ route('products.index') }}" class="block mt-2 text-indigo-600 font-semibold hover:underline">Összes termék megjelenítése</a>
                                         </td>
@@ -484,13 +443,13 @@
                             @if($products->isNotEmpty())
                                 <tfoot class="bg-gray-50 border-t-2 border-gray-200 text-xs font-bold text-gray-800">
                                     <tr>
-                                        <td x-show="cols.sku" class="px-5 py-3">ÖSSZESEN (Oldalon):</td>
-                                        <td class="px-5 py-3">{{ $products->count() }} tétel</td>
-                                        <td x-show="cols.category" class="px-5 py-3"></td>
-                                        <td x-show="cols.stock" class="px-5 py-3 text-indigo-700">{{ number_format($pageTotalQty, 0, ',', ' ') }} db @if($pageTotalQuarantined > 0)<p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($pageTotalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($pageTotalQuarantined, 0, ',', ' ') }} db</p>@endif</td>
-                                        <td x-show="cols.price" class="px-5 py-3"></td>
-                                        <td x-show="cols.value" class="px-5 py-3 text-right text-indigo-700">{{ number_format($pageTotalValue, 0, ',', ' ') }} Ft</td>
-                                        <td class="px-5 py-3"></td>
+                                        <td data-listing-column="sku" x-show="columnVisible('sku')" class="px-5 py-3"></td>
+                                        <td data-listing-column="product_name" x-show="columnVisible('product_name')" class="px-5 py-3"><span class="block">Oldalösszesítő</span>{{ $products->count() }} tétel</td>
+                                        <td data-listing-column="category" x-show="columnVisible('category')" class="px-5 py-3"></td>
+                                        <td data-listing-column="stock" x-show="columnVisible('stock')" class="px-5 py-3 text-indigo-700">{{ number_format($pageTotalQty, 0, ',', ' ') }} db @if($pageTotalQuarantined > 0)<p class="mt-1 max-w-xs whitespace-normal text-[11px] font-normal text-gray-500">Kiadható: {{ number_format($pageTotalAvailable, 0, ',', ' ') }} db · Elkülönítve: {{ number_format($pageTotalQuarantined, 0, ',', ' ') }} db</p>@endif</td>
+                                        <td data-listing-column="price" x-show="columnVisible('price')" class="px-5 py-3"></td>
+                                        <td data-listing-column="value" x-show="columnVisible('value')" class="px-5 py-3 text-right text-indigo-700">{{ number_format($pageTotalValue, 0, ',', ' ') }} Ft</td>
+                                        <td data-listing-column="actions" x-show="columnVisible('actions')" class="px-5 py-3"></td>
                                     </tr>
                                 </tfoot>
                             @endif
@@ -499,7 +458,7 @@
                 </div>
 
                 <!-- B) KANBAN (KÁRTYÁS) NÉZET (Odoo Kanban View) -->
-                <div x-show="viewMode === 'kanban'" style="display: none;" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div data-listing-cards>
                     @forelse($products as $product)
                         @php
                             $totalStock = (int) ($product->total_stock ?? 0);
@@ -509,7 +468,7 @@
                             $isLow = $totalAvailable < $effectiveMin;
                             $stockWarning = $isLow || $totalAvailable === 0;
                         @endphp
-                        <div class="bg-white rounded-lg shadow-sm border {{ $stockWarning ? 'border-l-4 border-l-red-500 border-gray-200' : 'border-gray-200' }} p-4 flex flex-col justify-between hover:shadow-md transition">
+                        <div data-product-id="{{ $product->product_id }}" class="bg-white rounded-lg shadow-sm border {{ $stockWarning ? 'border-l-4 border-l-red-500 border-gray-200' : 'border-gray-200' }} p-4 flex flex-col justify-between hover:shadow-md transition">
                             <div>
                                 <div class="flex flex-wrap justify-between items-start gap-2 mb-2">
                                     <span class="font-mono text-xs font-bold bg-gray-100 text-gray-800 px-2 py-0.5 rounded border">
@@ -559,7 +518,7 @@
                             </div>
                         </div>
                     @empty
-                        <div class="col-span-3 bg-white rounded-lg p-8 text-center text-gray-500 border">
+                        <div role="status" class="bg-white rounded-lg p-8 text-center text-gray-500 border">
                             Nincs a szűrési feltételeknek megfelelő termék.
                                             <a href="{{ route('products.index') }}" class="block mt-2 text-indigo-600 font-semibold hover:underline">Összes termék megjelenítése</a>
                         </div>

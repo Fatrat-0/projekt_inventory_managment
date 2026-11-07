@@ -1,0 +1,12 @@
+@php($menuId = 'stock-actions-'.$stock->id.'-'.$variant)
+<div x-data="rowActions" class="flex shrink-0 justify-end" @resize.window="if (open) position()" @scroll.window.capture="if (open) position()">
+    <button type="button" x-ref="trigger" popovertarget="{{ $menuId }}" aria-controls="{{ $menuId }}" aria-haspopup="menu" :aria-expanded="open" aria-label="Műveletek: {{ $stock->product->product_name }} · {{ $stock->warehouse->warehouse_name }}" title="Műveletek" @keydown.arrow-down.prevent="keyboardOpen()" @keydown.arrow-up.prevent="keyboardOpen(true)" class="inline-flex h-11 w-11 items-center justify-center rounded-md text-xl font-semibold text-gray-500 hover:bg-indigo-50 hover:text-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500"><span aria-hidden="true">⋮</span></button>
+    <div id="{{ $menuId }}" x-ref="menu" popover="auto" role="menu" aria-label="Készletsor műveletei" @toggle="changed($event)" @keydown="navigate($event)" @focusout="leave($event)" class="app-action-menu fixed max-h-[calc(100dvh-2rem)] w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 text-left text-sm text-gray-700 shadow-xl">
+        <a role="menuitem" href="{{ route('movements.index', ['product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id]) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Készletmozgások</a>
+        <a role="menuitem" href="{{ route('movements.create', ['product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id]) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Új készletmozgás</a>
+        <a role="menuitem" href="{{ route('products.edit', $stock->product_id) }}" class="block rounded-md px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Termék szerkesztése</a>
+        @if($canManage)
+            <a role="menuitem" href="{{ route('stock.index', $filters + ['page' => $stocks->currentPage(), 'edit_minimum' => $stock->id]) }}#stock-minimum-{{ $stock->id }}-{{ $variant }}" @click.prevent="$refs.menu.hidePopover(); $dispatch('stock-minimum-edit', { id: {{ $stock->id }}, variant: '{{ $variant }}' })" class="block rounded-md border-t border-gray-100 px-3 py-3 hover:bg-indigo-50 focus:bg-indigo-50 focus:outline-none">Helyi minimum módosítása</a>
+        @endif
+    </div>
+</div>

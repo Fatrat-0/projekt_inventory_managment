@@ -32,19 +32,27 @@ Az alapértelmezett oldalméret 25, választható 10, 25, 50 és 100. A lapozó 
 
 ## Minimumszerkesztés és navigáció
 
-Adminisztrátor és manager a sorban lévő Módosítás alatt állíthatja a helyi minimumot; raktáros csak olvassa. Az előző minimumérték és a termékzár továbbra is védi a mentést az egymásra írástól. A mennyiség változatlan marad. Az űrlap kétszeri gyors elküldését a felület is megakadályozza; az elavult mentést a szerver visszautasítja.
+Adminisztrátor és manager a sor végén lévő ⋮ műveletmenü Helyi minimum módosítása pontjával nyitja meg a helyi minimum szerkesztőjét; raktáros csak olvassa. Az előző minimumérték és a termékzár továbbra is védi a mentést az egymásra írástól. A mennyiség változatlan marad. Az űrlap kétszeri gyors elküldését a felület is megakadályozza; az elavult mentést a szerver visszautasítja.
 
 A StockListContext titkosított, korlátozott és újra validált tokenben őrzi meg a keresést, szűrést, rendezést, oldalméretet és lapot. Minimum mentésekor ugyanoda térünk vissza; ha a sor kiesett az utolsó lapról, az oldalszám rendeződik. Hibás token nem hozhat létre külső átirányítást. Régi, token nélküli űrlap esetén a korábbi raktárra szűrt visszatérés működik.
+
+A sor végi jelzés valódi ⋮ műveletmenü, nem közvetlen mozgásnapló-hivatkozás. A menü a Készletmozgások, Új készletmozgás és Termék szerkesztése lehetőségeket, adminisztrátornál és managernél a Helyi minimum módosítása lehetőséget is tartalmazza. Az új mozgás űrlapján a termék és raktár validált GET-paraméterből előre kiválasztott, a korábbi hibás beküldés adatai elsőbbséget élveznek. A megnyitás nem módosít készletet. A minimum szerkesztőjén a Mégse mentés nélkül visszazár; mentés után a korábbi listakörnyezet marad meg.
+
+Közvetlen készletsor-törlés és mennyiség-felülírás nincs a menüben: a készletmennyiséget naplózott bevételezés vagy kiadás változtatja, a termék törlése külön törzsadatművelet. Ez az Odoo készletkimutatásának megközelítését követi: annak riportnézetében a közvetlen sor-törlés letiltott, a mennyiségi eltérés és nullázás leltárkorrekcióként, megőrzött mozgástörténettel kezelhető. Forrás: https://github.com/odoo/odoo/blob/19.0/addons/stock/views/stock_quant_views.xml és https://www.odoo.com/documentation/19.0/applications/inventory_and_mrp/inventory/warehouses_storage/inventory_management/count_products.html .
 
 A terméknév a termék adatlapjára, a raktárnév a raktárra szűrt készletlistára, a mozgásikon az adott termék és raktár közös mozgásnaplójára mutat. Az elkülönített mennyiség a megfelelő nyitott minősítési munkalistára vezet.
 
 ## Mobil és ellenőrzés
 
-768 pixel alatt külön készletkártyák jelennek meg; a rendezés natív, összecsukható választóból érhető el ugyanazokkal a rendezőhivatkozásokkal. Az összesítők és a kártyák mennyiségei a rendelkezésre álló helyhez és betűmérethez igazodnak. Asztali táblázatnál a vízszintes görgetés a táblázat régióján belül marad. A minimumszerkesztő és a részletes szűrők natív details elemek, JavaScript nélkül is használhatók. Az oldalmérethez külön alkalmazógomb jelenik meg JavaScript nélkül.
+Asztali képernyőn a felső műveletsáv két ikonos gombjával váltható a táblázatos és a többoszlopos kártyanézet. Az aktív gomb kiemelt és aria-pressed jelzést kap; a választást a böngésző inventory.stock.view kulcsa tárolja, más oldalak nézetbeállításától függetlenül. Letiltott vagy sérült helyi tároló mellett is működik a váltás. Kártyanézetben a rendezés ugyanabból az összecsukható választóból érhető el, mint mobilon. A váltás nem indít lekérést: megmaradnak a szűrők, a lap, a keresőbe még el nem küldött szöveg és a minimumszerkesztő mentetlen értéke. A Mégse mindkét nézet közös minimumtervezetét visszaállítja; a nyitott műveletmenü nézetváltáskor bezárul.
+
+768 pixel alatt mindig kártyák láthatók, a nézetkapcsoló elrejtve marad. A mobilra átméretezés nem írja felül az asztali választást, nagyobb képernyőre visszatérve az áll vissza. JavaScript nélkül asztalon táblázat, mobilon kártyák jelennek meg, működés nélküli kapcsológombok nélkül.
+
+768 pixel alatt külön készletkártyák jelennek meg; a rendezés natív, összecsukható választóból érhető el ugyanazokkal a rendezőhivatkozásokkal. Az összesítők és a kártyák mennyiségei a rendelkezésre álló helyhez és betűmérethez igazodnak. Asztali táblázatnál a vízszintes görgetés a táblázat régióján belül marad. A részletes szűrők natív details elemek. A sor műveletmenüje natív popover, JavaScript nélkül is használható; a minimum szerkesztője ilyenkor egy validált edit_minimum paraméterrel, ugyanazon a szűrt listán nyílik meg. Az oldalmérethez külön alkalmazógomb jelenik meg JavaScript nélkül.
 
 ```powershell
 php artisan test --filter="StockListingTest|DashboardReplenishmentTest"
-npm run test:browser -- stock.spec.js dashboard-replenishment.spec.js navigation.spec.js
+npm run test:browser -- stock.spec.js stock-views.spec.js dashboard-replenishment.spec.js navigation.spec.js
 php tests/Concurrency/run.php
 npm run build
 ```

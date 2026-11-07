@@ -1,6 +1,6 @@
 <x-app-layout>
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-        <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a><h2 class="text-xl font-bold text-gray-900">Új átmozgatás</h2><x-operation-feedback />
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-4">
+        <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a><h1 class="text-xl font-bold text-gray-900">Új átmozgatás</h1><x-operation-feedback />
         @error('request_key')<a href="{{ route('transfers.create', ['context' => $context]) }}" class="text-indigo-600 underline text-sm">Új átmozgatási űrlap</a>@enderror
         @if(old('replenishment_stock_id', $prefill['replenishment_stock_id'] ?? null))
             <p class="rounded-md border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">Utánpótlási javaslatból előkészített átmozgatás. A mennyiség csökkenthető; indításkor a cél hiányát és a forrás helyi minimumát is újra ellenőrizzük. Másik termékhez vagy célhoz <a href="{{ route('transfers.create') }}" class="font-semibold underline">nyiss normál átmozgatást</a>.</p>

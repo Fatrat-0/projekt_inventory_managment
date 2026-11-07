@@ -5,6 +5,7 @@ export default () => ({
     media: null,
     mediaListener: null,
     previousOverflow: null,
+    topbarObserver: null,
     init() {
         try { this.desktopCollapsed = localStorage.getItem('inventory.sidebar.collapsed') === 'true'; } catch {}
         this.media = window.matchMedia('(min-width: 1280px)');
@@ -23,9 +24,13 @@ export default () => ({
             }
         };
         this.media.addEventListener('change', this.mediaListener);
+        const topbar = this.$root.querySelector('[data-app-topbar]');
+        this.topbarObserver = new ResizeObserver(() => this.$root.style.setProperty('--app-topbar-height', Math.ceil(topbar.getBoundingClientRect().height) + 'px'));
+        this.topbarObserver.observe(topbar);
     },
     toggleNavigation() {
         this.closeAccount(false);
+        this.closeTasks();
         if (this.desktop) {
             this.desktopCollapsed = !this.desktopCollapsed;
             try { localStorage.setItem('inventory.sidebar.collapsed', String(this.desktopCollapsed)); } catch {}
@@ -73,12 +78,18 @@ export default () => ({
         menu.open = false;
         if (restoreFocus) menu.querySelector('summary').focus();
     },
+    closeTasks() {
+        const menu = this.$root.querySelector('#app-tasks-menu');
+        if (menu?.matches(':popover-open')) menu.hidePopover();
+    },
     restorePage() {
         this.closeNavigation();
         this.closeAccount(false);
+        this.closeTasks();
     },
     destroy() {
         this.media?.removeEventListener('change', this.mediaListener);
+        this.topbarObserver?.disconnect();
         this.closeNavigation();
     },
 });

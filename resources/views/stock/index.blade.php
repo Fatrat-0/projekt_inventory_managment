@@ -1,13 +1,10 @@
 <x-app-layout>
     @php($canManage = in_array(auth()->user()->role, ['admin', 'manager'], true))
-    <div class="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-        <header class="flex flex-wrap items-start justify-between gap-3">
-            <div class="min-w-0">
-                <h1 class="flex flex-wrap items-center gap-2 text-2xl font-bold text-gray-900"><x-icon name="layers" class="h-6 w-6 text-indigo-600" /> Készlet <span class="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-600">{{ number_format($stocks->total(), 0, ',', ' ') }} készletsor</span></h1>
-                <p class="mt-1 text-sm text-gray-500">Termékek raktárankénti készlete és helyi minimuma.</p>
-            </div>
+    <div class="app-page space-y-4 py-4" x-data="stockListing" :data-stock-view="viewMode" data-listing-page="stock" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()">
+        <x-page-toolbar title="Készlet" description="Termékek raktárankénti készlete és helyi minimuma." :count="$stocks->total()" unit="készletsor">
             <a href="{{ route('movements.create') }}" class="inline-flex min-h-11 items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Új készletmozgás</a>
-        </header>
+            <x-listing-view-toggle label="Készlet megjelenítése" />
+        </x-page-toolbar>
         <x-operation-feedback />
         <section aria-label="Szűrt készletösszesítők" class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3">
             @foreach(['physical' => ['Fizikai készlet', null, 'db'], 'available' => ['Kiadható készlet', 'positive', 'db'], 'quarantined' => ['Elkülönített készlet', 'quarantined', 'db'], 'low_count' => ['Helyi minimum alatt', 'low', 'készletsor']] as $key => [$label, $status, $unit])
@@ -43,7 +40,7 @@
             <p class="mt-2">Fizikai készlet = kiadható + elkülönített. Az úton lévő áru még nincs a célraktárban. A lista a nulla mennyiségű készletsorokat is tartalmazza, a készletsor nélküli termékeket nem.</p>
             <p class="mt-2">A helyi minimum raktáranként és termékenként érvényes, alapból 5 db. Az utánpótlási javaslatokat vezérli; a globális termék- és kategóriaminimumoktól független. A 0 kikapcsolja az adott készletsor helyi pótlási igényét.</p>
         </details>
-        <div class="md:hidden">
+        <div data-stock-card-sort data-listing-card-sort="block">
             <details class="rounded-lg border border-gray-200 bg-white p-3">
                 <summary class="cursor-pointer text-sm font-medium text-gray-700">Rendezés: {{ \App\Queries\StockListing::SORTS[$filters['sort_by']] }} {{ $filters['sort_dir'] === 'asc' ? '↑' : '↓' }}</summary>
                 <div class="mt-2 flex flex-wrap gap-2">@foreach(\App\Queries\StockListing::SORTS as $key => $label) @include('stock.sort-link', ['mobile' => true]) @endforeach</div>

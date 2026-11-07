@@ -27,6 +27,7 @@ class StockListing
             'stock_status' => ['nullable', Rule::in(array_keys(self::STATUSES))], 'sort_by' => ['nullable', Rule::in(array_keys(self::SORTS))],
             'sort_dir' => 'nullable|in:asc,desc', 'per_page' => ['nullable', 'integer', Rule::in([10,25,50,100])],
             'page' => 'nullable|integer|min:1|max:2147483647',
+            'edit_minimum' => 'nullable|integer|min:1|exists:stocks,id',
         ]);
         $this->filters = ['search' => trim($data['search'] ?? ''), 'product_id' => $data['product_id'] ?? null,
             'warehouse_id' => $data['warehouse_id'] ?? null, 'category_id' => $data['category_id'] ?? null,

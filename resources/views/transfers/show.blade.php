@@ -1,8 +1,8 @@
 <x-app-layout>
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a>
         <x-operation-feedback />
-        <div class="flex flex-wrap items-center gap-3"><h2 class="text-xl font-bold text-gray-900">{{ $transfer->transfer_number }}</h2><span class="rounded-md bg-gray-100 px-2.5 py-1 text-sm">{{ \App\Models\InventoryTransfer::STATUSES[$transfer->status] }}</span></div>
+        <div class="flex flex-wrap items-center gap-3"><h1 class="text-xl font-bold text-gray-900">{{ $transfer->transfer_number }}</h1><span class="rounded-md bg-gray-100 px-2.5 py-1 text-sm">{{ \App\Models\InventoryTransfer::STATUSES[$transfer->status] }}</span></div>
         <div class="rounded-lg border border-gray-200 bg-white p-5 space-y-5">
             <div><p class="font-semibold text-gray-900">{{ $transfer->product->product_name }}</p><p class="font-mono text-xs text-gray-500">{{ $transfer->product->sku }}</p></div>
             <dl class="grid sm:grid-cols-2 gap-5 text-sm">

@@ -309,7 +309,9 @@ for (const mobile of [false, true]) {
         expect(params.get('sort_dir')).toBe('asc');
         for (const key of ['search', 'stock', 'stock_status', 'page', 'per_page', 'category_id']) expect(params.has(key)).toBe(false);
         await expect(page.locator('select[name="warehouse_id"]')).toHaveValue('1');
-        await expect(page.locator('tbody tr')).toHaveCount(expectedCount);
+        const pageSize = Number(await page.locator('#product-per-page').inputValue());
+        await expect(page.locator('#product-list-footer [aria-live]')).toContainText('/ '+expectedCount+' találat');
+        await expect(page.locator('[data-product-id]:visible')).toHaveCount(Math.min(expectedCount, pageSize));
         await page.goBack();
         await expect(page).toHaveURL(originalUrl);
         await expect(page.getByLabel('Készlet', { exact: true })).toHaveValue('stocked');

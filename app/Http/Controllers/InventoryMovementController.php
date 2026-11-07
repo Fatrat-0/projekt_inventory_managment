@@ -34,6 +34,7 @@ class InventoryMovementController extends Controller
 
     public function create(Request $request)
     {
+        $prefill = $request->validate(['product_id' => 'nullable|integer|exists:products,product_id', 'warehouse_id' => 'nullable|integer|exists:warehouses,warehouse_id']);
         $products = Product::orderBy('product_name')->get();
         $warehouses = Warehouse::orderBy('warehouse_name')->get();
         $partners = Partner::whereNull('archived_at')->orderBy('name')->orderBy('id')->get();
@@ -42,7 +43,7 @@ class InventoryMovementController extends Controller
         $returnUrl = \App\Support\MovementListContext::url($context);
         $requestKey = $request->old('request_key');
         if (!is_string($requestKey) || !\Illuminate\Support\Str::isUuid($requestKey)) $requestKey = (string) \Illuminate\Support\Str::uuid();
-        return view('movements.create', compact('products', 'warehouses', 'partners', 'context', 'returnUrl', 'requestKey'));
+        return view('movements.create', compact('products', 'warehouses', 'partners', 'context', 'returnUrl', 'requestKey', 'prefill'));
     }
 
     public function show(Request $request, InventoryMovement $movement)

@@ -1,11 +1,11 @@
 <x-app-layout>
     <x-slot name="header">
-        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
+        <h1 class="font-semibold text-xl text-gray-800 leading-tight">
             {{ __('Új Felhasználó Hozzáadása') }}
-        </h2>
+        </h1>
     </x-slot>
 
-    <div class="py-12">
+    <div class="py-4">
         <div class="max-w-3xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white p-8 shadow-sm sm:rounded-lg border-t-4 border-blue-600">
                 

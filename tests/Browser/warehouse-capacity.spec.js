@@ -32,12 +32,12 @@ test('pallet capacity is reserved and received, and shipment drafts retain the s
     await page.setViewportSize({ width: 390, height: 844 });
     await capacityLink.click();
     await expect(capacityLink).toHaveAttribute('aria-current', 'page');
-    await page.getByLabel('Tárhelykód').fill('R-01');
-    await page.getByLabel('Megnevezés').fill('Beérkező raklapok');
-    await page.getByLabel('Típus').selectOption('pallet');
-    await page.getByLabel('Maximális terhelés (kg)').fill('100');
-    await page.getByLabel('Raklapférőhely (csak raklaphelyhez)').fill('2');
-    await page.getByRole('button', { name: 'Tárhely létrehozása' }).click();
+    await expect(page.getByRole('link', { name: 'Új tárolórendszer a tervrajzon' })).toHaveAttribute('href', /create=1/);
+    const legacyCsrf = await page.locator('meta[name="csrf-token"]').getAttribute('content');
+    const legacy = await page.request.post('/warehouses/2/locations', { headers: { 'X-CSRF-TOKEN': legacyCsrf },
+        form: { code: 'R-01', name: 'Beérkező raklapok', kind: 'pallet', max_weight_kg: '100', max_pallet_slots: '2' }, maxRedirects: 0 });
+    expect(legacy.status()).toBe(302);
+    await page.goto(legacy.headers().location);
     await expect(page.getByText('2 / 2 szabad raklaphely')).toBeVisible();
     await expect(capacityLink).toHaveAttribute('aria-current', 'page');
     await expect(actions.getByRole('link', { name: 'PDF-leltárív', exact: true })).toBeVisible();

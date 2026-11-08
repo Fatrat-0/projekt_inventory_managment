@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\{Warehouse, WarehouseLocation, WarehousePlacement};
 use App\Services\WarehouseCapacity;
-use App\Support\{WarehouseListContext, WarehouseStockContext};
+use App\Support\{WarehouseListContext, WarehouseStockContext, WarehouseStorageOverview};
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -12,23 +12,31 @@ class WarehouseLocationController extends Controller
 {
     public function index(Request $request, Warehouse $warehouse)
     {
-        $locations = $warehouse->storageLocations()->withCapacityUsage()->orderByDesc('active')->orderBy('code')
-            ->paginate(24)->withQueryString();
+        $systems = $warehouse->storageSystems()->with(['zone', 'levels'])->withCount('locations')
+            ->orderBy('warehouse_storage_zones.name')->orderBy('warehouse_storage_systems.code')->orderBy('warehouse_storage_systems.id')
+            ->paginate(24, pageName: 'system_page')->withQueryString();
+        $summaries = WarehouseStorageOverview::systemSummaries($systems->getCollection());
+        $locations = $warehouse->storageLocations()->whereNull('system_id')->withCapacityUsage()->orderByDesc('active')->orderBy('code')
+            ->paginate(24, pageName: 'location_page')->withQueryString();
+        $products = $locations->isEmpty() ? collect() : WarehouseStorageOverview::products($warehouse->getKey(), locationIds: $locations->getCollection()->modelKeys());
         $unassignedIncoming = $warehouse->incomingTransfers()->where('status', 'pending')->whereNull('to_location_id')->count();
 
-        return view('warehouses.locations.index', $this->viewData($request, $warehouse) + compact('locations', 'unassignedIncoming'));
+        return view('warehouses.locations.index', $this->viewData($request, $warehouse) + compact('locations', 'systems', 'summaries', 'products', 'unassignedIncoming'));
     }
 
     public function show(Request $request, Warehouse $warehouse, WarehouseLocation $warehouseLocation)
     {
         $location = $warehouse->storageLocations()->withCapacityUsage()->findOrFail($warehouseLocation->id);
+        $sharedFreeWeight = WarehouseStorageOverview::locationFreeWeights($location->newCollection([$location]));
         $placements = $location->placements()->with('stock.product')->latest('id')->paginate(20)->withQueryString();
+        $allowed = $location->system_id === null ? collect() : $location->allowedCategories()->pluck('categories.category_id');
         $stocks = $warehouse->stocks()->with('product')->withSum('placements as assigned_quantity', 'quantity')
+            ->when($allowed->isNotEmpty(), fn ($query) => $query->whereHas('product', fn ($products) => $products->whereIn('category_id', $allowed)))
             ->whereColumn('quantity', '>', 'quarantined_quantity')->get()
             ->filter(fn ($stock) => $stock->available_quantity > $stock->assigned_quantity)
             ->sortBy('product.product_name');
 
-        return view('warehouses.locations.show', $this->viewData($request, $warehouse) + compact('location', 'placements', 'stocks'));
+        return view('warehouses.locations.show', $this->viewData($request, $warehouse) + compact('location', 'placements', 'stocks', 'sharedFreeWeight'));
     }
 
     public function store(Request $request, Warehouse $warehouse, WarehouseCapacity $capacity)

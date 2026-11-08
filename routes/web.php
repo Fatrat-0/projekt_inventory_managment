@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\WarehouseController;
+use App\Http\Controllers\WarehouseFloorPlanController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\StockController;
@@ -39,7 +40,10 @@ Route::middleware(['auth'])->group(function () {
     Route::middleware(['role:admin,manager,worker'])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+        Route::get('/warehouses/{warehouse}/floor-plan', [WarehouseFloorPlanController::class, 'show'])->name('warehouses.floor-plan.show');
         Route::get('/warehouses/{warehouse}/locations', [\App\Http\Controllers\WarehouseLocationController::class, 'index'])->name('warehouses.locations.index');
+        Route::get('/warehouses/{warehouse}/storage-systems/{system}', [\App\Http\Controllers\WarehouseStorageSystemController::class, 'show'])->whereNumber('system')->name('warehouses.storage-systems.show');
+        Route::get('/warehouses/{warehouse}/storage-systems/{system}/capacity', [\App\Http\Controllers\WarehouseStorageSystemController::class, 'capacity'])->whereNumber('system')->name('warehouses.storage-systems.capacity');
         Route::get('/warehouses/{warehouse}/locations/{warehouseLocation}', [\App\Http\Controllers\WarehouseLocationController::class, 'show'])->name('warehouses.locations.show');
         Route::post('/warehouses/{warehouse}/locations/{warehouseLocation}/placements', [\App\Http\Controllers\WarehouseLocationController::class, 'place'])->name('warehouses.locations.place');
         Route::delete('/warehouses/{warehouse}/locations/{warehouseLocation}/placements/{placement}', [\App\Http\Controllers\WarehouseLocationController::class, 'release'])->name('warehouses.locations.release');
@@ -74,6 +78,10 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/warehouses/statistics', [WarehouseController::class, 'statistics'])->name('warehouses.statistics');
         Route::get('/warehouses/statistics.pdf', [ExportController::class, 'warehouseStatisticsPdf'])->name('warehouses.statistics-pdf');
         Route::resource('warehouses', WarehouseController::class);
+        Route::put('/warehouses/{warehouse}/floor-plan', [WarehouseFloorPlanController::class, 'update'])->name('warehouses.floor-plan.update');
+        Route::post('/warehouses/{warehouse}/floor-plan/systems', [WarehouseFloorPlanController::class, 'storeSystem'])->name('warehouses.floor-plan.systems.store');
+        Route::patch('/warehouses/{warehouse}/floor-plan/systems/{system}', [WarehouseFloorPlanController::class, 'updateSystem'])->whereNumber('system')->name('warehouses.floor-plan.systems.update');
+        Route::patch('/warehouses/{warehouse}/storage-systems/{system}/bins/{bin}', [\App\Http\Controllers\WarehouseStorageSystemController::class, 'updateBin'])->whereNumber('system')->whereNumber('bin')->name('warehouses.storage-systems.bins.update');
         Route::post('/warehouses/{warehouse}/locations', [\App\Http\Controllers\WarehouseLocationController::class, 'store'])->name('warehouses.locations.store');
         Route::patch('/warehouses/{warehouse}/locations/{warehouseLocation}', [\App\Http\Controllers\WarehouseLocationController::class, 'update'])->name('warehouses.locations.update');
         Route::get('/warehouses/{warehouse}/inventory-preview', [WarehouseController::class, 'inventoryPreview'])->name('warehouses.inventory-preview');

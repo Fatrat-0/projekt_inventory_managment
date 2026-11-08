@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{InventoryTransfer, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
+use App\Models\{Category, InventoryTransfer, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -62,6 +62,10 @@ class WarehouseCapacity
             $slots = $data['kind'] === 'pallet' ? (int) $data['max_pallet_slots'] : null;
             $active = (bool) ($data['active'] ?? true);
             if ($current) {
+                if ($current->system_id && ($current->code !== $data['code'] || $current->kind !== $data['kind']
+                    || $current->max_weight_grams !== $weight || $current->max_pallet_slots !== $slots)) {
+                    throw ValidationException::withMessages(['code' => 'A létrehozott tárhely kódja és típusa rögzített. A teherbírást a tervrajzon módosíthatod.']);
+                }
                 [$usedWeight, $usedSlots] = $this->usage($current);
                 if ($usedWeight > 0 && (!$active || $data['kind'] !== $current->kind)) {
                     throw ValidationException::withMessages(['kind' => 'Csak üres, foglalás nélküli tárhely kapcsolható ki vagy alakítható át.']);
@@ -93,14 +97,14 @@ class WarehouseCapacity
         try {
             DB::transaction(function () use ($location, $productId, $quantity, $weight, $slots, $key, $hash) {
                 if ($key !== null) DB::table('warehouse_placement_requests')->insert(['request_key' => $key, 'payload_hash' => $hash, 'created_at' => now()]);
-                Product::whereKey($productId)->lockForUpdate()->firstOrFail();
+                $product = Product::whereKey($productId)->lockForUpdate()->firstOrFail();
                 $this->lockWarehouses([$location->warehouse_id]);
                 $current = WarehouseLocation::whereKey($location->id)->lockForUpdate()->firstOrFail();
                 $stock = Stock::where('warehouse_id', $current->warehouse_id)->where('product_id', $productId)->lockForUpdate()->first();
                 if (!$stock || $quantity > $stock->available_quantity - $this->assignedQuantity($stock)) {
                     throw ValidationException::withMessages(['quantity' => 'Ennyi kiadható, tárhely nélküli készlet nem áll rendelkezésre ebben a raktárban.']);
                 }
-                $this->assertFits($current, $weight, $slots);
+                $this->assertFits($current, $weight, $slots, (int) $product->category_id);
                 $current->placements()->create(['stock_id' => $stock->id, 'quantity' => $quantity,
                     'cargo_weight_grams' => $weight, 'pallet_slots' => $slots]);
             }, 3);
@@ -130,7 +134,7 @@ class WarehouseCapacity
     }
 
     /** The caller holds the destination warehouse lock until the transfer is written. */
-    public function checkReservation(array $data): void
+    public function checkReservation(array $data, int $categoryId): void
     {
         $locations = WarehouseLocation::where('warehouse_id', $data['to_warehouse_id']);
         $id = $data['to_location_id'] ?? null;
@@ -146,7 +150,7 @@ class WarehouseCapacity
         if (!$location) {
             throw ValidationException::withMessages(['to_location_id' => 'A választott tárhely nem a célraktárhoz tartozik.']);
         }
-        $this->assertFits($location, (int) ($data['cargo_weight_grams'] ?? 0), (int) ($data['pallet_slots'] ?? 0));
+        $this->assertFits($location, (int) ($data['cargo_weight_grams'] ?? 0), (int) ($data['pallet_slots'] ?? 0), $categoryId);
     }
 
     public function receive(InventoryTransfer $transfer, Stock $stock): void
@@ -161,11 +165,12 @@ class WarehouseCapacity
         ]);
     }
 
-    private function assertFits(WarehouseLocation $location, int $weight, int $slots): void
+    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId): void
     {
         if (!$location->active) {
             throw ValidationException::withMessages(['to_location_id' => 'Ez a tárhely ki van kapcsolva. Válassz aktív tárhelyet.']);
         }
+        if ($location->system_id !== null) $this->assertCategoryAllowed($location, $categoryId, 'to_location_id');
         if ($weight < 1 || $weight > 1000000000) {
             throw ValidationException::withMessages(['cargo_weight_kg' => 'Add meg a tétel teljes tömegét kilogrammban.']);
         }
@@ -182,6 +187,72 @@ class WarehouseCapacity
             $errors['pallet_slots'] = $location->code.' tárhelyen '.$free.' szabad raklaphely van. Hiányzik '.($slots - $free).' hely.';
         }
         if ($errors) throw ValidationException::withMessages($errors);
+
+        if ($location->system_id !== null) {
+            $system = $location->system()->lockForUpdate()->firstOrFail();
+            $level = $location->level_id === null ? null : $location->level()->lockForUpdate()->firstOrFail();
+            $bins = $system->locations()->lockForUpdate()->get(['id', 'level_id']);
+            $committed = $this->committedWeights($bins->modelKeys());
+            if ($level && $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0) + $weight > $level->max_weight_grams) {
+                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná az állványszint szabad teherbírását.']);
+            }
+            if (array_sum($committed) + $weight > $system->max_weight_grams) {
+                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná a(z) '.$system->name.' szabad teherbírását.']);
+            }
+        }
+    }
+
+    public function assertExistingCategories(WarehouseLocation $bin, array $categories): void
+    {
+        if (!$categories) return;
+        if (Category::whereKey($categories)->sharedLock()->get(['category_id'])->count() !== count($categories)) {
+            throw ValidationException::withMessages(['categories' => 'Az egyik kategória időközben megszűnt. Töltsd újra az oldalt.']);
+        }
+        $incompatiblePlacement = $bin->placements()->join('stocks', 'stocks.id', '=', 'warehouse_placements.stock_id')
+            ->join('products', 'products.product_id', '=', 'stocks.product_id')
+            ->whereNotIn('products.category_id', $categories)->sharedLock()->first(['warehouse_placements.id']);
+        $incompatibleReservation = $bin->reservations()->join('products', 'products.product_id', '=', 'inventory_transfers.product_id')
+            ->whereNotIn('products.category_id', $categories)->sharedLock()->first(['inventory_transfers.id']);
+        if ($incompatiblePlacement || $incompatibleReservation) {
+            throw ValidationException::withMessages(['categories' => 'A rekeszben olyan tárolt vagy lefoglalt tétel van, amelynek kategóriája hiányzik a megengedett listából.']);
+        }
+    }
+
+    public function assertProductCategoryChange(Product $product): void
+    {
+        $placements = WarehousePlacement::whereIn('stock_id', Stock::where('product_id', $product->getKey())->select('id'));
+        $reservations = InventoryTransfer::where('product_id', $product->getKey())->where('status', 'pending')->whereNotNull('to_location_id');
+        $locations = WarehouseLocation::whereNotNull('system_id')->where(fn ($query) => $query
+            ->whereIn('id', (clone $placements)->select('warehouse_location_id'))
+            ->orWhereIn('id', (clone $reservations)->select('to_location_id')))->get();
+        $this->lockWarehouses($locations->pluck('warehouse_id')->all());
+        foreach ($locations as $location) {
+            $this->assertCategoryAllowed($location, (int) $product->category_id, 'category_id');
+        }
+    }
+
+    private function assertCategoryAllowed(WarehouseLocation $location, int $categoryId, string $field): void
+    {
+        $allowed = DB::table('warehouse_location_categories')->where('location_id', $location->id)
+            ->sharedLock()->pluck('category_id')->map(fn ($id) => (int) $id);
+        if ($allowed->isNotEmpty() && !$allowed->containsStrict($categoryId)) {
+            throw ValidationException::withMessages([$field => 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.']);
+        }
+    }
+
+    public function committedWeights(array $locationIds): array
+    {
+        $weights = [];
+        foreach (WarehousePlacement::whereIn('warehouse_location_id', $locationIds)->lockForUpdate()->get(['warehouse_location_id', 'cargo_weight_grams']) as $placement) {
+            $id = $placement->warehouse_location_id;
+            $weights[$id] = ($weights[$id] ?? 0) + (int) $placement->cargo_weight_grams;
+        }
+        foreach (InventoryTransfer::whereIn('to_location_id', $locationIds)->where('status', 'pending')->lockForUpdate()->get(['to_location_id', 'cargo_weight_grams']) as $transfer) {
+            $id = $transfer->to_location_id;
+            $weights[$id] = ($weights[$id] ?? 0) + (int) $transfer->cargo_weight_grams;
+        }
+
+        return $weights;
     }
 
     private function usage(WarehouseLocation $location): array

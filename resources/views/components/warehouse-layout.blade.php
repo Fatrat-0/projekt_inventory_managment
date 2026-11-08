@@ -12,7 +12,8 @@
             @endphp
             <nav aria-label="Raktári nézetek" class="flex flex-wrap items-center gap-1">
                 <x-topbar-action :href="$overview" :label="$canManage ? 'Raktári áttekintés' : 'Raktári készlet'" :short-label="$canManage ? 'Áttekintés' : 'Készlet'" icon="warehouse" :current="request()->routeIs('warehouses.show')" />
-                <x-topbar-action :href="route('warehouses.locations.index', $params)" label="Tárhelyek és kapacitás" short-label="Tárhelyek" icon="layers" :current="request()->routeIs('warehouses.locations.*')" />
+                <x-topbar-action :href="route('warehouses.locations.index', $params)" label="Tárhelyek és kapacitás" short-label="Tárhelyek" icon="layers" :current="request()->routeIs('warehouses.locations.*', 'warehouses.storage-systems.*')" />
+                <x-topbar-action :href="route('warehouses.floor-plan.show', $params)" label="Raktári tervrajz" short-label="Tervrajz" icon="grid" :current="request()->routeIs('warehouses.floor-plan.*')" />
                 @if($canManage)
                     <x-topbar-action :href="route('warehouses.inventory-preview', $params)" label="PDF-leltárív" short-label="PDF" icon="document" :current="request()->routeIs('warehouses.inventory-preview')" />
                 @endif

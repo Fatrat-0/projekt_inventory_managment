@@ -18,6 +18,8 @@ import appSearch from './components/app-search';
 import stockListing from './components/stock-listing';
 import listingView from './components/listing-view';
 import listingColumns from './components/listing-columns';
+import warehouseFloorPlan from './components/warehouse-floor-plan';
+import warehouseCapacityTree from './components/warehouse-capacity-tree';
 
 window.Alpine = Alpine;
 
@@ -48,5 +50,7 @@ Alpine.data('dashboardCustomization', dashboardCustomization);
 Alpine.data('appShell', appShell);
 Alpine.data('appSearch', appSearch);
 Alpine.data('stockListing', stockListing);
+Alpine.data('warehouseFloorPlan', warehouseFloorPlan);
+Alpine.data('warehouseCapacityTree', warehouseCapacityTree);
 
 Alpine.start();

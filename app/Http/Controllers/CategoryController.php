@@ -73,7 +73,7 @@ class CategoryController extends Controller
 
     public function destroy(Request $request, Category $category)
     {
-        $message = 'A kategória nem törölhető, mert termék vagy alkategória tartozik hozzá. Előbb sorold át ezeket.';
+        $message = 'A kategória nem törölhető, amíg termék, alkategória vagy raktári rekesz szabálya hivatkozik rá.';
         try {
             DB::transaction(function () use ($category, $message) {
                 Category::orderBy('category_id')->lockForUpdate()->get();

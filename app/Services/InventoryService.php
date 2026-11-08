@@ -207,9 +207,9 @@ class InventoryService
                 $requestId = $requestKey === null ? null : DB::table('inventory_transfer_requests')->insertGetId([
                     'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
                 ]);
-                $this->lockProduct($payload['product_id']);
+                $product = $this->lockProduct($payload['product_id']);
                 $this->capacity->lockWarehouses([$payload['from_warehouse_id'], $payload['to_warehouse_id']]);
-                $this->capacity->checkReservation($payload);
+                $this->capacity->checkReservation($payload, (int) $product->category_id);
                 if (isset($payload['replenishment_stock_id'])) $this->checkReplenishment($payload);
                 $this->changeStock($payload['product_id'], $payload['from_warehouse_id'], -$payload['quantity']);
                 $transferData = $payload;
@@ -267,11 +267,11 @@ class InventoryService
         }, 3);
     }
 
-    private function lockProduct(int $productId): void
+    private function lockProduct(int $productId): Product
     {
         // A stock row may not exist yet. The product always exists, so its lock also
         // serializes concurrent first receipts and creation of destination stock.
-        Product::whereKey($productId)->lockForUpdate()->firstOrFail();
+        return Product::whereKey($productId)->lockForUpdate()->firstOrFail();
     }
 
     private function changeStock(int $productId, int $warehouseId, int $delta, int $quarantineDelta = 0): array

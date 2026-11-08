@@ -3,7 +3,7 @@
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
 use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse, WarehouseLocation};
-use App\Services\{InventoryService, MasterDataEditor, ShipmentService, WarehouseCapacity};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentService, WarehouseCapacity, WarehouseFloorPlan, WarehouseStorageDesigner};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
@@ -59,6 +59,9 @@ if (($argv[1] ?? '') === '--worker') {
             'user_delete' => User::findOrFail($job['id'])->delete(),
             'start' => $service->startTransfer($job['data'], $job['requestKey'] ?? null),
             'place' => app(WarehouseCapacity::class)->place(WarehouseLocation::findOrFail($job['id']), $job['data']),
+            'floor_plan' => app(WarehouseFloorPlan::class)->save(Warehouse::findOrFail($job['id']), $job['data']),
+            'storage_designer' => app(WarehouseStorageDesigner::class)->create(Warehouse::findOrFail($job['id']), $job['data']),
+            'bin_configuration' => app(WarehouseStorageDesigner::class)->updateBin(Warehouse::findOrFail($job['id']), $job['system'], $job['bin'], $job['data']),
             'complete' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), true),
             'cancel' => $service->finalizeTransfer(InventoryTransfer::findOrFail($job['id']), false),
             'shipment_start' => app(ShipmentService::class)->start(Shipment::findOrFail($job['id']), $job['actor'], 1),
@@ -791,7 +794,49 @@ try {
     check(race($database, $placeProduct->product_id, [$placement, $placement]) === ['OK', 'OK'], 'Concurrent placement replay failed.');
     check($placeLocation->placements()->count() === 1 && $placeLocation->placements()->sole()->quantity === 4, 'Concurrent placement replay assigned stock twice.');
     echo "PASS: identical placement with overlapping requests and outer snapshots\n";
-    echo "65 MySQL concurrency checks passed.\n";
+    $plan = ['action' => 'floor_plan', 'id' => $placeWarehouse->warehouse_id, 'outerSnapshot' => true,
+        'data' => ['version' => 1, 'columns' => 24, 'rows' => 16, 'positions' => [['id' => $placeLocation->id, 'x' => 2, 'y' => 2, 'width' => 3, 'height' => 2]]]];
+    $secondPlan = $plan;
+    $secondPlan['data']['positions'][0]['x'] = 5;
+    check(race($database, [], [$plan, $secondPlan], recordBarrier: $placeWarehouse) === ['OK', 'REJECTED'], 'A stale floor plan overwrote the saved version.');
+    check((int) $placeWarehouse->fresh()->floor_version === 2 && in_array($placeLocation->fresh()->floor_x, [2, 5], true), 'Floor plan did not store the winning layout.');
+    echo "PASS: two different floor plans with the same version and outer snapshots\n";
+    $rackWarehouse = Warehouse::create(['warehouse_name' => 'Concurrent rack']);
+    $rack = ['action' => 'storage_designer', 'id' => $rackWarehouse->warehouse_id, 'outerSnapshot' => true,
+        'data' => ['version' => 1, 'kind' => 'rack', 'name' => 'Concurrent rack', 'zone' => 'A', 'rack_height' => 2,
+            'x' => 0, 'y' => 0, 'width' => 4, 'height' => 2, 'levels' => 2, 'bins' => 2,
+            'bin_weight' => 50, 'level_weight' => 60, 'system_weight' => 70]];
+    check(race($database, [], [$rack, $rack], recordBarrier: $rackWarehouse) === ['OK', 'REJECTED'], 'Two requests created the same rack layout.');
+    $rackBins = $rackWarehouse->storageSystems()->sole()->locations()->orderBy('code')->get();
+    check($rackBins->count() === 4 && (int) $rackWarehouse->fresh()->floor_version === 2, 'Concurrent rack creation left duplicate or partial bins.');
+    echo "PASS: only one rack is created for the same floor-plan version\n";
+
+    $rackProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Rack cargo', 'sku' => 'RACK-CARGO', 'price' => 1]);
+    $otherCargo = Product::create(['category_id' => $category->category_id, 'product_name' => 'Other rack cargo', 'sku' => 'OTHER-RACK-CARGO', 'price' => 1]);
+    $jobs = [];
+    foreach ([$rackProduct, $otherCargo] as $i => $cargo) {
+        Stock::create(['warehouse_id' => $rackWarehouse->warehouse_id, 'product_id' => $cargo->product_id, 'quantity' => 10]);
+        $jobs[] = ['action' => 'place', 'id' => $rackBins[$i * 2]->id, 'outerSnapshot' => true,
+            'data' => ['product_id' => $cargo->product_id, 'quantity' => 1, 'cargo_weight_kg' => 40]];
+    }
+    check(race($database, [], $jobs, recordBarrier: $rackWarehouse) === ['OK', 'REJECTED'], 'Different bins allowed the total rack weight to exceed the limit.');
+    check($rackWarehouse->storageSystems()->sole()->locations()->withSum('placements', 'cargo_weight_grams')->get()->sum('placements_sum_cargo_weight_grams') === 40000, 'The rejected load left stock assigned.');
+    echo "PASS: simultaneous loading of different levels honors the shared rack limit\n";
+
+    $bin = $rackBins[1];
+    $otherCategory = Category::create(['category_name' => 'Concurrent bin category']);
+    $reservationSource = Warehouse::create(['warehouse_name' => 'Concurrent bin reservation source']);
+    Stock::create(['warehouse_id' => $reservationSource->warehouse_id, 'product_id' => $rackProduct->product_id, 'quantity' => 10]);
+    $configure = ['action' => 'bin_configuration', 'id' => $rackWarehouse->warehouse_id, 'system' => $bin->system_id, 'bin' => $bin->id,
+        'outerSnapshot' => true, 'data' => ['lock_version' => 1, 'width_cm' => 100, 'depth_cm' => 100, 'height_cm' => 100,
+            'max_weight_kg' => 50, 'categories' => [$otherCategory->getKey()], 'active' => true]];
+    $reserve = ['action' => 'start', 'outerSnapshot' => true, 'data' => ['product_id' => $rackProduct->product_id,
+        'from_warehouse_id' => $reservationSource->getKey(), 'to_warehouse_id' => $rackWarehouse->getKey(),
+        'to_location_id' => $bin->id, 'cargo_weight_kg' => 10, 'quantity' => 1, 'user_id' => $user->id]];
+    check(race($database, [], [$configure, $reserve], recordBarrier: $rackWarehouse) === ['OK', 'REJECTED'], 'An incompatible category rule and reservation both succeeded.');
+    check($bin->allowedCategories()->count() + $bin->reservations()->count() === 1, 'The bin has an incompatible reservation.');
+    echo "PASS: a bin category restriction and an incompatible reservation cannot both succeed\n";
+    echo "69 MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

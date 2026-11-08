@@ -9,7 +9,7 @@
                 class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600"><x-icon name="menu" class="h-5 w-5" /></button>
         </div>
         @isset($pageActions)
-            <div class="order-last max-w-full basis-full sm:order-none sm:basis-auto">
+            <div class="order-last min-w-0 max-w-full basis-full sm:order-none sm:flex-1">
                 {{ $pageActions }}
             </div>
         @endisset

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\WarehouseStorageOverview;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
@@ -13,12 +14,21 @@ class WarehouseLocation extends Model
 
     protected function casts(): array
     {
-        return ['max_weight_grams' => 'integer', 'max_pallet_slots' => 'integer', 'active' => 'boolean', 'lock_version' => 'integer'];
+        return ['max_weight_grams' => 'integer', 'max_pallet_slots' => 'integer', 'active' => 'boolean', 'lock_version' => 'integer',
+            'floor_x' => 'integer', 'floor_y' => 'integer', 'floor_width' => 'integer', 'floor_height' => 'integer'];
     }
 
     public function placements()
     {
         return $this->hasMany(WarehousePlacement::class);
+    }
+
+    public function system() { return $this->belongsTo(WarehouseStorageSystem::class, 'system_id'); }
+    public function level() { return $this->belongsTo(WarehouseStorageLevel::class, 'level_id'); }
+
+    public function allowedCategories()
+    {
+        return $this->belongsToMany(Category::class, 'warehouse_location_categories', 'location_id', 'category_id');
     }
 
     public function reservations()
@@ -48,11 +58,14 @@ class WarehouseLocation extends Model
 
     public static function pickerOptions(): array
     {
-        return self::withCapacityUsage()->orderBy('code')->get()->groupBy('warehouse_id')
+        $locations = self::withCapacityUsage()->orderBy('code')->get();
+        $free = WarehouseStorageOverview::locationFreeWeights($locations, allBinsLoaded: true);
+
+        return $locations->groupBy('warehouse_id')
             ->map(fn ($locations) => $locations->where('active', true)->map(fn (self $location) => [
                 'id' => (string) $location->id,
                 'kind' => $location->kind,
-                'label' => $location->code.' · '.$location->name.' ('.self::formatWeight($location->freeWeight()).' kg'
+                'label' => $location->code.' · '.$location->name.' ('.self::formatWeight($free[$location->id] ?? $location->freeWeight()).' kg'
                     .($location->freeSlots() === null ? '' : ', '.$location->freeSlots().' raklaphely').' szabad)',
             ])->values()->all())->all();
     }

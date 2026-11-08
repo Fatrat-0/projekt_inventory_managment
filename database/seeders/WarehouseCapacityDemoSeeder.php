@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 
 class WarehouseCapacityDemoSeeder extends Seeder
 {
-    private const COMPLETION_KEY = '88c0e445-0ff1-4773-9874-91605de1de02';
+    public const COMPLETION_KEY = '88c0e445-0ff1-4773-9874-91605de1de02';
 
     public function run(): void
     {

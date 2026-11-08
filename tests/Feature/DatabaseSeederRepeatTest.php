@@ -34,6 +34,7 @@ class DatabaseSeederRepeatTest extends TestCase
         $this->seed(DatabaseSeeder::class);
         $demo = Product::where('sku', 'DEMO-KAP-001')->sole();
         $this->assertDatabaseCount('warehouse_locations', 4);
+        $this->assertSame(4, DB::table('warehouse_locations')->whereNotNull('floor_x')->count());
         $this->assertSame(2, InventoryTransfer::where('product_id', $demo->product_id)->where('status', 'pending')->whereNotNull('to_location_id')->count());
         $before = $this->snapshot();
         $this->travel(2)->hours();

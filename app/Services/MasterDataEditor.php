@@ -51,6 +51,9 @@ class MasterDataEditor
                 $current = $record->newQuery()->whereKey($record->getKey())->lockForUpdate()->firstOrFail();
                 self::assertCurrent($current, $request, $editUrl);
                 $current->fill($data);
+                if ($current instanceof Product && $current->isDirty('category_id')) {
+                    app(WarehouseCapacity::class)->assertProductCategoryChange($current);
+                }
                 $current->lock_version = (int) $current->lock_version + 1;
                 $current->save();
                 return $current;

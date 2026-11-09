@@ -167,38 +167,77 @@ class WarehouseCapacity
 
     private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId): void
     {
-        if (!$location->active) {
-            throw ValidationException::withMessages(['to_location_id' => 'Ez a tárhely ki van kapcsolva. Válassz aktív tárhelyet.']);
-        }
-        if ($location->system_id !== null) $this->assertCategoryAllowed($location, $categoryId, 'to_location_id');
-        if ($weight < 1 || $weight > 1000000000) {
-            throw ValidationException::withMessages(['cargo_weight_kg' => 'Add meg a tétel teljes tömegét kilogrammban.']);
-        }
-        if (($location->kind === 'pallet' && $slots < 1) || ($location->kind === 'shelf' && $slots !== 0)) {
-            throw ValidationException::withMessages(['pallet_slots' => 'Raklaphelyhez add meg a raklapok számát. Polchoz hagyd üresen a mezőt.']);
-        }
+        $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
         [$usedWeight, $usedSlots] = $this->usage($location);
-        $errors = [];
-        if ($weight > $location->max_weight_grams - $usedWeight) {
-            $errors['cargo_weight_kg'] = $location->code.' tárhelyen '.WarehouseLocation::formatWeight($location->max_weight_grams - $usedWeight).' kg szabad teherbírás maradt.';
-        }
-        if ($location->max_pallet_slots !== null && $slots > $location->max_pallet_slots - $usedSlots) {
-            $free = $location->max_pallet_slots - $usedSlots;
-            $errors['pallet_slots'] = $location->code.' tárhelyen '.$free.' szabad raklaphely van. Hiányzik '.($slots - $free).' hely.';
-        }
-        if ($errors) throw ValidationException::withMessages($errors);
-
+        $limits = ['location_grams' => $location->max_weight_grams - $usedWeight,
+            'slots' => $location->max_pallet_slots === null ? null : $location->max_pallet_slots - $usedSlots];
+        $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
         if ($location->system_id !== null) {
             $system = $location->system()->lockForUpdate()->firstOrFail();
             $level = $location->level_id === null ? null : $location->level()->lockForUpdate()->firstOrFail();
             $bins = $system->locations()->lockForUpdate()->get(['id', 'level_id']);
             $committed = $this->committedWeights($bins->modelKeys());
-            if ($level && $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0) + $weight > $level->max_weight_grams) {
-                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná az állványszint szabad teherbírását.']);
+            $limits['system_grams'] = $system->max_weight_grams - array_sum($committed);
+            $limits['system_name'] = $system->name;
+            if ($level) {
+                $limits['level_grams'] = $level->max_weight_grams - $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0);
             }
-            if (array_sum($committed) + $weight > $system->max_weight_grams) {
-                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná a(z) '.$system->name.' szabad teherbírását.']);
+
+            $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
+        }
+    }
+
+    /**
+     * Evaluate the same rules against a capacity snapshot, without queries or writes.
+     * A null result marks an unknown input, not a passed check.
+     *
+     * @param list<int> $allowedCategories
+     * @param array{location_grams: int, slots: ?int, level_grams?: int, system_grams?: int, system_name?: string} $limits
+     * @return array<string, array{passed: ?bool, field: string, message: string}>
+     */
+    public function fitChecks(WarehouseLocation $location, int $categoryId, ?int $weight, ?int $slots, array $allowedCategories, array $limits): array
+    {
+        $weightFits = fn (int $free) => $weight === null ? ($free <= 0 ? false : null) : $weight <= $free;
+        $check = fn (?bool $passed, string $field, string $message) => compact('passed', 'field', 'message');
+        $pallet = $location->kind === 'pallet';
+        $checks = [
+            'active' => $check($location->active, 'to_location_id', 'Ez a tárhely ki van kapcsolva. Válassz aktív tárhelyet.'),
+            'category' => $check($location->system_id === null || $this->categoryAllowed($allowedCategories, $categoryId),
+                'to_location_id', $this->categoryMessage($location)),
+            'weight_input' => $check($weight === null ? null : ($weight >= 1 && $weight <= 1000000000),
+                'cargo_weight_kg', 'Add meg a tétel teljes tömegét kilogrammban.'),
+            'pallet_kind' => $check($slots === null ? null : ($pallet ? $slots >= 1 : ($location->kind !== 'shelf' || $slots === 0)),
+                'pallet_slots', 'Raklaphelyhez add meg a raklapok számát. Polchoz hagyd üresen a mezőt.'),
+            'location_weight' => $check($weightFits($limits['location_grams']), 'cargo_weight_kg', $location->code.' tárhelyen '
+                .WarehouseLocation::formatWeight($limits['location_grams']).' kg szabad teherbírás maradt.'),
+        ];
+        if ($limits['slots'] !== null) {
+            $free = $limits['slots'];
+            $checks['pallet_space'] = $check($slots === null && $pallet ? ($free <= 0 ? false : null) : ($slots ?? 0) <= $free,
+                'pallet_slots', $location->code.' tárhelyen '.$free.' szabad raklaphely van.'
+                    .($slots === null ? '' : ' Hiányzik '.($slots - $free).' hely.'));
+        }
+        if (isset($limits['level_grams'])) {
+            $checks['level_weight'] = $check($weightFits($limits['level_grams']), 'cargo_weight_kg', 'A tétel meghaladná az állványszint szabad teherbírását.');
+        }
+        if (isset($limits['system_grams'])) {
+            $checks['system_weight'] = $check($weightFits($limits['system_grams']), 'cargo_weight_kg',
+                'A tétel meghaladná a(z) '.$limits['system_name'].' szabad teherbírását.');
+        }
+
+        return $checks;
+    }
+
+    private function assertChecks(array $checks): void
+    {
+        foreach ([['active'], ['category'], ['weight_input'], ['pallet_kind'], ['location_weight', 'pallet_space'], ['level_weight'], ['system_weight']] as $group) {
+            $errors = [];
+            foreach ($group as $key) {
+                if (isset($checks[$key]) && $checks[$key]['passed'] !== true) {
+                    $errors[$checks[$key]['field']] = $checks[$key]['message'];
+                }
             }
+            if ($errors) throw ValidationException::withMessages($errors);
         }
     }
 
@@ -233,11 +272,25 @@ class WarehouseCapacity
 
     private function assertCategoryAllowed(WarehouseLocation $location, int $categoryId, string $field): void
     {
-        $allowed = DB::table('warehouse_location_categories')->where('location_id', $location->id)
-            ->sharedLock()->pluck('category_id')->map(fn ($id) => (int) $id);
-        if ($allowed->isNotEmpty() && !$allowed->containsStrict($categoryId)) {
-            throw ValidationException::withMessages([$field => 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.']);
+        if (!$this->categoryAllowed($this->lockedCategoryIds($location), $categoryId)) {
+            throw ValidationException::withMessages([$field => $this->categoryMessage($location)]);
         }
+    }
+
+    private function lockedCategoryIds(WarehouseLocation $location): array
+    {
+        return DB::table('warehouse_location_categories')->where('location_id', $location->id)
+            ->sharedLock()->pluck('category_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    private function categoryAllowed(array $allowed, int $categoryId): bool
+    {
+        return $allowed === [] || in_array($categoryId, $allowed, true);
+    }
+
+    private function categoryMessage(WarehouseLocation $location): string
+    {
+        return 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.';
     }
 
     public function committedWeights(array $locationIds): array

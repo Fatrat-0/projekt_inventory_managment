@@ -50,15 +50,17 @@ class WarehouseFloorPlanController extends Controller
         ];
 
         $bins = $plan['locations']->whereNotNull('system_id')->groupBy('system_id');
-        $plan['systems'] = $systems->map(function ($system) use ($bins, $products, $warehouse, $params) {
+        $requestedBin = $request->integer('bin');
+        $plan['systems'] = $systems->map(function ($system) use ($bins, $products, $warehouse, $params, $requestedBin) {
             $systemBins = $bins->get($system->id, collect());
+            $bin = $requestedBin && $systemBins->contains('id', $requestedBin) ? ['bin' => $requestedBin] : [];
             $stored = $products->only($systemBins->pluck('id')->all())->collapse()->groupBy('product_id')
                 ->map(fn ($rows) => (object) ['product_id' => $rows->first()->product_id, 'product_name' => $rows->first()->product_name,
                     'quantity' => $rows->sum('quantity')])->sortBy('product_name');
 
             return WarehouseStorageOverview::system($system, $systemBins) + $this->inventorySummary($stored)
                 + ['url' => route('warehouses.floor-plan.systems.update', [$warehouse, $system->id]),
-                    'frontUrl' => route('warehouses.storage-systems.show', $params + ['system' => $system->id])];
+                    'frontUrl' => route('warehouses.storage-systems.show', $params + ['system' => $system->id] + $bin).($bin ? '#rack-bin' : '')];
         })->values();
         $plan['locations'] = $plan['locations']->whereNull('system_id')->values();
 

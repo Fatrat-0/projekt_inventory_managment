@@ -28,6 +28,8 @@ export default initial => {
             this.observer.observe(this.$refs.viewport);
             const query = new URLSearchParams(window.location.search);
             const requested = systems.find(system => String(system.systemId) === query.get('system'));
+            const requestedLocation = initial.locations.find(location => String(location.id) === query.get('location'));
+            if (requestedLocation) this.selectedId = requestedLocation.id;
             if (requested) {
                 this.selectedId = requested.id;
                 if (query.get('created') === '1') {

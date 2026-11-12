@@ -107,7 +107,7 @@
                 </ul>
             </section>
 
-            <aside x-ref="inspector" aria-label="A tervrajz adatai" class="min-w-0 space-y-3 scroll-mt-24">
+            <aside id="floor-inspector" x-ref="inspector" aria-label="A tervrajz adatai" class="min-w-0 space-y-3 scroll-mt-24">
                 @if($plan['canEdit']) @include('warehouses.designer-wizard') @endif
                 <div x-show="!wizard" class="space-y-3" @change="if (editing && !systemEdit) record()">
                 @if($plan['canEdit'])

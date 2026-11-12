@@ -267,6 +267,7 @@ class DatabaseSeeder extends Seeder
         $this->call(ReturnQualityDemoSeeder::class);
         $this->call(WarehouseCapacityDemoSeeder::class);
         $this->call(WarehouseFloorPlanDemoSeeder::class);
+        $this->call(SmartPutawayDemoSeeder::class);
     }
 
     private function warehouse(array $data): Warehouse

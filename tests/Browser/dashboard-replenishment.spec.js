@@ -73,7 +73,8 @@ test('warehouse chart links and replenishment preparation work on mobile and sav
         await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Utánpótlás teszt '+state.sku+' ('+state.sku+')');
         await expect(page.getByRole('combobox', { name: 'Forrásraktár', exact: true })).toHaveValue('Teszt raktár · Test');
         await expect(page.getByRole('combobox', { name: 'Célraktár', exact: true })).toHaveValue('Északi tesztraktár · Bemutató célállomás');
-        await expect(page.getByRole('spinbutton', { name: 'Mennyiség (db)', exact: true })).toHaveValue('9');
+        await expect(page.getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('9');
+        await expect(page.getByRole('button', { name: 'Teljes kiadható mennyiség', exact: true })).toBeHidden();
         const before = await (await page.request.get('/movements/stock?product_id='+state.product+'&warehouse_id=1')).json();
         expect(before.quantity).toBe(20);
         await page.getByRole('button', { name: 'Átmozgatás indítása', exact: true }).click();
@@ -100,7 +101,7 @@ test('new panels, minimum editing and prepared transfers remain usable without J
         await expect(page.locator('input[name="from_warehouse_id"]')).toHaveValue('1');
         await expect(page.locator('input[name="to_warehouse_id"]')).toHaveValue('2');
         await expect(page.getByRole('combobox', { name: 'Forrásraktár', exact: true })).toHaveValue('Teszt raktár · Test');
-        await expect(page.getByRole('spinbutton', { name: 'Mennyiség (db)', exact: true })).toHaveValue('9');
+        await expect(page.getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('9');
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
         await page.getByRole('button', { name: 'Átmozgatás indítása', exact: true }).click();
         await expect(page.getByRole('status')).toContainText('Átmozgatás elindítva');

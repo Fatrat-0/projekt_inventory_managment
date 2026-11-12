@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{Category, InventoryTransfer, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
+use App\Models\{Category, InventoryTransfer, InventoryTransferSourceAllocation, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -165,10 +165,39 @@ class WarehouseCapacity
         ]);
     }
 
-    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId): void
+    /** Attempt to restore a pick after the caller locks the product and warehouse. */
+    public function restorePickedAllocation(InventoryTransferSourceAllocation $allocation, int $warehouseId, int $categoryId): bool
+    {
+        if ($allocation->warehouse_location_id === null) return false;
+        $location = WarehouseLocation::where('warehouse_id', $warehouseId)
+            ->whereKey($allocation->warehouse_location_id)->lockForUpdate()->first();
+        if (!$location) return false;
+
+        $original = $location->placements()->whereKey($allocation->source_placement_id)
+            ->where('stock_id', $allocation->stock_id)->lockForUpdate()->first();
+        $weight = ($original?->cargo_weight_grams ?? 0) + $allocation->cargo_weight_grams;
+        $slots = ($original?->pallet_slots ?? 0) + $allocation->pallet_slots;
+        try {
+            $this->assertFits($location, $weight, $slots, $categoryId, $original);
+        } catch (ValidationException) {
+            return false;
+        }
+        $data = ['quantity' => ($original?->quantity ?? 0) + $allocation->quantity, 'cargo_weight_grams' => $weight, 'pallet_slots' => $slots];
+        if ($original) {
+            $original->update($data);
+        } else {
+            $location->placements()->create($data + ['stock_id' => $allocation->stock_id]);
+        }
+
+        return true;
+    }
+
+    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId, ?WarehousePlacement $replaced = null): void
     {
         $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
         [$usedWeight, $usedSlots] = $this->usage($location);
+        $usedWeight -= $replaced?->cargo_weight_grams ?? 0;
+        $usedSlots -= $replaced?->pallet_slots ?? 0;
         $limits = ['location_grams' => $location->max_weight_grams - $usedWeight,
             'slots' => $location->max_pallet_slots === null ? null : $location->max_pallet_slots - $usedSlots];
         $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
@@ -177,6 +206,7 @@ class WarehouseCapacity
             $level = $location->level_id === null ? null : $location->level()->lockForUpdate()->firstOrFail();
             $bins = $system->locations()->lockForUpdate()->get(['id', 'level_id']);
             $committed = $this->committedWeights($bins->modelKeys());
+            if ($replaced) $committed[$location->id] -= $replaced->cargo_weight_grams;
             $limits['system_grams'] = $system->max_weight_grams - array_sum($committed);
             $limits['system_name'] = $system->name;
             if ($level) {

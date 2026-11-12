@@ -17,4 +17,9 @@ class WarehousePlacement extends Model
     {
         return $this->belongsTo(Stock::class);
     }
+
+    public function location()
+    {
+        return $this->belongsTo(WarehouseLocation::class, 'warehouse_location_id');
+    }
 }

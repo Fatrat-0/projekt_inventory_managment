@@ -58,6 +58,8 @@ Route::middleware(['auth'])->group(function () {
         Route::patch('/partners/{partner}/archive', [PartnerController::class, 'archive'])->name('partners.archive');
         Route::patch('/partners/{partner}/restore', [PartnerController::class, 'restore'])->name('partners.restore');
         Route::resource('partners', PartnerController::class)->except(['show']);
+        Route::get('/transfers/putaway-recommendations', [InventoryTransferController::class, 'putawayRecommendations'])->name('transfers.putaway-recommendations');
+        Route::get('/transfers/picking-sources', [InventoryTransferController::class, 'pickingSources'])->name('transfers.picking-sources');
         Route::resource('transfers', InventoryTransferController::class)->only(['index', 'create', 'store', 'show']);
         Route::resource('shipments', \App\Http\Controllers\ShipmentController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update']);
         Route::post('/shipments/{shipment}/start', [\App\Http\Controllers\ShipmentController::class, 'start'])->name('shipments.start');

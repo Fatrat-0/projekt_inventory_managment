@@ -8,28 +8,29 @@
     <div class="py-4">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white p-6 overflow-hidden shadow-sm sm:rounded-lg">
+                <x-operation-feedback />
                 <form action="{{ route('products.store') }}" method="POST">
                     @csrf
                     <div class="grid grid-cols-1 gap-6">
                         <div>
                             <label class="block font-medium text-sm text-gray-700">Terméknév</label>
-                            <input type="text" name="product_name" class="w-full border-gray-300 rounded-md shadow-sm" required>
+                            <input type="text" name="product_name" value="{{ is_scalar(old('product_name')) ? old('product_name') : '' }}" class="w-full border-gray-300 rounded-md shadow-sm" required>
                         </div>
                         <div>
                             <label class="block font-medium text-sm text-gray-700">Cikkszám (SKU)</label>
-                            <input type="text" name="sku" class="w-full border-gray-300 rounded-md shadow-sm" required>
+                            <input type="text" name="sku" value="{{ is_scalar(old('sku')) ? old('sku') : '' }}" class="w-full border-gray-300 rounded-md shadow-sm" required>
                         </div>
                         <div>
                             <label class="block font-medium text-sm text-gray-700">Kategória</label>
                             <select name="category_id" class="w-full border-gray-300 rounded-md shadow-sm">
                                 @foreach($categories as $category)
-                                    <option value="{{ $category->category_id }}">{{ $category->category_name }}</option>
+                                    <option value="{{ $category->category_id }}" @selected((string) $category->category_id === (is_scalar(old('category_id')) ? (string) old('category_id') : ''))>{{ $category->category_name }}</option>
                                 @endforeach
                             </select>
                         </div>
                         <div>
                             <label class="block font-medium text-sm text-gray-700">Ár (Ft)</label>
-                            <input type="number" name="price" class="w-full border-gray-300 rounded-md shadow-sm" required>
+                            <input type="number" name="price" value="{{ is_scalar(old('price')) ? old('price') : '' }}" class="w-full border-gray-300 rounded-md shadow-sm" required>
                         </div>
                         <!-- Egyedi minimum készlet -->
                         <div class="mt-4">
@@ -38,6 +39,7 @@
                             <p class="text-xs text-gray-500 mt-1">Hagyd üresen, ha a kategória alapértelmezett minimumát szeretnéd használni. Ha ide írsz egy számot, az felülbírálja a kategória szabályát.</p>
                             <x-input-error :messages="$errors->get('min_stock_override')" class="mt-2" />
                         </div>
+                        @include('products.packaging-fields', ['product' => null])
                         <div class="flex items-center justify-end mt-4">
                             <!--<button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
                                 Mentés

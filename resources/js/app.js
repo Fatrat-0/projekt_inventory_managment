@@ -2,6 +2,7 @@ import './bootstrap';
 
 import Alpine from 'alpinejs';
 import movementForm from './components/movement-form';
+import transferPutaway from './components/transfer-putaway';
 import autocompletePicker from './components/autocomplete-picker';
 import listingSearch from './components/listing-search';
 import shipmentBuilder from './components/shipment-builder';
@@ -36,6 +37,7 @@ Alpine.data('productListing', () => ({
 }));
 
 Alpine.data('movementForm', movementForm);
+Alpine.data('transferPutaway', transferPutaway);
 Alpine.data('autocompletePicker', autocompletePicker);
 Alpine.data('listingSearch', listingSearch);
 Alpine.data('shipmentBuilder', shipmentBuilder);

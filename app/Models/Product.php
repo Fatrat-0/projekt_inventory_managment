@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Product extends Model
 {
@@ -16,6 +17,11 @@ class Product extends Model
     public function category()
     {
         return $this->belongsTo(Category::class, 'category_id', 'category_id');
+    }
+
+    public function defaultPackaging(): HasOne
+    {
+        return $this->hasOne(ProductPackaging::class, 'product_id', 'product_id');
     }
 
     // Egy termék TÖBB raktárban is lehet (Készletsorok)

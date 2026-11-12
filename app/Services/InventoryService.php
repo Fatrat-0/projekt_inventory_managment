@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Stock, User};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ProductPackaging, ReturnQualityAction, Stock, User};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -12,7 +12,7 @@ use Illuminate\Support\Str;
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
 {
-    public function __construct(private WarehouseCapacity $capacity)
+    public function __construct(private WarehouseCapacity $capacity, private SmartPicking $picking)
     {
     }
 
@@ -200,21 +200,46 @@ class InventoryService
             'to_warehouse_id' => (int)$data['to_warehouse_id'], 'quantity' => (int)$data['quantity'], 'user_id' => (int)$data['user_id']];
         if (isset($data['replenishment_stock_id'])) $payload['replenishment_stock_id'] = (int)$data['replenishment_stock_id'];
         $payload += WarehouseCapacity::cargo($data);
-        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        $boxCount = isset($data['box_count']) ? (int) $data['box_count'] : null;
+        $calculatedWeight = ($data['cargo_weight_source'] ?? null) === TransferCargoWeight::SOURCE_CALCULATED;
+        $packagingRevision = $data['cargo_weight_packaging'] ?? null;
+        $sources = array_key_exists('source_allocations', $data)
+            ? $this->picking->normalizeAllocations($data['source_allocations'], $payload['quantity'])
+            : [];
+        $hashData = $payload;
+        // An explicit unassigned-only pick is equivalent to the legacy implicit pick.
+        if ($sources !== [] && (count($sources) > 1 || $sources[0]['location_id'] !== null)) {
+            $hashData['source_allocations'] = $sources;
+        }
+        $hash = hash('sha256', json_encode($hashData, JSON_THROW_ON_ERROR));
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
         try {
-            return DB::transaction(function () use ($payload, $requestKey, $hash) {
+            return DB::transaction(function () use ($payload, $sources, $requestKey, $hash, $boxCount, $calculatedWeight, $packagingRevision) {
                 $requestId = $requestKey === null ? null : DB::table('inventory_transfer_requests')->insertGetId([
                     'user_id' => $payload['user_id'], 'request_key' => $requestKey, 'payload_hash' => $hash, 'created_at' => now(), 'updated_at' => now(),
                 ]);
                 $product = $this->lockProduct($payload['product_id']);
+                if ($boxCount !== null || $calculatedWeight || $packagingRevision !== null) {
+                    $packaging = $product->defaultPackaging()->lockForUpdate()->first();
+                    if ($packagingRevision !== null) {
+                        TransferCargoWeight::assertPackagingRevision($packaging, $packagingRevision);
+                    }
+                    if ($boxCount !== null) $this->assertBoxQuantity($packaging, $boxCount, $payload['quantity']);
+                    if ($calculatedWeight) {
+                        TransferCargoWeight::assertCalculated($packaging, $payload['quantity'], $payload['cargo_weight_grams'] ?? null);
+                    }
+                }
                 $this->capacity->lockWarehouses([$payload['from_warehouse_id'], $payload['to_warehouse_id']]);
                 $this->capacity->checkReservation($payload, (int) $product->category_id);
                 if (isset($payload['replenishment_stock_id'])) $this->checkReplenishment($payload);
+                $picked = $sources === [] ? [] : $this->picking->withdraw(
+                    $payload['from_warehouse_id'], $payload['product_id'], $payload['quantity'], $sources,
+                );
                 $this->changeStock($payload['product_id'], $payload['from_warehouse_id'], -$payload['quantity']);
                 $transferData = $payload;
                 unset($transferData['replenishment_stock_id']);
                 $transfer = InventoryTransfer::create(array_merge($transferData, ['status' => 'pending']));
+                if ($picked !== []) $transfer->sourceAllocations()->createMany($picked);
                 if ($requestId !== null) {
                     DB::table('inventory_transfer_requests')->where('id', $requestId)->update(['transfer_id' => $transfer->id]);
                 }
@@ -226,6 +251,20 @@ class InventoryService
             if (!$previous || !$previous->transfer_id) throw $e;
             if (!hash_equals($previous->payload_hash, $hash)) throw ValidationException::withMessages(['request_key' => 'Ezt a beküldést már más adatokkal rögzítették. Új átmozgatáshoz nyiss új űrlapot.']);
             return InventoryTransfer::whereKey($previous->transfer_id)->sharedLock()->firstOrFail();
+        }
+    }
+
+    private function assertBoxQuantity(?ProductPackaging $packaging, int $boxCount, int $quantity): void
+    {
+        $piecesPerBox = $packaging?->pieces_per_package ?? 0;
+        if ($piecesPerBox < 1) {
+            throw ValidationException::withMessages(['box_count' => 'A termékhez nincs érvényes csomagolás. Add meg a mennyiséget darabban.']);
+        }
+        if ($boxCount < 1 || $boxCount > intdiv(2147483647, $piecesPerBox)) {
+            throw ValidationException::withMessages(['box_count' => 'A dobozokból számolt mennyiség 1 és 2 147 483 647 db között lehet.']);
+        }
+        if ($boxCount * $piecesPerBox !== $quantity) {
+            throw ValidationException::withMessages(['box_count' => 'A megadott darabszám eltér az aktuális csomagolásból számolt mennyiségtől. Ellenőrizd a dobozszámot.']);
         }
     }
 
@@ -244,11 +283,12 @@ class InventoryService
         }
     }
 
-    public function finalizeTransfer(InventoryTransfer $transfer, bool $complete, bool $shipmentManaged = false): void
+    /** @return int Quantity from former bins requiring re-placement after cancellation. */
+    public function finalizeTransfer(InventoryTransfer $transfer, bool $complete, bool $shipmentManaged = false): int
     {
-        DB::transaction(function () use ($transfer, $complete, $shipmentManaged) {
+        return DB::transaction(function () use ($transfer, $complete, $shipmentManaged) {
             // Transfer parties and product are immutable. Lock their warehouses before touching capacity or stock.
-            $this->lockProduct((int) $transfer->product_id);
+            $product = $this->lockProduct((int) $transfer->product_id);
             $this->capacity->lockWarehouses([$transfer->from_warehouse_id, $transfer->to_warehouse_id]);
             $locked = InventoryTransfer::whereKey($transfer->getKey())->lockForUpdate()->firstOrFail();
             if (!$shipmentManaged && \App\Models\ShipmentItem::where('transfer_id', $locked->id)->sharedLock()->first(['id'])) {
@@ -259,11 +299,20 @@ class InventoryService
             }
             $warehouseId = $complete ? $locked->to_warehouse_id : $locked->from_warehouse_id;
             $this->changeStock((int) $locked->product_id, (int) $warehouseId, (int) $locked->quantity);
+            $needsPlacement = 0;
             if ($complete && $locked->to_location_id !== null) {
                 $stock = Stock::where('product_id', $locked->product_id)->where('warehouse_id', $warehouseId)->lockForUpdate()->firstOrFail();
                 $this->capacity->receive($locked, $stock);
+            } elseif (!$complete) {
+                foreach ($locked->sourceAllocations()->whereNotNull('location_code')->orderBy('id')->lockForUpdate()->get() as $allocation) {
+                    $restored = $this->capacity->restorePickedAllocation($allocation, (int) $warehouseId, (int) $product->category_id);
+                    $allocation->update(['returned_to_location' => $restored]);
+                    if (!$restored) $needsPlacement += $allocation->quantity;
+                }
             }
             $locked->update(['status' => $complete ? 'completed' : 'cancelled']);
+
+            return $needsPlacement;
         }, 3);
     }
 

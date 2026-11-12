@@ -56,18 +56,25 @@ class WarehouseLocation extends Model
         return $this->max_pallet_slots - (int) $this->occupied_slots - (int) $this->reserved_slots;
     }
 
-    public static function pickerOptions(): array
+    public static function pickerOptions(?callable $details = null): array
     {
-        $locations = self::withCapacityUsage()->orderBy('code')->get();
+        $query = self::withCapacityUsage()->orderBy('code');
+        if ($details) $query->with(['system.zone', 'level']);
+        $locations = $query->get();
         $free = WarehouseStorageOverview::locationFreeWeights($locations, allBinsLoaded: true);
 
         return $locations->groupBy('warehouse_id')
-            ->map(fn ($locations) => $locations->where('active', true)->map(fn (self $location) => [
-                'id' => (string) $location->id,
-                'kind' => $location->kind,
-                'label' => $location->code.' · '.$location->name.' ('.self::formatWeight($free[$location->id] ?? $location->freeWeight()).' kg'
-                    .($location->freeSlots() === null ? '' : ', '.$location->freeSlots().' raklaphely').' szabad)',
-            ])->values()->all())->all();
+            ->map(fn ($locations) => $locations->where('active', true)->map(function (self $location) use ($details, $free) {
+                $extra = $details ? $details($location) : [];
+
+                return [
+                    'id' => (string) $location->id,
+                    'kind' => $location->kind,
+                    'label' => $location->code.' · '.($extra['position_label'] ?? $location->name).' ('
+                        .self::formatWeight($free[$location->id] ?? $location->freeWeight()).' kg'
+                        .($location->freeSlots() === null ? '' : ', '.$location->freeSlots().' raklaphely').' szabad)',
+                ] + $extra;
+            })->values()->all())->all();
     }
 
     public static function formatWeight(int $grams): string

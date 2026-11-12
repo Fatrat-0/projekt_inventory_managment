@@ -1,6 +1,6 @@
 export default (initial) => ({
     ...initial,
-    value: String(initial.value ?? ''), query: '', open: false, active: -1,
+    value: String(initial.value ?? ''), query: '', open: false, active: -1, available: null,
     init() {
         const selected = this.items.find(item => String(item.value) === this.value);
         this.query = selected?.label ?? '';
@@ -16,10 +16,32 @@ export default (initial) => ({
     get results() {
         const selected = this.items.find(item => String(item.value) === this.value);
         const words = this.normalize(selected?.label === this.query ? '' : this.query).trim().split(/\s+/).filter(Boolean);
-        return this.items.filter(item => words.every(word => this.normalize(item.label).includes(word)));
+        const matches = [];
+        for (const item of this.items) {
+            if (this.available && !this.available.has(String(item.value))) continue;
+            const text = this.normalize(item.search ?? item.label);
+            if (!words.every(word => text.includes(word))) continue;
+            matches.push(item);
+            if (matches.length === this.maxResults) break;
+        }
+        return matches;
+    },
+    syncValue(value) {
+        value = String(value ?? '');
+        if (this.value === value) return;
+        const item = this.items.find(item => String(item.value) === value);
+        this.value = item ? value : '';
+        this.query = item?.label ?? '';
+        this.open = false;
+        this.active = -1;
+        this.syncValidity();
+    },
+    setAvailable(values) {
+        this.available = values === null ? null : new Set(values);
+        this.active = -1;
     },
     syncValidity() {
-        this.$refs.input.setCustomValidity(!this.value && this.query ? 'Válassz egy elemet a találati listából.' : '');
+        this.$refs.input?.setCustomValidity(!this.value && this.query ? 'Válassz egy elemet a találati listából.' : '');
     },
     notify() { this.$dispatch(this.eventName, { value: this.value }); },
     edit() {

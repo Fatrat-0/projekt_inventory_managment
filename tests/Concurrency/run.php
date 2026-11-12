@@ -156,7 +156,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements'];
+    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -782,6 +782,34 @@ try {
         check((int) $usage->reserved_weight === 60000 && (int) $usage->reserved_slots === 1, 'Capacity reservation was lost or duplicated.');
         check(array_sum(array_map(fn ($stock) => $stock->fresh()->quantity, $balances)) === 15, 'Rejected reservation changed source stock.');
         echo 'PASS: shared warehouse '.$limit.' capacity across different products and outer snapshots'.PHP_EOL;
+    }
+    $otherPicker = User::factory()->create(['role' => 'worker']);
+    foreach ([false, true] as $outerSnapshot) {
+        $suffix = (int) $outerSnapshot;
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Concurrent pick '.$suffix, 'sku' => 'PICK-RACE-'.$suffix, 'price' => 1]);
+        $source = Warehouse::create(['warehouse_name' => 'Picking source '.$suffix]);
+        $target = Warehouse::create(['warehouse_name' => 'Picking target '.$suffix]);
+        $stock = Stock::create(['warehouse_id' => $source->getKey(), 'product_id' => $product->getKey(), 'quantity' => 20]);
+        $bin = $source->storageLocations()->create(['code' => 'B-01', 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
+        $bin->placements()->create(['stock_id' => $stock->id, 'quantity' => 10, 'cargo_weight_grams' => 5555]);
+        $data = [
+            'product_id' => $product->getKey(), 'from_warehouse_id' => $source->getKey(), 'to_warehouse_id' => $target->getKey(),
+            'quantity' => 7, 'source_allocations' => [['location_id' => $bin->id, 'quantity' => 7]],
+        ];
+        $jobs = array_map(
+            fn (User $picker) => ['action' => 'start', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(), 'data' => $data + ['user_id' => $picker->id]],
+            [$user, $otherPicker],
+        );
+
+        check(race($database, $product->getKey(), $jobs) === ['OK', 'REJECTED'], 'Two concurrent pickers withdrew the same bin stock.');
+        $transfer = InventoryTransfer::where('product_id', $product->getKey())->sole();
+        $picked = $transfer->sourceAllocations()->sole();
+        $remaining = $bin->placements()->sole();
+        check($stock->fresh()->quantity === 13 && $remaining->quantity === 3, 'Concurrent picking left inconsistent warehouse or bin stock.');
+        check($picked->quantity === 7 && $picked->warehouse_location_id === $bin->id, 'Concurrent picking left incorrect source history.');
+        check($picked->cargo_weight_grams + $remaining->cargo_weight_grams === 5555, 'Concurrent picking did not preserve bin load.');
+        check(DB::table('inventory_transfer_requests')->whereIn('request_key', array_column($jobs, 'requestKey'))->count() === 1, 'Rejected picking request left a write.');
+        echo 'PASS: concurrent withdrawals from one bin'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
     }
     $placeWarehouse = Warehouse::create(['warehouse_name' => 'Repeated placement']);
     $placeLocation = $placeWarehouse->storageLocations()->create(['code' => 'P-1', 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);

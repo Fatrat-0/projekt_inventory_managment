@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -57,8 +58,35 @@ class User extends Authenticatable
                     'user' => 'A fiók minősítési naplóhoz kapcsolódik, ezért nem törölhető.',
                 ]);
             }
+            if (($exception->errorInfo[0] ?? $exception->getCode()) === '23000') {
+                if ($this->initiatedTransferIntents()->sharedLock()->first(['id']) || $this->transferWorkflowEvents()->sharedLock()->first(['id'])) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'user' => 'A fiók átmozgatási igényhez vagy annak eseménynaplójához kapcsolódik, ezért nem törölhető.',
+                    ]);
+                }
+                if ($this->warehouseMemberships()->sharedLock()->first(['id'])) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'user' => 'A fiók raktári tagsággal rendelkezik. Törlés előtt szüntesd meg a tagságot.',
+                    ]);
+                }
+            }
             throw $exception;
         }
+    }
+
+    public function warehouseMemberships(): HasMany
+    {
+        return $this->hasMany(WarehouseMembership::class);
+    }
+
+    public function initiatedTransferIntents(): HasMany
+    {
+        return $this->hasMany(TransferIntent::class, 'requested_by');
+    }
+
+    public function transferWorkflowEvents(): HasMany
+    {
+        return $this->hasMany(TransferWorkflowEvent::class, 'actor_id');
     }
 
     /**

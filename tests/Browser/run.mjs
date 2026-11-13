@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as pause } from 'node:timers/promises';
 
@@ -13,6 +15,7 @@ const waitExit = child => new Promise((resolve, reject) => {
     child.once('exit', code => resolve(code));
 });
 let server;
+let runtime;
 try {
     // Refuse to reuse any pre-existing application on the test port.
     await new Promise((resolve, reject) => {
@@ -20,11 +23,13 @@ try {
         probe.once('error', reject);
         probe.listen(8019, '127.0.0.1', () => probe.close(resolve));
     });
-    const prepared = await waitExit(spawn('php', ['tests/Browser/prepare.php'], { cwd: root, stdio: 'inherit', windowsHide: true }));
+    runtime = await mkdtemp(resolve(tmpdir(), 'inventory-browser-'));
+    const env = { ...process.env, INVENTORY_BROWSER_RUNTIME: runtime };
+    const prepared = await waitExit(spawn('php', ['tests/Browser/prepare.php'], { cwd: root, env, stdio: 'inherit', windowsHide: true }));
     if (prepared !== 0) throw new Error('Could not prepare the isolated browser database.');
     let serverError;
     let log = '';
-    server = spawn('php', ['-S', '127.0.0.1:8019', '-t', 'public', 'tests/Browser/router.php'], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+    server = spawn('php', ['-S', '127.0.0.1:8019', '-t', 'public', 'tests/Browser/router.php'], { cwd: root, env, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     server.once('error', error => { serverError = error; });
     server.stderr.on('data', data => { log = (log + data.toString()).slice(-4000); });
     const deadline = Date.now() + 30000;
@@ -47,5 +52,12 @@ try {
         const stopped = waitExit(server);
         server.kill();
         await stopped;
+    }
+    if (runtime) {
+        const temporaryRoot = resolve(tmpdir());
+        if (dirname(runtime) !== temporaryRoot || !/^inventory-browser-[A-Za-z0-9]+$/.test(basename(runtime))) {
+            throw new Error('Refusing to remove a path outside the browser test directory.');
+        }
+        await rm(runtime, { recursive: true, force: true });
     }
 }

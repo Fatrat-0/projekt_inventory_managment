@@ -1,5 +1,6 @@
 import movementForm from './movement-form';
 import transferPicking from './transfer-picking';
+import transferQuantity, { positiveInteger } from './transfer-quantity';
 
 const checkLabels = {
     warehouse: 'Célraktár',
@@ -21,9 +22,6 @@ const missingInputs = {
 };
 
 const weightFormat = new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 3 });
-const hasPositiveIntegerDigits = value => /^[1-9]\d*$/.test(String(value));
-const positiveInteger = (value, max) => hasPositiveIntegerDigits(value) && Number(value) <= max;
-const maxQuantity = 2147483647;
 const maxWeightGrams = 1000000000;
 const validWeight = value => /^(?:\d+(?:\.\d{0,3})?|\.\d{1,3})$/.test(value)
     && Number(value) >= 0.001 && Number(value) <= maxWeightGrams / 1000;
@@ -31,18 +29,16 @@ const validWeight = value => /^(?:\d+(?:\.\d{0,3})?|\.\d{1,3})$/.test(value)
 export default ({ stock, ...initial }) => {
     const movement = movementForm(stock);
     const { init: initStock, restored: restoreStock, submit: submitTransfer } = movement;
-    const initialPackaging = initial.packagings[stock.product];
-    const initialBoxMode = Boolean(initialPackaging
-        && positiveInteger(initial.boxCount, Math.floor(maxQuantity / initialPackaging.pieces))
-        && Number(initial.boxCount) * initialPackaging.pieces === Number(stock.quantity));
 
     Object.defineProperties(movement, Object.getOwnPropertyDescriptors(transferPicking(initial)));
+    Object.defineProperties(movement, Object.getOwnPropertyDescriptors(transferQuantity({
+        packaging: initial.packagings[stock.product],
+        pieces: stock.quantity,
+        boxCount: initial.boxCount,
+        boxFieldId: 'transfer-box-count',
+    })));
     return Object.defineProperties(movement, Object.getOwnPropertyDescriptors({
         ...initial,
-        quantityDraft: initialBoxMode ? initial.boxCount : stock.quantity,
-        lastValidQuantity: positiveInteger(stock.quantity, maxQuantity) ? stock.quantity : '',
-        boxMode: initialBoxMode,
-        confirmBoxChange: false,
         confirmedWeightBasis: null,
         stalePackaging: false,
         recommendations: [],
@@ -116,23 +112,8 @@ export default ({ stock, ...initial }) => {
         },
         get needsWeight() { return Boolean(this.destinationChoices?.length); },
         get packaging() { return this.packagings[this.product]; },
-        get maxBoxCount() { return this.packaging ? Math.floor(maxQuantity / this.packaging.pieces) : 0; },
-        get quantity() {
-            const limit = this.boxMode ? this.maxBoxCount : maxQuantity;
-            if (!positiveInteger(this.quantityDraft, limit)) return '';
-            return this.boxMode ? String(Number(this.quantityDraft) * this.packaging.pieces) : this.quantityDraft;
-        },
-        get quantityValid() { return this.quantity !== ''; },
         get quantityExceedsStock() {
             return this.quantityValid && this.stock !== null && Number(this.quantity) > this.stock;
-        },
-        get quantityInputError() {
-            if (this.quantityDraft === '' || this.quantityValid) return '';
-            if (!hasPositiveIntegerDigits(this.quantityDraft)) {
-                return this.boxMode ? 'Pozitív egész dobozszámot adj meg.' : 'Pozitív egész darabszámot adj meg.';
-            }
-            return this.boxMode ? 'Legfeljebb ' + this.maxBoxCount.toLocaleString('hu-HU') + ' dobozt adhatsz meg.'
-                : 'Legfeljebb 2 147 483 647 darabot adhatsz meg.';
         },
         get summaryWeight() {
             return this.quantityValid && this.effectiveWeight ? weightFormat.format(Number(this.effectiveWeight)) + ' kg' : '–';
@@ -187,34 +168,6 @@ export default ({ stock, ...initial }) => {
         useCalculatedWeight() {
             this.weightMode = 'automatic';
             this.confirmedWeightBasis = null;
-        },
-
-        editQuantity(value) {
-            this.quantityDraft = value;
-            this.confirmBoxChange = false;
-            if (this.quantityValid) this.lastValidQuantity = this.quantity;
-        },
-
-        useBoxes(reset = false) {
-            if (!this.packaging || this.boxMode) return;
-            const pieces = this.packaging.pieces;
-            if (!reset && this.quantityDraft !== '' && (!this.quantityValid || Number(this.quantity) % pieces !== 0)) {
-                this.confirmBoxChange = true;
-                return;
-            }
-            const boxes = reset || !this.quantity ? '' : String(Number(this.quantity) / pieces);
-            this.boxMode = true;
-            this.editQuantity(boxes);
-            this.$nextTick(() => document.getElementById('transfer-box-count')?.focus());
-        },
-
-        usePieces() {
-            if (this.boxMode) {
-                const pieces = this.quantity || this.lastValidQuantity;
-                this.boxMode = false;
-                this.editQuantity(pieces);
-            }
-            this.confirmBoxChange = false;
         },
 
         fillAvailableQuantity() {

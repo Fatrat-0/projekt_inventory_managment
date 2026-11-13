@@ -3,6 +3,8 @@ import './bootstrap';
 import Alpine from 'alpinejs';
 import movementForm from './components/movement-form';
 import transferPutaway from './components/transfer-putaway';
+import transferIntentCreate from './components/transfer-intent-create';
+import transferIntentDecision from './components/transfer-intent-decision';
 import autocompletePicker from './components/autocomplete-picker';
 import listingSearch from './components/listing-search';
 import shipmentBuilder from './components/shipment-builder';
@@ -38,6 +40,8 @@ Alpine.data('productListing', () => ({
 
 Alpine.data('movementForm', movementForm);
 Alpine.data('transferPutaway', transferPutaway);
+Alpine.data('transferIntentCreate', transferIntentCreate);
+Alpine.data('transferIntentDecision', transferIntentDecision);
 Alpine.data('autocompletePicker', autocompletePicker);
 Alpine.data('listingSearch', listingSearch);
 Alpine.data('shipmentBuilder', shipmentBuilder);

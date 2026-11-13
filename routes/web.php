@@ -10,6 +10,8 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
+use App\Http\Controllers\TransferIntentController;
+use App\Http\Controllers\TransferIntentPageController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ExportController;
@@ -30,6 +32,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
 // Csak bejelentkezett felhasználóknak (auth), és beállítjuk a jogosultságokat (role)
 Route::middleware(['auth'])->group(function () {
+
+    Route::get('/atmozgatasok', [TransferIntentPageController::class, 'index'])->name('transfer-intent-pages.index');
+    Route::get('/atmozgatasok/uj-igeny', [TransferIntentPageController::class, 'create'])->name('transfer-intent-pages.create');
+    Route::get('/atmozgatasok/igenyek/{transferIntent}', [TransferIntentPageController::class, 'show'])->whereNumber('transferIntent')->name('transfer-intent-pages.show');
+
+    Route::resource('transfer-intents', TransferIntentController::class)
+        ->parameters(['transfer-intents' => 'transferIntent'])->only(['index', 'store', 'show']);
+    Route::patch('/transfer-intents/{transferIntent}/approve', [TransferIntentController::class, 'approve'])->name('transfer-intents.approve');
+    Route::patch('/transfer-intents/{transferIntent}/reject', [TransferIntentController::class, 'reject'])->name('transfer-intents.reject');
+    Route::patch('/transfer-intents/{transferIntent}/cancel', [TransferIntentController::class, 'cancel'])->name('transfer-intents.cancel');
 
     // Breeze Profil kezelése
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

@@ -2,8 +2,8 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse, WarehouseLocation};
-use App\Services\{InventoryService, MasterDataEditor, ShipmentService, WarehouseCapacity, WarehouseFloorPlan, WarehouseStorageDesigner};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, TransferIntent, TransferWorkflowEvent, User, Warehouse, WarehouseLocation};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentService, TransferIntentService, WarehouseCapacity, WarehouseFloorPlan, WarehouseStorageDesigner};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
@@ -38,6 +38,18 @@ function saveDashboardLayout(array $job): void
     check($response->getStatusCode() === 200, 'Dashboard layout did not save.');
 }
 
+function runIntentOperation(array $job): void
+{
+    $service = app(TransferIntentService::class);
+    $actor = User::findOrFail($job['actor']);
+    $result = $job['operation'] === 'create'
+        ? $service->create($actor, $job['data'])
+        : $service->{$job['operation']}($actor, TransferIntent::findOrFail($job['id']), $job['data']);
+    $status = ['create' => 'pending_approval', 'approve' => 'approved', 'reject' => 'rejected'][$job['operation']];
+    check($result['intent']['status'] === $status && $result['intent']['version'] === ($job['operation'] === 'create' ? 1 : 2),
+        'The intent operation did not return the winning transition snapshot.');
+}
+
 if (($argv[1] ?? '') === '--worker') {
     connectTestDatabase($argv[2]);
     $job = json_decode(base64_decode($argv[3]), true, flags: JSON_THROW_ON_ERROR);
@@ -67,6 +79,7 @@ if (($argv[1] ?? '') === '--worker') {
             'shipment_start' => app(ShipmentService::class)->start(Shipment::findOrFail($job['id']), $job['actor'], 1),
             'shipment_receive' => app(ShipmentService::class)->receive(Shipment::findOrFail($job['id']), ShipmentStop::findOrFail($job['stop']), $job['actor']),
             'shipment_cancel' => app(ShipmentService::class)->cancel(Shipment::findOrFail($job['id'])),
+            'transfer_intent' => runIntentOperation($job),
             'master_edit' => MasterDataEditor::update(
                 (new ($job['model']))->findOrFail($job['id']), Request::create('/', 'PUT', ['lock_version' => 1]), $job['data'], '/'),
             'partner_archive' => (new \App\Http\Controllers\PartnerController)->archive(Request::create('/', 'PATCH'), Partner::findOrFail($job['id'])),
@@ -75,7 +88,7 @@ if (($argv[1] ?? '') === '--worker') {
         };
         if ($outerSnapshot) DB::commit();
         echo "OK\n";
-    } catch (ValidationException $e) {
+    } catch (ValidationException|\Symfony\Component\HttpKernel\Exception\ConflictHttpException $e) {
         if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
         echo "REJECTED\n";
     } catch (Throwable $e) {
@@ -156,7 +169,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations'];
+    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations', 'transfer_intents', 'transfer_workflow_events', 'warehouse_memberships'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -864,7 +877,69 @@ try {
     check(race($database, [], [$configure, $reserve], recordBarrier: $rackWarehouse) === ['OK', 'REJECTED'], 'An incompatible category rule and reservation both succeeded.');
     check($bin->allowedCategories()->count() + $bin->reservations()->count() === 1, 'The bin has an incompatible reservation.');
     echo "PASS: a bin category restriction and an incompatible reservation cannot both succeed\n";
-    echo "69 MySQL concurrency checks passed.\n";
+    $requester = User::factory()->create(['role' => 'worker']);
+    $supervisor = User::factory()->create(['role' => 'worker']);
+    $secondSupervisor = User::factory()->create(['role' => 'worker']);
+    $intentSource = Warehouse::create(['warehouse_name' => 'Intent source']);
+    $intentDestination = Warehouse::create(['warehouse_name' => 'Intent destination']);
+    $intentSource->memberships()->create(['user_id' => $requester->id, 'role' => 'requester']);
+    $intentSource->memberships()->create(['user_id' => $supervisor->id, 'role' => 'supervisor']);
+    $intentSource->memberships()->create(['user_id' => $secondSupervisor->id, 'role' => 'supervisor']);
+    $intentProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Concurrent intents', 'sku' => 'INTENT-RACE', 'price' => 1]);
+    $intentService = app(TransferIntentService::class);
+    $intentData = ['product_id' => $intentProduct->getKey(), 'from_warehouse_id' => $intentSource->getKey(),
+        'to_warehouse_id' => $intentDestination->getKey(), 'quantity' => 12];
+    $intentRaceCount = 0;
+
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['approve versus reject', 'duplicate approval', 'same key with a different actor'] as $scenario) {
+            $result = $intentService->create($requester, $intentData + ['operation_key' => (string) Str::uuid()]);
+            $intent = TransferIntent::findOrFail($result['intent']['id']);
+            $approve = ['action' => 'transfer_intent', 'operation' => 'approve', 'id' => $intent->id, 'actor' => $supervisor->id,
+                'outerSnapshot' => $outerSnapshot, 'data' => ['version' => 1, 'operation_key' => (string) Str::uuid()]];
+            $other = $approve;
+            if ($scenario === 'approve versus reject') {
+                $other['operation'] = 'reject';
+                $other['actor'] = $secondSupervisor->id;
+                $other['data'] = ['version' => 1, 'operation_key' => (string) Str::uuid(), 'reason' => 'Párhuzamos elutasítás'];
+            }
+            if ($scenario === 'same key with a different actor') $other['actor'] = $secondSupervisor->id;
+
+            $outcomes = race($database, [], [$approve, $other], recordBarrier: $intent);
+            $expected = $scenario === 'duplicate approval' ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+            check($outcomes === $expected, $scenario.': incorrect concurrent decisions.');
+            $intent->refresh();
+            $decision = $intent->events()->where('event_type', '!=', 'created')->sole();
+            check($intent->version === 2 && $intent->status === $decision->event_type
+                && $decision->from_status === 'pending_approval' && $decision->to_status === $intent->status,
+                $scenario.': intent version and decision history diverged.');
+            check($intent->events()->count() === 2, $scenario.': a duplicate or incomplete event history was written.');
+            $intentRaceCount++;
+            echo 'PASS: intent '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+
+    foreach (['same payload', 'different payload'] as $scenario) {
+        $key = (string) Str::uuid();
+        $create = ['action' => 'transfer_intent', 'operation' => 'create', 'actor' => $requester->id, 'outerSnapshot' => true,
+            'data' => $intentData + ['operation_key' => $key]];
+        $other = $create;
+        if ($scenario === 'different payload') $other['data']['quantity'] = 13;
+
+        $before = TransferIntent::count();
+        $outcomes = race($database, $intentProduct->getKey(), [$create, $other]);
+        $expected = $scenario === 'same payload' ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+        check($outcomes === $expected, $scenario.': incorrect concurrent creation outcomes.');
+        $event = TransferWorkflowEvent::where('operation_key', $key)->sole();
+        check(TransferIntent::count() === $before + 1 && $event->intent->events()->count() === 1
+            && $event->actor_id === $requester->id && $event->event_type === 'created',
+            $scenario.': concurrent creation left a duplicate intent or missing audit event.');
+        $intentRaceCount++;
+        echo 'PASS: concurrent intent creation with '.$scenario.PHP_EOL;
+    }
+    check(Stock::where('product_id', $intentProduct->getKey())->doesntExist()
+        && InventoryTransfer::where('product_id', $intentProduct->getKey())->doesntExist(), 'Intent decisions booked inventory.');
+    echo (69 + $intentRaceCount)." MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

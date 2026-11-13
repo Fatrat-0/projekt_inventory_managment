@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Warehouse extends Model
 {
@@ -29,6 +30,11 @@ class Warehouse extends Model
     public function shipmentStops() { return $this->hasMany(ShipmentStop::class, 'warehouse_id', 'warehouse_id'); }
     public function storageLocations() { return $this->hasMany(WarehouseLocation::class, 'warehouse_id', 'warehouse_id'); }
     public function storageSystems() { return $this->hasManyThrough(WarehouseStorageSystem::class, WarehouseStorageZone::class, 'warehouse_id', 'zone_id', 'warehouse_id'); }
+
+    public function memberships(): HasMany
+    {
+        return $this->hasMany(WarehouseMembership::class, 'warehouse_id');
+    }
 
     public function scopeWithUsage($query)
     {

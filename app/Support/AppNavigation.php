@@ -18,7 +18,7 @@ class AppNavigation
             $groups[] = ['label' => 'Készletkezelés', 'items' => [
                 ['route' => 'stock.index', 'label' => 'Készlet', 'icon' => 'layers', 'patterns' => $manage ? ['stock.*'] : ['stock.*', 'warehouses.locations.*', 'warehouses.floor-plan.*', 'warehouses.storage-systems.*']],
                 ['route' => 'movements.index', 'label' => 'Készletmozgások', 'icon' => 'activity', 'patterns' => ['movements.*', 'quality-returns.*']],
-                ['route' => 'transfers.index', 'label' => 'Átmozgatások', 'icon' => 'truck', 'patterns' => ['transfers.*', 'shipments.*']],
+                ['route' => 'transfer-intent-pages.index', 'label' => 'Átmozgatások', 'icon' => 'truck', 'patterns' => ['transfer-intent-pages.*', 'transfers.*', 'shipments.*']],
             ]];
             $groups[] = ['label' => 'Törzsadatok', 'items' => array_values(array_filter([
                 ['route' => 'products.index', 'label' => 'Termékek', 'icon' => 'box', 'patterns' => ['products.*']],
@@ -43,6 +43,7 @@ class AppNavigation
             'partners' => ['Partnerek', 'partners.index', 'Új partner'],
             'stock' => ['Készlet', 'stock.index', null],
             'movements' => ['Készletmozgások', 'movements.index', 'Új készletmozgás'],
+            'transfer-intent-pages' => ['Átmozgatások', 'transfer-intent-pages.index', 'Új átmozgatási igény'],
             'transfers' => ['Átmozgatások', 'transfers.index', 'Új átmozgatás'],
             'shipments' => ['Szállítmányok', 'shipments.index', 'Új rakodási terv'],
             'quality-returns' => ['Visszáru-minősítés', 'quality-returns.index', null],
@@ -63,7 +64,7 @@ class AppNavigation
             default => null,
         };
         $items = [];
-        if ($section === 'shipments') $items[] = ['label' => 'Átmozgatások', 'url' => route('transfers.index')];
+        if ($section === 'shipments') $items[] = ['label' => 'Átmozgatások', 'url' => route('transfer-intent-pages.index')];
         if ($section === 'quality-returns') $items[] = ['label' => 'Készletmozgások', 'url' => route('movements.index')];
         $items[] = ['label' => $label, 'url' => $detail ? route($route) : null];
         if ($detail) $items[] = ['label' => $detail, 'url' => null];

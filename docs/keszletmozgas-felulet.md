@@ -46,7 +46,7 @@ npm run test:browser
 
 A Playwright fejlesztői függőségként került a projektbe. A futtató a telepített Chrome-ot használja saját, láthatatlan tesztprofilban, és 127.0.0.1:8019 címen indít tesztszervert. Ha a port foglalt, leáll, és nem használja az ott futó alkalmazást. A futás végén a saját PHP-szerverfolyamatát leállítja.
 
-A tesztek a `tests/Browser/.runtime/database.sqlite` fájlt használják külön tesztfelhasználóval, munkamenetekkel, alkalmazáskulccsal, naplókkal és fordított sablonokkal. Minden futás elején kizárólag ezt az adatbázist állítják alaphelyzetbe. A migráció előtt ellenőrzik a SQLite-meghajtót és a fájl pontos útvonalát; gyorsítótárazott alkalmazáskonfigurációval nem indulnak el. A Laragon MySQL-adatbázisát nem módosítják.
+A futtató minden alkalommal külön ideiglenes mappát hoz létre. Ebben egy üres SQLite-adatbázist migrál, és itt tárolja a tesztmunkameneteket, az alkalmazáskulcsot, a naplókat és a fordított sablonokat. A migráció előtt ellenőrzi a meghajtót és a fájl pontos útvonalát. A Laragon MySQL-adatbázisát nem módosítja. Az ideiglenes mappát futás után törli, a képernyőképek külön megmaradnak.
 
 Nyolc böngészős eset:
 

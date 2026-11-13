@@ -75,3 +75,15 @@ php artisan test
 | **Adminisztrátor (`admin`)** | `admin@raktar.hu` | `admin123` | Teljes hozzáférés (felhasználók, raktárak, kategóriák, készletek) |
 | **Raktárvezető (`manager`)** | `manager@raktar.hu` | `manager123` | Raktárak, kategóriák, felhasználók és készletmozgások kezelése |
 | **Raktáros (`worker`)** | `worker@raktar.hu` | `worker123` | Termékek, készletmozgások, átmozgatások és PDF-bizonylatok kezelése |
+
+### Átmozgatási igények bemutatója
+
+A tesztfiókok létrehozása és a migrációk futtatása után a bemutatóhoz külön hozzáadható két raktári tagság.
+
+```bash
+php artisan db:seed --class=TransferIntentMembershipDemoSeeder
+```
+
+A `worker@raktar.hu` a pécsi telephely igénylője. A `manager@raktar.hu` a budapesti központ felügyelője. A meglévő tagságokat a seeder megtartja.
+
+A bal oldali **Átmozgatások** menüben a raktáros hozzon létre egy Budapest → Pécs igényt. A budapesti felügyelő vagy az adminisztrátor elbírálhatja azt az adatlapon.

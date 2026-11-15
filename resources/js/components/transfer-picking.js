@@ -16,10 +16,12 @@ export default ({ pickingEndpoint, previousSources }) => ({
         if (this.failed) return 'A forráskészlet nem tölthető be.';
         if (this.stock === null) return '';
         const quarantined = this.quarantinedStock ? `Elkülönítve: ${this.quarantinedStock} db` : '';
-        if (!this.automaticSource) return [`${this.stock} db kiadható összesen`, quarantined].filter(Boolean).join(' · ');
+        const reserved = this.reservedStock ? `Raktári forrásfoglalás: ${this.reservedStock} db` : '';
+        const staged = this.stagedStock ? `Összekészítve: ${this.stagedStock} db` : '';
+        if (!this.automaticSource) return [`${this.stock} db kiadható összesen`, reserved, staged, quarantined].filter(Boolean).join(' · ');
         const row = this.sourceRows[0];
         return ['Tárhely nélküli készlet', `${row.stored_quantity} db nyilvántartva`,
-            `${row.reserved_quantity} db foglalt`, `${row.available_quantity} db kiadható`, quarantined].filter(Boolean).join(' · ');
+            reserved || `${row.reserved_quantity} db foglalt`, `${row.available_quantity} db kiadható`, staged, quarantined].filter(Boolean).join(' · ');
     },
 
     async loadStock() {
@@ -30,6 +32,8 @@ export default ({ pickingEndpoint, previousSources }) => ({
         this.sourceRows = [];
         this.stock = null;
         this.quarantinedStock = 0;
+        this.reservedStock = 0;
+        this.stagedStock = 0;
         this.loading = Boolean(this.product && this.warehouse);
         this.failed = false;
         if (!this.loading) return;
@@ -46,6 +50,8 @@ export default ({ pickingEndpoint, previousSources }) => ({
 
             this.stock = data.available_quantity;
             this.quarantinedStock = data.quarantined_quantity;
+            this.reservedStock = data.source_reserved_quantity ?? 0;
+            this.stagedStock = data.staged_quantity ?? 0;
             this.sourceRows = data.sources.map(row => ({ ...row, key: sourceKey(row.location_id) }));
         } catch {
             if (id === this.requestId) this.failed = true;

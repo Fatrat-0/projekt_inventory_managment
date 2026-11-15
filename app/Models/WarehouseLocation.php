@@ -26,6 +26,16 @@ class WarehouseLocation extends Model
     public function system() { return $this->belongsTo(WarehouseStorageSystem::class, 'system_id'); }
     public function level() { return $this->belongsTo(WarehouseStorageLevel::class, 'level_id'); }
 
+    public function pickingPosition(): array
+    {
+        return [
+            'zone' => $this->system?->zone?->name,
+            'system' => $this->system ? $this->system->displayCode().' · '.$this->system->name : null,
+            'level' => $this->level ? $this->level->number.'. szint' : null,
+            'bin' => $this->bin_number ? $this->bin_number.($this->system?->kind === 'floor' ? '. padlóhely' : '. rekesz') : null,
+        ];
+    }
+
     public function allowedCategories()
     {
         return $this->belongsToMany(Category::class, 'warehouse_location_categories', 'location_id', 'category_id');

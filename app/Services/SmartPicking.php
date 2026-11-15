@@ -2,44 +2,74 @@
 
 namespace App\Services;
 
-use App\Models\{Stock, WarehouseLocation, WarehousePlacement};
-use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
+use App\Models\{TransferStockReservation, WarehousePlacement, WarehouseTransferTask};
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class SmartPicking
 {
+    public function __construct(private WarehouseStockAvailability $availability)
+    {
+    }
+
     /**
      * Read-only source snapshot. Pending departures have already been deducted;
      * pending arrivals reserve space but are not yet part of this stock.
      */
     public function options(int $warehouseId, int $productId, ?int $quantity = null): array
     {
-        return DB::transaction(function () use ($warehouseId, $productId, $quantity) {
-            $stock = Stock::where('warehouse_id', $warehouseId)->where('product_id', $productId)
-                ->with('placements.location')->first();
-            $sources = $this->sourceRows($stock, $stock?->placements ?? collect(), $warehouseId);
-            $available = array_sum(array_column($sources, 'available_quantity'));
-            $suggestion = [];
-            if ($quantity !== null && $quantity > 0 && $quantity <= $available) {
-                // Use unassigned stock first, then the largest bins to minimize physical picks.
-                $remaining = $quantity;
-                foreach ($sources as $source) {
-                    $picked = min($remaining, $source['available_quantity']);
-                    if ($picked > 0) $suggestion[] = ['location_id' => $source['location_id'], 'quantity' => $picked];
-                    $remaining -= $picked;
-                    if ($remaining === 0) break;
-                }
-            }
+        $stock = $this->availability->snapshot($warehouseId, $productId);
+        $available = $stock['pickable_quantity'] ?? 0;
 
-            return [
-                'available_quantity' => $available,
-                'quarantined_quantity' => $stock?->quarantined_quantity ?? 0,
-                'sources' => $sources,
-                'suggestion' => $suggestion,
-            ];
-        });
+        return $this->buildOptions($stock, $available, $quantity);
+    }
+
+    /** A valid task can use its own hold up to its remaining quantity. */
+    public function reservedOptions(WarehouseTransferTask $task, TransferStockReservation $reservation, int $productId, int $quantity): array
+    {
+        $stock = $this->availability->snapshot($task->warehouse_id, $productId);
+        $available = $this->reservedLimit($stock, $task, $reservation);
+        $options = $this->buildOptions($stock, $available, null);
+        foreach ($options['sources'] as &$source) {
+            $source['available_quantity'] = min($source['available_quantity'], $available);
+        }
+        unset($source);
+        $bins = array_filter($options['sources'], fn ($source) => $source['location_id'] !== null && $source['active']);
+        $options['suggestion'] = $this->suggestions($bins, min($quantity, $available));
+
+        return $options;
+    }
+
+    private function buildOptions(array $stock, int $available, ?int $quantity): array
+    {
+        $sources = $this->sourceRows($stock, $available);
+
+        return [
+            'available_quantity' => $available,
+            'source_reserved_quantity' => $stock['source_reserved_quantity'],
+            'staged_quantity' => $stock['staged_quantity'],
+            'free_quantity' => $stock['free_quantity'],
+            'quarantined_quantity' => $stock['quarantined_quantity'],
+            'sources' => $sources,
+            // The legacy transfer workflow can suggest unassigned stock first.
+            'suggestion' => $quantity !== null && $quantity <= $available ? $this->suggestions($sources, $quantity) : [],
+            'consistent' => $stock['consistent'],
+        ];
+    }
+
+    private function suggestions(array $sources, int $remaining): array
+    {
+        $suggestions = [];
+        foreach ($sources as $source) {
+            if ($remaining <= 0) break;
+            $picked = min($remaining, $source['available_quantity']);
+            if ($picked > 0) {
+                $suggestions[] = ['location_id' => $source['location_id'], 'quantity' => $picked];
+                $remaining -= $picked;
+            }
+        }
+
+        return $suggestions;
     }
 
     /** @return list<array{location_id: ?int, quantity: int}> */
@@ -80,18 +110,55 @@ class SmartPicking
      */
     public function withdraw(int $warehouseId, int $productId, int $quantity, array $allocations): array
     {
-        $stock = Stock::where('warehouse_id', $warehouseId)->where('product_id', $productId)->lockForUpdate()->first();
-        if (!$stock || $quantity > $stock->available_quantity) {
+        $allocations = $this->normalizeAllocations($allocations, $quantity);
+        $stock = $this->availability->snapshotForUpdate($warehouseId, $productId);
+        $this->assertConsistent($stock);
+        if (!$stock['stock_id'] || $quantity > $stock['physical_quantity'] - $stock['quarantined_quantity']) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a forrásraktárban.']);
         }
-        $placements = $stock->placements()->orderBy('id')->lockForUpdate()->get();
-        $locations = WarehouseLocation::where('warehouse_id', $warehouseId)
-            ->whereKey($placements->pluck('warehouse_location_id')->unique()->values()->all())
-            ->lockForUpdate()->get()->keyBy('id');
-        foreach ($placements as $placement) {
-            $placement->setRelation('location', $locations->get($placement->warehouse_location_id));
+        if ($stock['source_reserved_quantity'] + $stock['staged_quantity'] > 0 && $quantity > $stock['pickable_quantity']) {
+            throw ValidationException::withMessages(['quantity' => 'A foglalt és összekészített tételek mellett legfeljebb '.$stock['pickable_quantity'].' db tárolható ki.']);
         }
-        $sources = collect($this->sourceRows($stock, $placements, $warehouseId))->keyBy(fn (array $source) => $source['location_id'] ?? 0);
+
+        return $this->takeFromSources($stock, $allocations, $stock['pickable_quantity'], false);
+    }
+
+    /** Move out of bins while a picking command holds the task and stock locks. */
+    public function withdrawReserved(WarehouseTransferTask $task, TransferStockReservation $reservation, int $productId, int $quantity, array $allocations): array
+    {
+        $stock = $this->availability->snapshotForUpdate($task->warehouse_id, $productId);
+        $this->assertConsistent($stock);
+        $limit = $this->reservedLimit($stock, $task, $reservation);
+        if ($quantity > $limit) {
+            throw ValidationException::withMessages(['quantity' => 'Ehhez a feladathoz legfeljebb '.$limit.' db tárolható még ki.']);
+        }
+
+        return $this->takeFromSources($stock, $this->normalizeAllocations($allocations, $quantity), $limit, true);
+    }
+
+    private function assertConsistent(array $stock): void
+    {
+        if (!$stock['consistent']) {
+            throw ValidationException::withMessages(['source_allocations' => 'A forrásraktár készlet- és tárhelyadatai eltérnek. Kitárolás előtt ellenőrizd a készletet.']);
+        }
+    }
+
+    private function reservedLimit(array $stock, WarehouseTransferTask $task, TransferStockReservation $reservation): int
+    {
+        if (!$stock['consistent'] || $reservation->status !== TransferStockReservation::ACTIVE
+            || !in_array($task->status, [WarehouseTransferTask::PENDING, WarehouseTransferTask::IN_PROGRESS], true)
+            || $reservation->transfer_intent_id !== $task->transfer_intent_id
+            || $reservation->id !== $task->transfer_stock_reservation_id || $reservation->stock_id !== $task->stock_id
+            || $stock['stock_id'] !== $task->stock_id || $reservation->remaining_quantity > $stock['source_reserved_quantity']) {
+            return 0;
+        }
+
+        return max(0, min($reservation->remaining_quantity, $task->expected_quantity - $task->staged_quantity));
+    }
+
+    private function takeFromSources(array $stock, array $allocations, int $limit, bool $retainUnverifiedLoad): array
+    {
+        $sources = collect($this->sourceRows($stock, $limit))->keyBy(fn (array $source) => $source['location_id'] ?? 0);
         foreach ($allocations as $allocation) {
             $source = $sources->get($allocation['location_id'] ?? 0);
             if (!$source || $allocation['quantity'] > $source['available_quantity']) {
@@ -100,18 +167,20 @@ class SmartPicking
             }
         }
 
-        $placementsByLocation = $placements->groupBy('warehouse_location_id');
+        $locationIds = array_filter(array_column($allocations, 'location_id'));
+        $placementsByLocation = WarehousePlacement::where('stock_id', $stock['stock_id'])
+            ->whereIn('warehouse_location_id', $locationIds)->orderBy('id')->lockForUpdate()->get()->groupBy('warehouse_location_id');
         $picked = [];
         foreach ($allocations as $allocation) {
             $locationId = $allocation['location_id'];
             $remaining = $allocation['quantity'];
             if ($locationId === null) {
-                $picked[] = ['stock_id' => $stock->id, 'quantity' => $remaining];
+                $picked[] = ['stock_id' => $stock['stock_id'], 'quantity' => $remaining];
                 continue;
             }
             foreach ($placementsByLocation[$locationId] as $placement) {
                 $taken = min($remaining, $placement->quantity);
-                $picked[] = $this->takeFromPlacement($placement, $taken);
+                $picked[] = $this->takeFromPlacement($placement, $taken, $sources[$locationId], $retainUnverifiedLoad);
                 $remaining -= $taken;
                 if ($remaining === 0) break;
             }
@@ -120,49 +189,48 @@ class SmartPicking
         return $picked;
     }
 
-    private function sourceRows(?Stock $stock, Collection $placements, int $warehouseId): array
+    private function sourceRows(array $stock, int $limit): array
     {
-        $assigned = (int) $placements->sum('quantity');
+        // Warehouse-level holds are included in the overall limit, without attributing them to a source row.
         $unassigned = [
             'location_id' => null, 'code' => null, 'name' => 'Tárhely nélküli készlet',
-            'stored_quantity' => max(0, ($stock?->quantity ?? 0) - $assigned),
-            'reserved_quantity' => 0, 'available_quantity' => max(0, ($stock?->available_quantity ?? 0) - $assigned),
+            'stored_quantity' => max(0, $stock['unassigned_quantity']),
+            'reserved_quantity' => 0,
+            'available_quantity' => min($limit, $stock['unassigned_usable_quantity'] ?? 0),
             'active' => true,
         ];
-        $bins = [];
-        foreach ($placements->groupBy('warehouse_location_id') as $rows) {
-            $location = $rows->first()->location;
-            if (!$location || (int) $location->warehouse_id !== $warehouseId) continue;
-            $stored = (int) $rows->sum('quantity');
-            $bins[] = [
-                'location_id' => $location->id, 'code' => $location->code, 'name' => $location->name,
-                'stored_quantity' => $stored, 'reserved_quantity' => 0, 'available_quantity' => $location->active ? $stored : 0,
-                'active' => $location->active,
-            ];
-        }
+        $bins = array_map(fn (array $location) => array_replace($location, [
+            'reserved_quantity' => $location['reserved_quantity'] ?? 0,
+            'available_quantity' => $location['available_quantity'] ?? 0,
+        ]), $stock['locations']);
         usort($bins, fn (array $a, array $b) => ($b['available_quantity'] <=> $a['available_quantity'])
             ?: strcmp($a['code'], $b['code']) ?: ($a['location_id'] <=> $b['location_id']));
 
         return [$unassigned, ...$bins];
     }
 
-    private function takeFromPlacement(WarehousePlacement $placement, int $quantity): array
+    private function takeFromPlacement(WarehousePlacement $placement, int $quantity, array $source, bool $retainUnverifiedLoad): array
     {
         $full = $quantity === $placement->quantity;
         // Whole grams are conserved; the remaining stock retains rounding remainders.
-        $grams = intdiv($placement->cargo_weight_grams * $quantity, $placement->quantity);
+        $verified = !$placement->load_requires_verification && ($full || !$retainUnverifiedLoad);
+        $grams = $verified ? intdiv($placement->cargo_weight_grams * $quantity, $placement->quantity) : null;
         // Without per-pallet contents, only a full pick proves pallet slots were freed.
-        $slots = $full ? $placement->pallet_slots : 0;
+        $slots = $verified ? ($full ? $placement->pallet_slots : 0) : null;
         $allocation = [
             'stock_id' => $placement->stock_id, 'warehouse_location_id' => $placement->warehouse_location_id,
-            'source_placement_id' => $placement->id, 'location_code' => $placement->location->code,
-            'location_name' => $placement->location->name, 'quantity' => $quantity,
+            'source_placement_id' => $placement->id, 'location_code' => $source['code'],
+            'location_name' => $source['name'], 'quantity' => $quantity,
             'cargo_weight_grams' => $grams, 'pallet_slots' => $slots,
         ];
         if ($full) {
             $placement->delete();
         } else {
-            $placement->update(['quantity' => $placement->quantity - $quantity, 'cargo_weight_grams' => $placement->cargo_weight_grams - $grams]);
+            $placement->update([
+                'quantity' => $placement->quantity - $quantity,
+                'cargo_weight_grams' => $placement->cargo_weight_grams - ($grams ?? 0),
+                'load_requires_verification' => !$verified,
+            ]);
         }
 
         return $allocation;

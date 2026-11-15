@@ -11,12 +11,14 @@ function operationKey() {
 export default () => ({
     submitting: false,
     submissionError: '',
+    submissionStatus: null,
     fieldErrors: {},
     conflict: false,
     intentAttempt: null,
 
     clearIntentFeedback() {
         this.submissionError = '';
+        this.submissionStatus = null;
         this.fieldErrors = {};
         this.conflict = false;
     },
@@ -50,6 +52,7 @@ export default () => ({
             const result = await response.json().catch(() => null);
             if (response.ok && result?.intent?.id) return result;
 
+            this.submissionStatus = response.redirected ? 401 : response.status;
             if (response.status === 422 && result?.errors) {
                 this.fieldErrors = result.errors;
                 this.submissionError = 'Ellenőrizd a megjelölt adatokat.';

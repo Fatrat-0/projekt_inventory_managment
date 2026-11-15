@@ -3,6 +3,7 @@
 namespace App\Queries;
 
 use App\Models\{Warehouse, WarehouseLocation};
+use App\Services\WarehouseStockAvailability;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -33,12 +34,16 @@ class WarehouseStatistics
         $warehouseLimits = DB::query()->fromSub($systemLimits, 'system_limits')
             ->join('warehouse_storage_zones as zones', 'zones.id', '=', 'system_limits.zone_id')->select('zones.warehouse_id')
             ->selectRaw('SUM(system_limits.weight) AS weight')->groupBy('zones.warehouse_id');
+        $staged = WarehouseStockAvailability::stagedTasks()
+            ->whereColumn('warehouse_transfer_tasks.warehouse_id', 'warehouses.warehouse_id')
+            ->selectRaw('COALESCE(SUM(staged_quantity), 0)');
 
         return Warehouse::query()->leftJoinSub($capacity, 'capacity', 'capacity.warehouse_id', '=', 'warehouses.warehouse_id')
             ->leftJoinSub($warehouseLimits, 'storage_limits', 'storage_limits.warehouse_id', '=', 'warehouses.warehouse_id')
             ->select('warehouses.*')->addSelect(['capacity.location_count', 'capacity.max_slots',
                 'capacity.occupied_weight', 'capacity.reserved_weight', 'capacity.occupied_slots', 'capacity.reserved_slots', 'capacity.assigned_units'])
             ->selectRaw('capacity.legacy_weight + COALESCE(storage_limits.weight, 0) AS max_weight')
+            ->selectSub($staged, 'staged_units')
             ->withSum('stocks as physical_units', 'quantity')->withSum('stocks as quarantined_units', 'quarantined_quantity')
             ->withCount([
                 'incomingTransfers as incoming_count' => fn ($query) => $query->where('status', 'pending'),

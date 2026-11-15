@@ -12,6 +12,10 @@ class WarehouseCapacity
     public const WEIGHT_RULE = 'numeric|decimal:0,3|min:0.001|max:1000000';
     public const SLOT_RULE = 'integer|min:1|max:1000000';
 
+    public function __construct(private WarehouseStockAvailability $availability)
+    {
+    }
+
     public static function cargoRules(string $prefix = ''): array
     {
         return [
@@ -67,7 +71,8 @@ class WarehouseCapacity
                     throw ValidationException::withMessages(['code' => 'A létrehozott tárhely kódja és típusa rögzített. A teherbírást a tervrajzon módosíthatod.']);
                 }
                 [$usedWeight, $usedSlots] = $this->usage($current);
-                if ($usedWeight > 0 && (!$active || $data['kind'] !== $current->kind)) {
+                if ((!$active || $data['kind'] !== $current->kind)
+                    && ($usedWeight > 0 || $current->placements()->lockForUpdate()->first(['id']))) {
                     throw ValidationException::withMessages(['kind' => 'Csak üres, foglalás nélküli tárhely kapcsolható ki vagy alakítható át.']);
                 }
                 if ($usedWeight > $weight || ($slots !== null && $usedSlots > $slots)) {
@@ -100,12 +105,13 @@ class WarehouseCapacity
                 $product = Product::whereKey($productId)->lockForUpdate()->firstOrFail();
                 $this->lockWarehouses([$location->warehouse_id]);
                 $current = WarehouseLocation::whereKey($location->id)->lockForUpdate()->firstOrFail();
-                $stock = Stock::where('warehouse_id', $current->warehouse_id)->where('product_id', $productId)->lockForUpdate()->first();
-                if (!$stock || $quantity > $stock->available_quantity - $this->assignedQuantity($stock)) {
+                $stock = $this->availability->snapshotForUpdate($current->warehouse_id, $productId);
+                // Moving stock into an active location preserves the warehouse's pickable pool.
+                if (!$stock['consistent'] || !$stock['stock_id'] || $quantity > $stock['unassigned_usable_quantity']) {
                     throw ValidationException::withMessages(['quantity' => 'Ennyi kiadható, tárhely nélküli készlet nem áll rendelkezésre ebben a raktárban.']);
                 }
                 $this->assertFits($current, $weight, $slots, (int) $product->category_id);
-                $current->placements()->create(['stock_id' => $stock->id, 'quantity' => $quantity,
+                $current->placements()->create(['stock_id' => $stock['stock_id'], 'quantity' => $quantity,
                     'cargo_weight_grams' => $weight, 'pallet_slots' => $slots]);
             }, 3);
         } catch (UniqueConstraintViolationException $e) {
@@ -126,11 +132,6 @@ class WarehouseCapacity
             $this->lockWarehouses([$location->warehouse_id]);
             $location->placements()->whereKey($placement->id)->delete();
         }, 3);
-    }
-
-    public function assignedQuantity(Stock $stock): int
-    {
-        return (int) $stock->placements()->lockForUpdate()->get(['quantity'])->sum('quantity');
     }
 
     /** The caller holds the destination warehouse lock until the transfer is written. */
@@ -168,7 +169,7 @@ class WarehouseCapacity
     /** Attempt to restore a pick after the caller locks the product and warehouse. */
     public function restorePickedAllocation(InventoryTransferSourceAllocation $allocation, int $warehouseId, int $categoryId): bool
     {
-        if ($allocation->warehouse_location_id === null) return false;
+        if ($allocation->warehouse_location_id === null || $allocation->cargo_weight_grams === null) return false;
         $location = WarehouseLocation::where('warehouse_id', $warehouseId)
             ->whereKey($allocation->warehouse_location_id)->lockForUpdate()->first();
         if (!$location) return false;

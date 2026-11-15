@@ -40,3 +40,14 @@ foreach ([[$a, 20], [$b, 7]] as [$product, $quantity]) {
 for ($i = 0; $i < 30; $i++) {
     InventoryMovement::create(['product_id' => $a->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'user_id' => $user->id, 'type' => 'in', 'quantity' => 1, 'reference' => 'BROWSER-'.$i]);
 }
+
+$pickingWarehouse = Warehouse::create(['warehouse_name' => 'Kitárolási próbaraktár', 'location' => 'Önálló böngészős tesztadat']);
+foreach ([
+    ['picking-supervisor@example.test', 'Felügyelő próbafelhasználó', 'supervisor'],
+    ['picking-dispatch@example.test', 'Kitároló próbafelhasználó', 'dispatch_operator'],
+] as [$email, $name, $role]) {
+    $picker = User::factory()->create([
+        'email' => $email, 'name' => $name, 'password' => Hash::make('browser-test-password'), 'role' => 'worker',
+    ]);
+    $picker->warehouseMemberships()->create(['warehouse_id' => $pickingWarehouse->getKey(), 'role' => $role]);
+}

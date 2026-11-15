@@ -5,8 +5,9 @@ const decisionDate = new Intl.DateTimeFormat('hu-HU', {
     timeStyle: 'short',
     timeZone: 'Europe/Budapest',
 });
+const quantityFormat = new Intl.NumberFormat('hu-HU');
 
-export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors, nextSteps, eventLabels, decisions }) => ({
+export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors, nextSteps, eventLabels, decisions, preparationLabels }) => ({
     ...intentSubmission(),
     workflow,
     statusLabels,
@@ -14,8 +15,10 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
     nextSteps,
     eventLabels,
     decisions,
-    drafts: { approve: '', reject: '', cancel: '' },
+    preparationLabels,
+    drafts: { approve: '', reject: '', cancel: '', releaseStock: '' },
     activeAction: '',
+    preparationAction: '',
     refreshing: false,
     refreshError: '',
     statusNotice: '',
@@ -23,7 +26,17 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
     actionTrigger: null,
 
     get decision() { return this.decisions[this.activeAction]; },
-    get actionAvailable() { return this.workflow.actions.includes(this.activeAction); },
+    get preparation() { return this.workflow.preparation; },
+    get actionAvailable() { return this.canAct(this.activeAction); },
+    get actionBlocked() { return this.submitting || this.refreshing || this.conflict || !!this.committedAction; },
+    get preparationError() {
+        if (!this.preparationAction || this.activeAction || this.conflict || this.committedAction) return '';
+        return Object.values(this.fieldErrors).flat()[0] || this.submissionError;
+    },
+
+    canAct(action) {
+        return this.workflow.actions.includes(action) || this.preparation?.actions.includes(action) === true;
+    },
 
     init() {
         const url = new URL(window.location.href);
@@ -33,11 +46,12 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
     },
 
     openDecision(action, trigger) {
-        if (!this.workflow.actions.includes(action) || this.submitting || this.refreshing) return;
+        if (!this.canAct(action) || this.actionBlocked) return;
 
         this.actionTrigger = trigger;
         this.activeAction = action;
-        if (!this.conflict) this.clearIntentFeedback();
+        this.preparationAction = '';
+        this.clearIntentFeedback();
         this.statusNotice = '';
         this.$refs.decisionDialog.showModal();
         this.$nextTick(() => this.$refs.reason.focus());
@@ -53,23 +67,35 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
         if (this.actionTrigger?.isConnected && !this.actionTrigger.disabled && this.actionTrigger.getClientRects().length) {
             this.actionTrigger.focus();
         } else {
-            this.$refs.workflowHeading.focus();
+            this.focusCurrentHeading();
         }
         this.actionTrigger = null;
     },
 
     async confirmDecision() {
-        if (!this.actionAvailable || this.submitting || this.refreshing || this.conflict || this.committedAction) return;
+        if (!this.actionAvailable || this.actionBlocked) return;
 
-        const action = this.activeAction;
-        const result = await this.sendIntent(actionUrls[action], 'PATCH', {
+        await this.runAction(this.activeAction, this.drafts[this.activeAction].trim() || null);
+    },
+
+    async submitPreparation(action) {
+        if (!this.canAct(action) || this.actionBlocked) return;
+
+        this.preparationAction = action;
+        this.statusNotice = '';
+        await this.runAction(action, null);
+    },
+
+    async runAction(action, reason) {
+        const { url, method } = actionUrls[action];
+        const result = await this.sendIntent(url, method, {
             version: this.workflow.version,
-            reason: this.drafts[action].trim() || null,
+            reason,
         });
         if (!result) {
             if (this.conflict) {
-                this.$nextTick(() => this.$refs.refreshInDialog?.focus());
-            } else if (this.fieldErrors.reason) {
+                this.$nextTick(() => (this.activeAction ? this.$refs.refreshInDialog : this.$refs.refreshOutsideDialog)?.focus());
+            } else if (this.activeAction && this.fieldErrors.reason) {
                 this.$nextTick(() => this.$refs.reason.focus());
             }
             return;
@@ -91,7 +117,7 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
                 credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' },
             });
             if (response.status === 403 || response.status === 404) {
-                this.workflow = { ...this.workflow, actions: [] };
+                this.workflow = { ...this.workflow, actions: [], preparation: null };
                 this.refreshError = 'Az igény aktuális adatai már nem érhetők el.';
                 return;
             }
@@ -102,24 +128,37 @@ export default ({ workflow, workflowUrl, actionUrls, statusLabels, statusColors,
             }
 
             this.workflow = current;
+            this.preparationAction = '';
             this.clearIntentFeedback();
             if (committed) {
-                this.drafts[committed] = '';
                 this.committedAction = '';
                 this.resetIntentSubmission();
                 this.statusNotice = this.decisions[committed].success;
-                this.$refs.decisionDialog.close();
+                if (this.$refs.decisionDialog.open) {
+                    this.drafts[committed] = '';
+                    this.$refs.decisionDialog.close();
+                } else {
+                    this.$nextTick(() => this.focusCurrentHeading());
+                }
             } else if (conflict) {
                 this.statusNotice = 'Az igény adatai frissültek.';
                 if (this.actionAvailable) this.$nextTick(() => this.$refs.reason.focus());
             }
         } catch {
             this.refreshError = committed
-                ? 'A döntés mentése sikerült. Az aktuális állapot lekéréséhez próbáld újra a frissítést.'
+                ? 'A művelet mentése sikerült. Az aktuális állapot lekéréséhez próbáld újra a frissítést.'
                 : 'Az igény aktuális adatai nem tölthetők be. Próbáld újra a frissítést.';
         } finally {
             this.refreshing = false;
         }
+    },
+
+    focusCurrentHeading() {
+        (this.preparation ? this.$refs.preparationHeading : this.$refs.workflowHeading)?.focus();
+    },
+
+    pieceCount(value) {
+        return quantityFormat.format(value) + ' db';
     },
 
     eventDate(value) {

@@ -2,8 +2,10 @@
 
 namespace App\Support;
 
-use App\Models\{TransferIntent, User};
+use App\Models\{TransferIntent, TransferStockReservation, User};
 use App\Policies\TransferIntentPolicy;
+use App\Services\WarehouseStockAvailability;
+use Illuminate\Support\Facades\Gate;
 
 class TransferIntentDisplay
 {
@@ -26,6 +28,10 @@ class TransferIntentDisplay
     public const EVENTS = [
         'created' => 'Igény benyújtva',
         'approved' => 'Igény jóváhagyva',
+        'stock_reserved' => 'Forráskészlet biztosítva',
+        'stock_released' => 'Forrásfoglalás feloldva',
+        'picking_task_created' => 'Kitárolási feladat létrehozva',
+        'stock_picked' => 'Kitárolás rögzítve',
         'rejected' => 'Igény elutasítva',
         'cancelled' => 'Igény visszavonva',
     ];
@@ -36,10 +42,17 @@ class TransferIntentDisplay
             ->select(['id', 'transfer_intent_id', 'event_type', 'from_status', 'to_status', 'actor_id', 'occurred_at', 'reason'])
             ->with('actor:id,name')->orderBy('occurred_at')->orderBy('id')]);
 
+        $preparation = $intent->status === 'approved' ? self::preparation($intent, $user) : null;
+        $actions = $policy->availableActions($user, $intent);
+        if (($preparation['staged_quantity'] ?? 0) > 0) {
+            $actions = array_values(array_diff($actions, ['cancel']));
+        }
+
         return [
             'status' => $intent->status,
             'version' => $intent->version,
-            'actions' => $policy->availableActions($user, $intent),
+            'actions' => $actions,
+            'preparation' => $preparation,
             'events' => $intent->events->map(fn ($event) => [
                 'id' => $event->id,
                 'event_type' => $event->event_type,
@@ -49,6 +62,44 @@ class TransferIntentDisplay
                 'from_status' => $event->from_status,
                 'to_status' => $event->to_status,
             ])->all(),
+        ];
+    }
+
+    private static function preparation(TransferIntent $intent, User $user): array
+    {
+        $reservation = $intent->stockReservations()->latest('id')->first(['status', 'quantity', 'remaining_quantity']);
+        $task = $intent->pickingTasks()->where('active_intent_id', $intent->id)->first(['status', 'staged_quantity']);
+        $reservationStatus = $reservation?->status ?? 'unreserved';
+        $active = $reservationStatus === TransferStockReservation::ACTIVE;
+        $unreserved = in_array($reservationStatus, ['unreserved', TransferStockReservation::RELEASED], true);
+        $staged = $task?->staged_quantity ?? 0;
+        $gate = Gate::forUser($user);
+        $actions = [];
+        $available = null;
+
+        if ($unreserved && !$task && $gate->allows('reserveStock', $intent)) {
+            $actions[] = 'reserveStock';
+            $stock = app(WarehouseStockAvailability::class)->snapshot($intent->from_warehouse_id, $intent->product_id);
+            $available = $stock['pickable_quantity'];
+        }
+        if ($active && !$task && $reservation->remaining_quantity === $intent->quantity
+            && $reservation->quantity === $intent->quantity && $gate->allows('createPickingTask', $intent)) {
+            $actions[] = 'createPickingTask';
+        }
+        if ($active && $staged === 0 && $gate->allows('releaseStock', $intent)) {
+            $actions[] = 'releaseStock';
+        }
+        if ($task && $gate->allows('viewPickingTask', $intent)) {
+            $actions[] = 'openPickingTask';
+        }
+
+        return [
+            'reservation_status' => $reservationStatus,
+            'task_status' => $task?->status,
+            'remaining_quantity' => $unreserved ? $intent->quantity : $reservation->remaining_quantity,
+            'staged_quantity' => $staged,
+            'available_quantity' => $available,
+            'actions' => $actions,
         ];
     }
 }

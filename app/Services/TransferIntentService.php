@@ -2,26 +2,21 @@
 
 namespace App\Services;
 
-use App\Models\{Product, TransferIntent, TransferWorkflowEvent, User, Warehouse};
+use App\Models\{Product, TransferIntent, User, Warehouse};
 use Carbon\CarbonImmutable;
 use Closure;
-use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Support\Facades\{DB, Gate, Validator};
+use Illuminate\Support\Facades\{Gate, Validator};
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /** Administrative workflow only. Physical inventory changes belong to later stages. */
 class TransferIntentService
 {
-    private const INTENT_FIELDS = [
-        'id', 'reference', 'product_id', 'from_warehouse_id', 'to_warehouse_id', 'quantity',
-        'requested_by', 'requested_arrival_at', 'reason', 'note', 'priority', 'shipping_preference',
-        'status', 'version', 'created_at', 'updated_at',
-    ];
-
-    private const EVENT_FIELDS = [
-        'id', 'event_type', 'from_status', 'to_status', 'actor_id', 'occurred_at', 'reason',
-    ];
+    public function __construct(
+        private TransferWorkflowOperations $operations,
+        private TransferStockReservationService $reservations,
+    ) {
+    }
 
     public static function creationRules(): array
     {
@@ -100,21 +95,21 @@ class TransferIntentService
         if ($payload['from_warehouse_id'] === $payload['to_warehouse_id']) {
             throw ValidationException::withMessages(['to_warehouse_id' => 'A forrásraktár és a célraktár nem lehet ugyanaz.']);
         }
-        $fingerprint = $this->fingerprint('created', $actor, null, $payload);
+        $fingerprint = $this->operations->fingerprint('created', $actor, null, $payload);
 
-        return $this->run($key, $fingerprint, function () use ($actor, $payload, $key, $fingerprint) {
-            $actor = $this->currentActor($actor);
+        return $this->operations->run($key, $fingerprint, function () use ($actor, $payload, $key, $fingerprint) {
+            $actor = $this->operations->currentActor($actor);
             Gate::forUser($actor)->authorize('create', [
                 TransferIntent::class, $payload['from_warehouse_id'], $payload['to_warehouse_id'],
             ]);
-            if ($existing = $this->findEvent($key)) {
-                return $this->replay($existing, $fingerprint);
+            if ($existing = $this->operations->findEvent($key)) {
+                return $this->operations->replay($existing, $fingerprint);
             }
 
             $this->lockReferences($payload);
             $intent = TransferIntent::create($payload);
 
-            return $this->log($intent, $actor, 'created', null, $payload['reason'], $key, $fingerprint);
+            return $this->operations->log($intent, $actor, 'created', null, $payload['reason'], $key, $fingerprint);
         });
     }
 
@@ -151,10 +146,10 @@ class TransferIntentService
         $version = (int) $data['version'];
         $reason = $data['reason'] ?? null;
         $intentId = (int) $intent->getKey();
-        $fingerprint = $this->fingerprint($target, $actor, $intentId, ['version' => $version, 'reason' => $reason]);
+        $fingerprint = $this->operations->fingerprint($target, $actor, $intentId, ['version' => $version, 'reason' => $reason]);
 
-        return $this->run($key, $fingerprint, function () use ($actor, $intentId, $ability, $target, $key, $version, $reason, $fingerprint) {
-            $actor = $this->currentActor($actor);
+        return $this->operations->run($key, $fingerprint, function () use ($actor, $intentId, $ability, $target, $key, $version, $reason, $fingerprint) {
+            $actor = $this->operations->currentActor($actor);
             $current = TransferIntent::whereKey($intentId)->lockForUpdate()->first();
             abort_unless($current, 404, 'Az átmozgatási igény nem található.');
             $gate = Gate::forUser($actor);
@@ -163,9 +158,9 @@ class TransferIntentService
             $from = $current->status;
             $stateAllows = self::allowsTransition($ability, $from);
             // On stale commands use a current read so an outer MySQL snapshot cannot hide a committed replay.
-            $existing = $this->findEvent($key, $current->version !== $version || !$stateAllows);
+            $existing = $this->operations->findEvent($key, $current->version !== $version || !$stateAllows);
             if ($existing) {
-                $result = $this->replay($existing, $fingerprint);
+                $result = $this->operations->replay($existing, $fingerprint);
                 if ($ability === 'cancel' && $existing->from_status === 'approved') {
                     $gate->authorize('approve', $current);
                 }
@@ -186,82 +181,12 @@ class TransferIntentService
                 throw new ConflictHttpException('Az igény elérte a megengedett legnagyobb verziószámot.');
             }
 
+            $reservation = $ability === 'cancel' && $from === 'approved'
+                ? $this->reservations->releaseForCancellation($current, $actor) : null;
             $current->forceFill(['status' => $target, 'version' => $version + 1])->save();
 
-            return $this->log($current, $actor, $target, $from, $reason, $key, $fingerprint);
+            return $this->operations->log($current, $actor, $target, $from, $reason, $key, $fingerprint, $reservation);
         });
-    }
-
-    private function run(string $key, string $fingerprint, Closure $operation): array
-    {
-        try {
-            return DB::transaction($operation, 3);
-        } catch (UniqueConstraintViolationException $exception) {
-            // The same key may win on another request while this transaction is writing.
-            // Its rollback includes any tentative intent or state change.
-            $existing = $this->findEvent($key, true);
-            if (!$existing) throw $exception;
-
-            return $this->replay($existing, $fingerprint);
-        }
-    }
-
-    private function log(
-        TransferIntent $intent, User $actor, string $type, ?string $from, ?string $reason, string $key, string $fingerprint,
-    ): array {
-        $snapshot = $this->snapshot($intent->attributesToArray(), self::INTENT_FIELDS);
-        $event = $intent->events()->create([
-            'event_type' => $type,
-            'from_status' => $from,
-            'to_status' => $intent->status,
-            'actor_id' => $actor->getKey(),
-            'occurred_at' => now(),
-            'reason' => $reason,
-            'operation_key' => $key,
-            'metadata' => ['request_hash' => $fingerprint, 'intent_snapshot' => $snapshot],
-        ]);
-
-        return ['intent' => $snapshot, 'event' => $this->snapshot($event->attributesToArray(), self::EVENT_FIELDS)];
-    }
-
-    private function replay(TransferWorkflowEvent $event, string $fingerprint): array
-    {
-        $originalHash = $event->metadata['request_hash'] ?? null;
-        $snapshot = $event->metadata['intent_snapshot'] ?? null;
-        if (!is_string($originalHash) || !hash_equals($originalHash, $fingerprint) || !is_array($snapshot)) {
-            throw new ConflictHttpException('Ez a műveleti azonosító már másik kéréshez tartozik. Az új művelethez használj új azonosítót.');
-        }
-
-        return [
-            'intent' => $this->snapshot($snapshot, self::INTENT_FIELDS),
-            'event' => $this->snapshot($event->attributesToArray(), self::EVENT_FIELDS),
-        ];
-    }
-
-    private function findEvent(string $key, bool $current = false): ?TransferWorkflowEvent
-    {
-        $query = TransferWorkflowEvent::where('operation_key', $key);
-        // Do not lock a missing key during a write path. InnoDB gap locks can block concurrent inserts.
-        return ($current ? $query->sharedLock() : $query)->first();
-    }
-
-    private function fingerprint(string $type, User $actor, ?int $intentId, array $payload): string
-    {
-        return hash('sha256', json_encode([$type, (int) $actor->getKey(), $intentId, $payload], JSON_THROW_ON_ERROR));
-    }
-
-    private function snapshot(array $attributes, array $fields): array
-    {
-        // MySQL may reorder object keys in JSON metadata. Return the same field order on replay.
-        return array_replace(array_fill_keys($fields, null), array_intersect_key($attributes, array_fill_keys($fields, null)));
-    }
-
-    private function currentActor(User $actor): User
-    {
-        $current = User::whereKey($actor->getKey())->sharedLock()->first();
-        abort_unless($current, 403, 'A felhasználói fiók már nem érhető el.');
-
-        return $current;
     }
 
     private function lockReferences(array $payload): void

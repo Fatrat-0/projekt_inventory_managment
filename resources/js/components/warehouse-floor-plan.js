@@ -14,7 +14,7 @@ export default initial => {
 
     return Object.defineProperties({
         plan, saved: copyPlan(plan), version: initial.version, locations,
-        minSize: initial.minSize, maxSize: initial.maxSize,
+        minSize: initial.minSize, maxSize: initial.maxSize, focusBin: initial.focusBin ?? null, pickingPreview: !!initial.pickingPreview,
         editing: false, saving: false, stale: false, feedback: '', serverError: '', drag: null,
         selectedId: plan.positions[0]?.id ?? initial.locations[0]?.id ?? null,
         boardWidth: 0, boardHeight: 0, observer: null, zoom: 1, tool: 'select', pan: null,
@@ -26,6 +26,11 @@ export default initial => {
                 this.boardHeight = entry.contentRect.height;
             });
             this.observer.observe(this.$refs.viewport);
+            if (initial.focus !== null && initial.focus !== undefined) {
+                this.selectedId = initial.focus;
+                this.$nextTick(() => this.revealSelected());
+                return;
+            }
             const query = new URLSearchParams(window.location.search);
             const requested = systems.find(system => String(system.systemId) === query.get('system'));
             const requestedLocation = initial.locations.find(location => String(location.id) === query.get('location'));

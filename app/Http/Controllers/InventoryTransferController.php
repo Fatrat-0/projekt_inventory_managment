@@ -10,6 +10,7 @@ use App\Services\SmartPicking;
 use App\Services\SmartPutaway;
 use App\Services\TransferCargoWeight;
 use App\Services\WarehouseCapacity;
+use App\Services\WarehouseStockAvailability;
 use App\Support\TransferListContext;
 use Illuminate\Http\{JsonResponse, Request};
 use Illuminate\Support\Facades\Validator;
@@ -51,8 +52,14 @@ class InventoryTransferController extends Controller
             ->whereColumn('quantity', '>', 'quarantined_quantity')
             ->withSum(['placements as inactive_quantity' => fn ($placements) => $placements
                 ->whereHas('location', fn ($locations) => $locations->where('active', false))], 'quantity')
+            ->selectSub(WarehouseStockAvailability::activeReservations()
+                ->whereColumn('transfer_stock_reservations.stock_id', 'stocks.id')
+                ->selectRaw('COALESCE(SUM(remaining_quantity), 0)'), 'source_reserved_quantity')
+            ->selectSub(WarehouseStockAvailability::stagedTasks()
+                ->whereColumn('warehouse_transfer_tasks.stock_id', 'stocks.id')
+                ->selectRaw('COALESCE(SUM(staged_quantity), 0)'), 'staged_quantity')
             ->get()
-            ->filter(fn (Stock $stock) => $stock->available_quantity > (int) $stock->inactive_quantity)
+            ->filter(fn (Stock $stock) => $stock->available_quantity > (int) $stock->inactive_quantity + (int) $stock->source_reserved_quantity + (int) $stock->staged_quantity)
             ->groupBy('warehouse_id')
             ->map(fn ($stocks) => $stocks->pluck('product_id')->map(fn ($id) => (string) $id)->values());
 

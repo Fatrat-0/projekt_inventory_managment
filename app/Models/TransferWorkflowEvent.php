@@ -19,6 +19,18 @@ class TransferWorkflowEvent extends Model
         return ['occurred_at' => 'immutable_datetime', 'metadata' => 'array'];
     }
 
+    /** @return array{found: true, description: string}|null */
+    public function unassignedConfirmation(): ?array
+    {
+        $confirmation = $this->metadata['unassigned_confirmation'] ?? null;
+        if ($this->event_type !== 'stock_picked' || !is_array($confirmation) || ($confirmation['found'] ?? null) !== true
+            || !is_string($confirmation['description'] ?? null)) {
+            return null;
+        }
+
+        return ['found' => true, 'description' => $confirmation['description']];
+    }
+
     public function intent(): BelongsTo
     {
         return $this->belongsTo(TransferIntent::class, 'transfer_intent_id');

@@ -3,7 +3,7 @@
 
     $nextSteps = [
         'pending_approval' => 'Az igény a forrásraktár jóváhagyására vár.',
-        'approved' => 'Az igényt jóváhagyták. A készlet még nincs lefoglalva, a szállítás szervezése később történik.',
+        'approved' => 'Az igényt jóváhagyták. A készlet biztosítása külön művelet.',
         'rejected' => 'Az igényt elutasították.',
         'cancelled' => 'Az igényt visszavonták.',
     ];
@@ -11,7 +11,7 @@
         'approve' => [
             'label' => 'Jóváhagyás', 'confirm' => 'Igény jóváhagyása',
             'reason' => 'Jóváhagyás indoka (opcionális)', 'requiresReason' => false,
-            'description' => 'A jóváhagyás után az igény előkészíthető a fuvartervezéshez. A jóváhagyás nem foglal készletet.',
+            'description' => 'A jóváhagyott igényhez külön művelettel lehet biztosítani a készletet.',
             'success' => 'Az igényt jóváhagytad.',
         ],
         'reject' => [
@@ -27,15 +27,44 @@
             'success' => 'Az igényt visszavontad.',
         ],
     ];
+    $preparationCopy = [
+        'reserveStock' => ['success' => 'A forráskészletet biztosítottad.'],
+        'createPickingTask' => ['success' => 'A kitárolási feladat létrejött.'],
+        'releaseStock' => [
+            'label' => 'Foglalás feloldása', 'confirm' => 'Készletfoglalás feloldása',
+            'reason' => 'Feloldás indoka (opcionális)', 'requiresReason' => false,
+            'description' => 'A készlet ismét felhasználható lesz. A még el nem kezdett kitárolási feladat megszűnik.',
+            'success' => 'A készletfoglalást feloldottad.',
+        ],
+    ];
     $decisionOptions = [
         'workflow' => $workflow,
         'workflowUrl' => route('transfer-intents.show', ['transferIntent' => $intent, 'workflow' => 1]),
-        'actionUrls' => collect(array_keys($decisionCopy))->mapWithKeys(fn ($action) => [$action => route('transfer-intents.'.$action, $intent)]),
+        'actionUrls' => collect(array_keys($decisionCopy))->mapWithKeys(fn ($action) => [
+            $action => ['url' => route('transfer-intents.'.$action, $intent), 'method' => 'PATCH'],
+        ])->all() + [
+            'reserveStock' => ['url' => route('transfer-intents.stock-reservation.store', $intent), 'method' => 'POST'],
+            'releaseStock' => ['url' => route('transfer-intents.stock-reservation.release', $intent), 'method' => 'PATCH'],
+            'createPickingTask' => ['url' => route('transfer-intents.picking-task.store', $intent), 'method' => 'POST'],
+        ],
         'statusLabels' => TransferIntentDisplay::STATUS,
         'statusColors' => TransferIntentDisplay::STATUS_STYLE,
         'nextSteps' => $nextSteps,
         'eventLabels' => TransferIntentDisplay::EVENTS,
-        'decisions' => $decisionCopy,
+        'decisions' => $decisionCopy + $preparationCopy,
+        'preparationLabels' => [
+            'reservation' => [
+                'unreserved' => 'Nincs készletfoglalás',
+                'active' => 'Aktív foglalás',
+                'released' => 'Foglalás feloldva',
+                'consumed' => 'Foglalás teljesen kitárolva',
+            ],
+            'task' => [
+                'pending' => 'Kitárolásra vár',
+                'in_progress' => 'Kitárolás folyamatban',
+                'picked' => 'Összekészítve',
+            ],
+        ],
     ];
     $requestedArrival = $intent->requested_arrival_at?->timezone('Europe/Budapest')->format('Y. m. d. H:i');
 @endphp
@@ -62,7 +91,7 @@
         <div x-cloak x-show="!activeAction && (conflict || committedAction || refreshError)"
              class="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
             <p role="alert" x-text="refreshError || submissionError"></p>
-            <button type="button" class="min-h-9 font-semibold underline underline-offset-2 disabled:opacity-50"
+            <button type="button" x-ref="refreshOutsideDialog" class="min-h-9 font-semibold underline underline-offset-2 disabled:opacity-50"
                     :disabled="refreshing" @click="refreshWorkflow()">Aktuális adatok frissítése</button>
         </div>
 
@@ -117,13 +146,17 @@
                     </dl>
                 </section>
 
-                <section aria-labelledby="intent-workflow-heading" class="min-w-0 rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
-                    <h2 id="intent-workflow-heading" tabindex="-1" x-ref="workflowHeading" class="font-semibold text-gray-900">Következő lépés</h2>
-                    <p class="mt-2 text-sm text-gray-700" x-text="nextSteps[workflow.status]">{{ $nextSteps[$intent->status] }}</p>
+                @include('transfer-intents.preparation')
+                <section aria-labelledby="intent-workflow-heading" x-show="!preparation || canAct('cancel')"
+                         @if($workflow['preparation'] && !in_array('cancel', $workflow['actions'], true)) x-cloak @endif
+                         class="min-w-0 rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
+                    <h2 id="intent-workflow-heading" tabindex="-1" x-ref="workflowHeading" class="font-semibold text-gray-900"
+                        x-text="preparation ? 'Igény kezelése' : 'Következő lépés'">{{ $workflow['preparation'] ? 'Igény kezelése' : 'Következő lépés' }}</h2>
+                    <p x-show="!preparation" class="mt-2 text-sm text-gray-700" x-text="nextSteps[workflow.status]">{{ $nextSteps[$intent->status] }}</p>
                     <div x-cloak x-show="workflow.actions.length" class="mt-3 flex flex-wrap gap-2">
                         @foreach($decisionCopy as $action => $copy)
                             <button type="button" x-show="workflow.actions.includes(@js($action))"
-                                    @click="openDecision(@js($action), $event.currentTarget)" :disabled="refreshing || submitting || !!committedAction"
+                                    @click="openDecision(@js($action), $event.currentTarget)" :disabled="actionBlocked"
                                     aria-haspopup="dialog"
                                     class="min-h-10 rounded-md px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50
                                         {{ $action === 'approve' ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-gray-300 bg-white text-gray-800 hover:bg-gray-50' }}">

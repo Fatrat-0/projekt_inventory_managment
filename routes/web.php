@@ -12,6 +12,9 @@ use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
 use App\Http\Controllers\TransferIntentController;
 use App\Http\Controllers\TransferIntentPageController;
+use App\Http\Controllers\TransferStockReservationController;
+use App\Http\Controllers\WarehouseTransferTaskController;
+use App\Http\Controllers\WarehousePickingPageController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ExportController;
@@ -36,12 +39,31 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/atmozgatasok', [TransferIntentPageController::class, 'index'])->name('transfer-intent-pages.index');
     Route::get('/atmozgatasok/uj-igeny', [TransferIntentPageController::class, 'create'])->name('transfer-intent-pages.create');
     Route::get('/atmozgatasok/igenyek/{transferIntent}', [TransferIntentPageController::class, 'show'])->whereNumber('transferIntent')->name('transfer-intent-pages.show');
+    Route::get('/atmozgatasok/raktari-feladatok', [WarehousePickingPageController::class, 'index'])->name('warehouse-picking-pages.index');
+    Route::get('/atmozgatasok/raktari-feladatok/{transferIntent}', [WarehousePickingPageController::class, 'show'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('warehouse-picking-pages.show');
+    Route::get('/atmozgatasok/raktari-feladatok/{transferIntent}/alaprajz/{warehouseLocation}', [WarehouseFloorPlanController::class, 'picking'])
+        ->whereNumber(['transferIntent', 'warehouseLocation'])->can('viewPickingTask', 'transferIntent')->name('warehouse-picking-pages.plan');
 
     Route::resource('transfer-intents', TransferIntentController::class)
         ->parameters(['transfer-intents' => 'transferIntent'])->only(['index', 'store', 'show']);
     Route::patch('/transfer-intents/{transferIntent}/approve', [TransferIntentController::class, 'approve'])->name('transfer-intents.approve');
     Route::patch('/transfer-intents/{transferIntent}/reject', [TransferIntentController::class, 'reject'])->name('transfer-intents.reject');
     Route::patch('/transfer-intents/{transferIntent}/cancel', [TransferIntentController::class, 'cancel'])->name('transfer-intents.cancel');
+    Route::get('/transfer-intents/{transferIntent}/stock-reservation', [TransferStockReservationController::class, 'show'])
+        ->whereNumber('transferIntent')->name('transfer-intents.stock-reservation.show');
+    Route::post('/transfer-intents/{transferIntent}/stock-reservation', [TransferStockReservationController::class, 'store'])
+        ->whereNumber('transferIntent')->can('reserveStock', 'transferIntent')->name('transfer-intents.stock-reservation.store');
+    Route::patch('/transfer-intents/{transferIntent}/stock-reservation/release', [TransferStockReservationController::class, 'release'])
+        ->whereNumber('transferIntent')->can('releaseStock', 'transferIntent')->name('transfer-intents.stock-reservation.release');
+    Route::get('/transfer-intents/{transferIntent}/picking-task', [WarehouseTransferTaskController::class, 'show'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('transfer-intents.picking-task.show');
+    Route::post('/transfer-intents/{transferIntent}/picking-task', [WarehouseTransferTaskController::class, 'store'])
+        ->whereNumber('transferIntent')->can('createPickingTask', 'transferIntent')->name('transfer-intents.picking-task.store');
+    Route::get('/transfer-intents/{transferIntent}/picking-task/recommendations', [WarehouseTransferTaskController::class, 'recommendations'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('transfer-intents.picking-task.recommendations');
+    Route::post('/transfer-intents/{transferIntent}/picking-task/picks', [WarehouseTransferTaskController::class, 'pick'])
+        ->whereNumber('transferIntent')->can('executePickingTask', 'transferIntent')->name('transfer-intents.picking-task.picks');
 
     // Breeze Profil kezelése
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

@@ -185,23 +185,36 @@ test('changing a selected partner role in another tab is checked again at save',
 
 for (const path of ['/movements/create', '/transfers/create']) {
     test('restoring '+path+' unlocks submitting, refreshes stock and preserves the request key', async ({ page }) => {
+        const transfer = path.includes('transfers');
         let stockRequests = 0;
-        await page.route('**/movements/stock?**', route => route.fulfill({ json: { quantity: ++stockRequests === 1 ? 20 : 7 } }));
+        await page.route(transfer ? '**/transfers/picking-sources?**' : '**/movements/stock?**', route => {
+            const quantity = ++stockRequests === 1 ? 20 : 7;
+            return route.fulfill({ json: transfer ? {
+                available_quantity: quantity, quarantined_quantity: 0, source_reserved_quantity: 0,
+                sources: [{ location_id: null, name: 'Tárhely nélküli készlet', stored_quantity: quantity,
+                    available_quantity: quantity, reserved_quantity: 0, active: true }],
+            } : { quantity } });
+        });
         await page.goto(path);
         await page.getByRole('combobox', { name: 'Termék', exact: true }).fill('ALPHA');
         await page.getByRole('option', { name: 'Alpha teszttermék (ALPHA-001)', exact: true }).click();
-        await page.getByRole('combobox', { name: path.includes('transfers') ? 'Forrásraktár' : 'Raktár', exact: true }).fill('Teszt');
+        await page.getByRole('combobox', { name: transfer ? 'Forrásraktár' : 'Raktár', exact: true }).fill('Teszt');
         await page.getByRole('option', { name: 'Teszt raktár · Test', exact: true }).click();
-        await expect(page.getByRole('status').filter({ hasText: 'Jelenlegi készlet' })).toContainText('20 db');
+        if (transfer) {
+            await page.getByRole('combobox', { name: 'Célraktár', exact: true }).fill('Északi');
+            await page.getByRole('option', { name: 'Északi tesztraktár · Bemutató célállomás', exact: true }).click();
+        }
+        const stock = page.getByRole('status').filter({ hasText: transfer ? 'Tárhely nélküli készlet' : 'Jelenlegi készlet' });
+        await expect(stock).toContainText('20 db');
         await page.getByLabel('Mennyiség (db)', { exact: true }).fill('3');
         const key = await page.locator('input[name="request_key"]').inputValue();
-        const form = page.locator('form[x-data^="movementForm"]');
-        const submit = form.locator('button').last();
+        const form = page.locator(transfer ? 'form[x-data^="transferPutaway"]' : 'form[x-data^="movementForm"]');
+        const submit = form.locator('button[type="submit"]');
         await form.evaluate(el => { window.Alpine.$data(el).submitting = true; });
         await expect(submit).toBeDisabled();
         await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
         await expect(submit).toBeEnabled();
-        await expect(page.getByRole('status').filter({ hasText: 'Jelenlegi készlet' })).toContainText('7 db');
+        await expect(stock).toContainText('7 db');
         await expect(page.getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('3');
         await expect(page.locator('input[name="request_key"]')).toHaveValue(key);
         await expect(page.locator('input[name="product_id"]')).toHaveValue('1');

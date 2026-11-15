@@ -78,4 +78,14 @@ class TransferIntent extends Model
     {
         return $this->hasMany(TransferWorkflowEvent::class);
     }
+
+    public function stockReservations(): HasMany
+    {
+        return $this->hasMany(TransferStockReservation::class);
+    }
+
+    public function pickingTasks(): HasMany
+    {
+        return $this->hasMany(WarehouseTransferTask::class)->where('type', WarehouseTransferTask::TYPE_PICKING);
+    }
 }

@@ -12,9 +12,11 @@ use Illuminate\Support\Str;
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
 {
-    public function __construct(private WarehouseCapacity $capacity, private SmartPicking $picking)
-    {
-    }
+    public function __construct(
+        private WarehouseCapacity $capacity,
+        private SmartPicking $picking,
+        private WarehouseStockAvailability $availability,
+    ) {}
 
     public function recordMovement(array $data, ?string $requestKey = null): InventoryMovement
     {
@@ -48,6 +50,7 @@ class InventoryService
                     }
                     $partnerName = $partner->name;
                 }
+                if ($payload['type'] === 'out') $this->capacity->lockWarehouses([$payload['warehouse_id']]);
                 $balances = $this->changeStock($payload['product_id'], $payload['warehouse_id'],
                     $payload['type'] === 'in' ? $payload['quantity'] : -$payload['quantity']);
                 $movement = InventoryMovement::create(array_merge($payload, $balances, ['partner_name' => $partnerName]));
@@ -99,6 +102,7 @@ class InventoryService
                     $partnerName = Partner::whereKey($source->partner_id)->lockForUpdate()->firstOrFail()->name;
                 }
                 $type = $source->type === 'in' ? 'out' : 'in';
+                if ($type === 'out') $this->capacity->lockWarehouses([$source->warehouse_id]);
                 $balances = $this->changeStock((int)$source->product_id, (int)$source->warehouse_id,
                     $type === 'in' ? $payload['quantity'] : -$payload['quantity'], $type === 'in' ? $payload['quantity'] : 0);
                 $movement = InventoryMovement::create($balances + [
@@ -277,7 +281,9 @@ class InventoryService
         $incoming = InventoryTransfer::where('product_id', $payload['product_id'])->where('to_warehouse_id', $payload['to_warehouse_id'])
             ->where('status', 'pending')->lockForUpdate()->get(['quantity'])->sum('quantity');
         $shortage = $target ? $target->min_quantity - $target->available_quantity - $incoming : 0;
-        $surplus = $source ? $source->available_quantity - max($source->min_quantity, $this->capacity->assignedQuantity($source)) : 0;
+        $available = $source ? $this->availability->snapshotForUpdate($source->warehouse_id, $source->product_id) : null;
+        $surplus = empty($available['consistent']) ? 0
+            : min($available['direct_issue_quantity'], $available['free_quantity'] - $source->min_quantity);
         if ($payload['from_warehouse_id'] === $payload['to_warehouse_id'] || !$target || !$source || $payload['quantity'] > min($shortage, $surplus)) {
             throw ValidationException::withMessages(['quantity' => 'Az utánpótlási javaslat közben megváltozott. A mennyiség nem haladhatja meg a cél aktuális hiányát és a forrás helyi minimum feletti kiadható készletét. Frissítsd a vezérlőpultot.']);
         }
@@ -339,8 +345,18 @@ class InventoryService
         if ($quarantined < 0 || $quarantined > $quantity) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a kiválasztott raktárban. Az elkülönített visszáru előbb minősítendő.']);
         }
-        if ($stock && $delta < $quarantineDelta && $quantity - $quarantined < $this->capacity->assignedQuantity($stock)) {
-            throw ValidationException::withMessages(['quantity' => 'Nincs elegendő tárhely nélküli kiadható készlet. A kiadandó tételeket előbb vedd ki a tárhelyükről.']);
+        if ($stock && $delta < $quarantineDelta) {
+            $available = $this->availability->snapshotForUpdate($warehouseId, $productId);
+            if (!$available['consistent']) {
+                throw ValidationException::withMessages(['quantity' => 'A raktári készlet, a tárhelyek vagy a foglalások adatai eltérnek. Ellenőrizd a készletet.']);
+            }
+            $requested = $quarantineDelta - $delta;
+            if ($available['source_reserved_quantity'] + $available['staged_quantity'] > 0 && $requested > $available['free_quantity']) {
+                throw ValidationException::withMessages(['quantity' => 'A foglalt és összekészített tételek mellett legfeljebb '.$available['free_quantity'].' db szabad készlet használható fel.']);
+            }
+            if ($requested > $available['direct_issue_quantity']) {
+                throw ValidationException::withMessages(['quantity' => 'Nincs elegendő tárhely nélküli kiadható készlet. A kiadandó tételeket előbb vedd ki a tárhelyükről.']);
+            }
         }
         if ($stock) {
             $stock->update(['quantity' => $quantity, 'quarantined_quantity' => $quarantined]);

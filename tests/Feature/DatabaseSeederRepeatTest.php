@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, Stock, User, Warehouse};
 use App\Queries\WarehouseStatistics;
-use App\Services\InventoryService;
+use App\Services\{InventoryService, TransferCargoWeight};
 use App\Support\WarehouseStatisticsReport;
 use Database\Seeders\{DatabaseSeeder, WarehouseCapacityDemoSeeder};
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,7 +20,7 @@ class DatabaseSeederRepeatTest extends TestCase
     {
         $result = [];
         foreach (['users' => 'id', 'categories' => 'category_id', 'warehouses' => 'warehouse_id', 'partners' => 'id',
-            'products' => 'product_id', 'stocks' => 'id', 'inventory_movements' => 'id',
+            'products' => 'product_id', 'product_packagings' => 'id', 'stocks' => 'id', 'inventory_movements' => 'id',
             'inventory_transfers' => 'id', 'inventory_movement_requests' => 'id', 'inventory_transfer_requests' => 'id',
             'shipments' => 'id', 'shipment_stops' => 'id', 'shipment_items' => 'id', 'return_quality_actions' => 'id',
             'warehouse_locations' => 'id', 'warehouse_placements' => 'id'] as $table => $key) {
@@ -33,13 +33,55 @@ class DatabaseSeederRepeatTest extends TestCase
     {
         $this->seed(DatabaseSeeder::class);
         $demo = Product::where('sku', 'DEMO-KAP-001')->sole();
-        $this->assertDatabaseCount('warehouse_locations', 4);
+        $this->assertDatabaseCount('warehouse_locations', 10);
         $this->assertSame(4, DB::table('warehouse_locations')->whereNotNull('floor_x')->count());
         $this->assertSame(2, InventoryTransfer::where('product_id', $demo->product_id)->where('status', 'pending')->whereNotNull('to_location_id')->count());
         $before = $this->snapshot();
         $this->travel(2)->hours();
         $this->seed(DatabaseSeeder::class);
         $this->assertSame($before, $this->snapshot());
+    }
+
+    public function test_smart_putaway_demo_has_verified_and_conditional_examples(): void
+    {
+        $this->seed(DatabaseSeeder::class);
+        $source = Warehouse::where('warehouse_name', 'Bemutató raktár – Központi kapacitás')->sole();
+        $target = Warehouse::where('warehouse_name', 'Bemutató raktár – Regionális kapacitás')->sole();
+        $worker = User::where('email', 'worker@raktar.hu')->sole();
+        $withWeight = Product::where('sku', 'DEMO-SP-001')->sole();
+        $withoutWeight = Product::where('sku', 'DEMO-SP-002')->sole();
+
+        foreach ([$withWeight, $withoutWeight] as $product) {
+            $stock = Stock::where('warehouse_id', $source->warehouse_id)->where('product_id', $product->product_id)->sole();
+            $this->assertSame(325, $stock->available_quantity);
+            $this->assertSame(0, $stock->placements()->count());
+            $this->assertSame(100, $product->defaultPackaging->pieces_per_package);
+        }
+        $this->assertSame(5500, $withWeight->defaultPackaging->grossWeightGrams());
+        $this->assertNull($withoutWeight->defaultPackaging->grossWeightGrams());
+        $this->assertDatabaseHas('warehouse_locations', [
+            'warehouse_id' => $target->warehouse_id, 'code' => 'SP-01', 'kind' => 'shelf', 'active' => true,
+            'max_weight_grams' => 25000, 'width_cm' => 100, 'depth_cm' => 60, 'height_cm' => 50,
+        ]);
+
+        $cargo = [
+            'to_warehouse_id' => $target->warehouse_id, 'quantity' => 200, 'pallet_slots' => 0,
+            'dimensions_cm' => ['width' => 60, 'depth' => 20, 'height' => 15],
+        ];
+        $this->actingAs($worker)->getJson(route('transfers.putaway-recommendations', $cargo + [
+            'product_id' => $withWeight->product_id, 'cargo_weight_kg' => 11, 'cargo_weight_source' => 'calculated',
+            'cargo_weight_packaging' => TransferCargoWeight::packagingRevision($withWeight->defaultPackaging),
+        ]))->assertOk()
+            ->assertJsonPath('recommendations.0.code', 'SP-01')
+            ->assertJsonPath('recommendations.0.status', 'verified')
+            ->assertJsonPath('recommendations.0.score.remaining_weight_grams', 14000);
+
+        $response = $this->getJson(route('transfers.putaway-recommendations', $cargo + [
+            'product_id' => $withoutWeight->product_id,
+        ]))->assertOk()
+            ->assertJsonPath('recommendations.0.code', 'SP-01')
+            ->assertJsonPath('recommendations.0.status', 'conditional');
+        $this->assertArrayHasKey('weight_input', $response->json('recommendations.0.checks.missing'));
     }
 
     public function test_reseeding_does_not_restore_or_duplicate_archived_partners(): void
@@ -66,6 +108,9 @@ class DatabaseSeederRepeatTest extends TestCase
         $product = Product::where('sku', 'GEP-FUR-18V')->sole();
         $product->update(['product_name' => 'Átnevezett termék', 'price' => 12345]);
         Stock::where('product_id', $product->product_id)->update(['quantity' => 0]);
+        $packagedDemo = Product::where('sku', 'DEMO-SP-001')->sole();
+        $packagedDemo->stocks()->sole()->update(['quantity' => 125]);
+        $packagedDemo->defaultPackaging->update(['pieces_per_package' => 50, 'gross_weight_kg' => '3.250']);
         $transfer = InventoryTransfer::where('status', 'pending')->firstOrFail();
         $transfer->update(['status' => 'completed']);
         $before = $this->snapshot();

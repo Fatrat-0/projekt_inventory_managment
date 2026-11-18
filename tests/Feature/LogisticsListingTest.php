@@ -49,18 +49,6 @@ class LogisticsListingTest extends TestCase
             'user_id' => $this->actor->id, 'quantity' => 2, 'status' => $status]);
         $t->forceFill(['created_at' => $date])->save(); return $t;
     }
-    public function test_shipment_status_counts_ignore_only_status_and_cover_all_pages(): void
-    {
-        for ($i=0; $i<17; $i++) $this->shipment('Shared_100% '.$i)->update(['status' => $i < 14 ? 'draft' : ($i < 16 ? 'in_transit' : 'completed')]);
-        $this->shipment('SharedX1000');
-        $params = ['search' => 'Shared_100%', 'origin_warehouse_id' => $this->origin->warehouse_id, 'date_from'=>'2026-04-10','date_to'=>'2026-04-10', 'status'=>'in_transit','per_page'=>15,'page'=>2];
-        $response = $this->get(route('shipments.index', $params))->assertOk();
-        $this->assertEquals(['draft'=>14,'in_transit'=>2,'completed'=>1], $response->viewData('statusCounts'));
-        $this->assertSame(2, $response->viewData('shipments')->total());
-        $this->assertCount(0, $response->viewData('shipments'));
-        $all = $this->get(route('shipments.index', array_replace($params, ['status'=>null])))->assertOk();
-        $this->assertCount(2, $all->viewData('shipments'));
-    }
     public function test_transfer_status_counts_and_dates_preserve_filtered_road_quantity(): void
     {
         for ($i=0; $i<12; $i++) $this->transfer();
@@ -71,24 +59,13 @@ class LogisticsListingTest extends TestCase
         $pending = $this->get(route('transfers.index', ['status'=>'pending','per_page'=>10,'page'=>2]))->assertOk();
         $this->assertCount(2, $pending->viewData('transfers')); $this->assertSame(24, $pending->viewData('pendingQuantity'));
     }
-    public function test_product_and_destination_filters_must_match_the_same_stop_without_duplicate_shipments(): void
-    {
-        $wanted = $this->shipment();
-        $data = $this->payload('Fordított');
-        $data['stops'][0]['items'][0]['product_id'] = $this->other->product_id;
-        $data['stops'][1]['items'][0]['product_id'] = $this->product->product_id;
-        app(ShipmentService::class)->save($data, $this->actor->id);
-        $response = $this->get(route('shipments.index', ['product_id'=>$this->product->product_id,'destination_warehouse_id'=>$this->a->warehouse_id]))->assertOk();
-        $this->assertSame([$wanted->id], $response->viewData('shipments')->pluck('id')->all());
-        $this->assertSame(['draft'=>1], $response->viewData('statusCounts'));
-    }
-    public static function listingRoutes(): array { return [['shipments.index','SZALL'],['transfers.index','ATM']]; }
+    public static function listingRoutes(): array { return [['transfers.index','ATM']]; }
     #[DataProvider('listingRoutes')]
     public function test_number_search_is_exact_case_insensitive_and_overflow_safe(string $route, string $prefix): void
     {
-        $wanted = $route === 'shipments.index' ? $this->shipment() : $this->transfer();
+        $wanted = $this->transfer();
         for ($i=0; $i<9; $i++) $route === 'shipments.index' ? $this->shipment() : $this->transfer();
-        $key = $route === 'shipments.index' ? 'shipments' : 'transfers';
+        $key = 'transfers';
         foreach ([$prefix.'-000001', strtolower($prefix).'-1'] as $term) {
             $response = $this->get(route($route, ['search'=>$term]))->assertOk();
             $this->assertSame([$wanted->id], $response->viewData($key)->pluck('id')->all());
@@ -99,7 +76,7 @@ class LogisticsListingTest extends TestCase
     public function test_date_range_includes_full_last_day_and_quick_links_keep_filters_but_reset_page(string $route, string $prefix): void
     {
         $this->travelTo(Carbon::parse('2026-03-01 00:30:00'));
-        $make = fn($date) => $route === 'shipments.index' ? $this->shipment(date:$date) : $this->transfer($date);
+        $make = fn($date) => $this->transfer($date);
         $make('2026-02-28 23:59:59'); $first=$make('2026-03-01 00:00:00'); $last=$make('2026-03-01 23:59:59'); $make('2026-03-02 00:00:00');
         $filters=['date_from'=>'2026-03-01','date_to'=>'2026-03-01','sort_by'=>'created_at','sort_dir'=>'asc'];
         $response=$this->get(route($route,$filters))->assertOk();
@@ -113,7 +90,7 @@ class LogisticsListingTest extends TestCase
     public static function invalidFilters(): array
     {
         $cases=[];
-        foreach (['shipments.index','transfers.index'] as $route) foreach (['date_from'=>'2026-02-30','date_to'=>['bad'],'search'=>['bad'],'sort_by'=>'invalid','sort_dir'=>'invalid','per_page'=>1,'page'=>0,'status'=>'invalid'] as $key=>$value) $cases[]=[$route,$key,$value];
+        foreach (['transfers.index'] as $route) foreach (['date_from'=>'2026-02-30','date_to'=>['bad'],'search'=>['bad'],'sort_by'=>'invalid','sort_dir'=>'invalid','per_page'=>1,'page'=>0,'status'=>'invalid'] as $key=>$value) $cases[]=[$route,$key,$value];
         return $cases;
     }
     #[DataProvider('invalidFilters')]
@@ -122,17 +99,14 @@ class LogisticsListingTest extends TestCase
         $this->getJson(route($route,[$key=>$value]))->assertUnprocessable()->assertJsonValidationErrors($key);
         $this->getJson(route($route,['date_from'=>'2026-04-11','date_to'=>'2026-04-10']))->assertUnprocessable()->assertJsonValidationErrors('date_to');
     }
-    public function test_shipment_context_survives_create_edit_start_receive_cancel_and_return(): void
+    public function test_legacy_shipment_context_survives_existing_http_operations_and_return(): void
     {
         $params=['search'=>'Körjárat','status'=>'draft','sort_by'=>'reference','sort_dir'=>'asc','per_page'=>25,'page'=>2,'date_from'=>'2026-01-01','date_to'=>'2026-12-31'];
-        $list=$this->get(route('shipments.index',$params))->assertOk(); $context=$list->viewData('context');
-        $form=$this->get(route('shipments.create',['context'=>$context]))->assertOk();
-        parse_str(parse_url($form->viewData('returnUrl'),PHP_URL_QUERY),$back);
-        foreach ($params as $key=>$value) $this->assertEquals($value,$back[$key]);
+        $context = ShipmentListContext::encode($params);
         $this->post(route('shipments.store'),$this->payload()+['context'=>$context])->assertRedirect(); $s=Shipment::sole();
         $show=route('shipments.show',['shipment'=>$s,'context'=>$context]);
         $this->get($show)->assertOk()->assertViewHas('returnUrl',ShipmentListContext::url($context));
-        $this->get(route('shipments.edit',['shipment'=>$s,'context'=>$context]))->assertOk()->assertViewHas('returnUrl',$show);
+        $this->get(route('shipments.edit',['shipment'=>$s,'context'=>$context]))->assertRedirect(route('shipments.show', $s));
         $this->put(route('shipments.update',$s),$this->payload()+['version'=>1,'context'=>$context])->assertRedirect($show);
         $this->post(route('shipments.start',$s),['version'=>2,'context'=>$context])->assertRedirect($show);
         $this->patch(route('shipments.receive',[$s,$s->stops()->first()]),['context'=>$context])->assertRedirect($show);
@@ -146,28 +120,6 @@ class LogisticsListingTest extends TestCase
         $s=$this->shipment();
         foreach (['https://example.test',['bad'],str_repeat('x',5000)] as $context) {
             $this->get(route('shipments.show',['shipment'=>$s,'context'=>$context]))->assertOk()->assertViewHas('returnUrl',route('shipments.index'));
-            $this->get(route('shipments.create',['context'=>$context]))->assertOk()->assertViewHas('returnUrl',route('shipments.index'));
         }
-    }
-    public function test_shipment_progress_and_next_stop_are_displayed_from_actual_receipts(): void
-    {
-        $s=$this->shipment(); $service=app(ShipmentService::class); $service->start($s,$this->actor->id,1);
-        $service->receive($s,$s->stops()->first(),$this->actor->id);
-        $response=$this->get(route('shipments.index',['search'=>$s->shipment_number]))->assertOk()->assertSee('Következő: Cél B')->assertSee('Átvett megállók: 1 / 2');
-        $row=$response->viewData('shipments')->sole();
-        $this->assertSame(2,$row->stops_count); $this->assertSame(1,$row->received_stops_count);
-    }
-    public static function shipmentSorts(): array
-    {
-        $cases=[]; foreach (['created_at','reference','status'] as $key) foreach (['asc','desc'] as $direction) $cases[]=[$key,$direction]; return $cases;
-    }
-    #[DataProvider('shipmentSorts')]
-    public function test_shipment_sorting_is_stable_in_both_directions(string $key,string $direction): void
-    {
-        $high=$this->shipment('Zeta','2026-04-10 12:00:00');
-        $low=$this->shipment('Alpha','2026-04-09 12:00:00'); $low->update(['status'=>'completed']);
-        $equal=$this->shipment('Alpha','2026-04-09 12:00:00'); $equal->update(['status'=>'completed']);
-        $response=$this->get(route('shipments.index',['sort_by'=>$key,'sort_dir'=>$direction]))->assertOk();
-        $this->assertSame($direction === 'asc' ? [$low->id,$equal->id,$high->id] : [$high->id,$equal->id,$low->id],$response->viewData('shipments')->pluck('id')->all());
     }
 }

@@ -13,7 +13,25 @@
                     @csrf
                     @method('PUT')
 
-                    <div class="mb-6"><x-edit-conflict :record="$product" :values="['Terméknév' => $product->product_name, 'Cikkszám (SKU)' => $product->sku, 'Kategória' => $product->category?->category_name, 'Ár (Ft)' => $product->price, 'Egyedi minimum' => $product->min_stock_override]"
+                    @php
+                        $packagingDifferences = [];
+                        foreach ([
+                            'name' => 'Csomagolás neve',
+                            'pieces_per_package' => 'Darab csomagolásonként',
+                            'gross_weight_kg' => 'Csomagolás bruttó tömege (kg)',
+                            'width_cm' => 'Csomagolás külső szélessége (cm)',
+                            'depth_cm' => 'Csomagolás külső mélysége (cm)',
+                            'height_cm' => 'Csomagolás külső magassága (cm)',
+                            'barcode' => 'Csomagolási vonalkód',
+                        ] as $key => $label) {
+                            $current = $product->defaultPackaging?->{$key};
+                            $submitted = old('packaging.'.$key);
+                            if ((!is_scalar($submitted) && $submitted !== null) || (string) $submitted !== (string) $current) {
+                                $packagingDifferences[$label] = $current;
+                            }
+                        }
+                    @endphp
+                    <div class="mb-6"><x-edit-conflict :record="$product" :values="['Terméknév' => $product->product_name, 'Cikkszám (SKU)' => $product->sku, 'Kategória' => $product->category?->category_name, 'Ár (Ft)' => $product->price, 'Egyedi minimum' => $product->min_stock_override] + $packagingDifferences"
                         :field-map="['Terméknév' => 'product_name', 'Cikkszám (SKU)' => 'sku', 'Kategória' => 'category_id', 'Ár (Ft)' => 'price', 'Egyedi minimum' => 'min_stock_override']" :reload-url="route('products.edit', $product)" /></div>
 
                     <div class="grid grid-cols-1 gap-6">
@@ -47,6 +65,7 @@
                             <p class="text-xs text-gray-500 mt-1">Hagyd üresen, ha a kategória alapértelmezett minimumát szeretnéd használni. Ha ide írsz egy számot, az felülbírálja a kategória szabályát.</p>
                             <x-input-error :messages="$errors->get('min_stock_override')" class="mt-2" />
                         </div>
+                        @include('products.packaging-fields')
                         <div class="flex items-center justify-end mt-4">
                             <x-primary-button>
                                 {{ __('Frissítés') }}

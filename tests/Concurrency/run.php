@@ -2,8 +2,8 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentStop, Stock, User, Warehouse, WarehouseLocation};
-use App\Services\{InventoryService, MasterDataEditor, ShipmentService, WarehouseCapacity, WarehouseFloorPlan, WarehouseStorageDesigner};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentCargoConfirmation, ShipmentDispatch, ShipmentIntentAssignment, ShipmentPlanOperation, ShipmentReceiptItem, ShipmentStop, ShipmentTransitItem, Stock, TransferIntent, TransferWorkflowEvent, User, Vehicle, Warehouse, WarehouseLocation};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentCargoPreparation, ShipmentDispatchBlocked, ShipmentDispatchService, ShipmentPlanReadiness, ShipmentPlanningService, ShipmentReceiptPutawayService, ShipmentReceiving, ShipmentService, TransferIntentService, TransferStockReservationService, VehicleRegistry, WarehouseCapacity, WarehouseFloorPlan, WarehouseStockAvailability, WarehouseStorageDesigner, WarehouseTransferTaskService};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
@@ -38,6 +38,90 @@ function saveDashboardLayout(array $job): void
     check($response->getStatusCode() === 200, 'Dashboard layout did not save.');
 }
 
+function runIntentOperation(array $job): void
+{
+    $service = app(TransferIntentService::class);
+    $actor = User::findOrFail($job['actor']);
+    $result = $job['operation'] === 'create'
+        ? $service->create($actor, $job['data'])
+        : $service->{$job['operation']}($actor, TransferIntent::findOrFail($job['id']), $job['data']);
+    $status = ['create' => 'pending_approval', 'approve' => 'approved', 'reject' => 'rejected'][$job['operation']];
+    check($result['intent']['status'] === $status && $result['intent']['version'] === ($job['operation'] === 'create' ? 1 : 2),
+        'The intent operation did not return the winning transition snapshot.');
+}
+
+function runReservationOperation(array $job): void
+{
+    $intent = TransferIntent::findOrFail($job['id']);
+    $actor = User::findOrFail($job['actor']);
+    if ($job['operation'] === 'cancel') {
+        app(TransferIntentService::class)->cancel($actor, $intent, $job['data']);
+        return;
+    }
+
+    $result = app(TransferStockReservationService::class)->{$job['operation']}($actor, $intent, $job['data']);
+    $status = $job['operation'] === 'reserve' ? 'active' : 'released';
+    check($result['reservation']['status'] === $status, 'Wrong reservation snapshot for the winning operation.');
+}
+
+function runPlanOperation(array $job): void
+{
+    $service = app(ShipmentPlanningService::class);
+    $actor = User::findOrFail($job['actor']);
+    $shipment = Shipment::findOrFail($job['ship']);
+    if ($job['operation'] === 'detach') {
+        $service->detach($actor, $shipment, TransferIntent::findOrFail($job['intent']), $job['data']);
+        return;
+    }
+
+    $result = match ($job['operation']) {
+        'attach' => $service->attach($actor, $shipment, $job['data']),
+        'reorder' => $service->reorder($actor, $shipment, $job['data']),
+        'select_vehicle' => $service->selectVehicle($actor, $shipment, $job['data']),
+        'save_cargo_item' => $service->saveCargoItem($actor, $shipment, $job['assignment'], $job['data']),
+        'confirm_cargo' => $service->confirmCargo($actor, $shipment, $job['data']),
+        'dispatch' => $service->dispatch($actor, $shipment, $job['data']),
+    };
+    check($result['shipment']['id'] === $shipment->id && $result['shipment']['version'] === $job['data']['version'] + 1,
+        'The plan command did not return the committed version.');
+    if ($job['operation'] === 'dispatch') {
+        check($result['shipment']['status'] === 'in_transit' && $result['dispatch']['shipment_id'] === $shipment->id
+            && $result['dispatch']['id'] > 0 && array_sum(array_column($result['transit_items'], 'dispatched_quantity')) === $job['expected_quantity'],
+            'The dispatch command did not return the original shipment and transit snapshot.');
+    }
+}
+
+function runReceiptOperation(array $job): array
+{
+    $result = app(ShipmentReceiving::class)->receive(
+        User::findOrFail($job['actor']), Shipment::findOrFail($job['ship']), ShipmentStop::findOrFail($job['stop']), $job['data'],
+    );
+    $stored = DB::table('shipment_receipts')->where('operation_key', $job['data']['operation_key'])->sharedLock()->sole();
+    check($result === json_decode($stored->result, true, flags: JSON_THROW_ON_ERROR)
+        && $result['stop']['version'] === $job['data']['version'] + 1
+        && $result['receipt']['id'] === (int) $stored->id,
+        'The receipt did not return its original committed snapshot.');
+
+    return $result;
+}
+
+function runPutawayOperation(array $job): array
+{
+    $result = app(ShipmentReceiptPutawayService::class)->putaway(
+        User::findOrFail($job['actor']), ShipmentReceiptItem::findOrFail($job['id']), $job['data'],
+    );
+    $stored = DB::table('shipment_receipt_putaways')->where('operation_key', $job['data']['operation_key'])->sharedLock()->sole();
+    check(array_diff_key($result, ['event' => true]) === json_decode($stored->result, true, flags: JSON_THROW_ON_ERROR)
+        && $result['event']['id'] === (int) $stored->id
+        && $result['event']['actor_id'] === $job['actor']
+        && $result['item']['version'] === $job['data']['version'] + 1
+        && (int) $stored->shipment_receipt_item_id === $job['id']
+        && (int) $stored->quantity === $job['data']['quantity'],
+        'Putaway did not return the immutable snapshot of the original operation.');
+
+    return $result;
+}
+
 if (($argv[1] ?? '') === '--worker') {
     connectTestDatabase($argv[2]);
     $job = json_decode(base64_decode($argv[3]), true, flags: JSON_THROW_ON_ERROR);
@@ -67,6 +151,13 @@ if (($argv[1] ?? '') === '--worker') {
             'shipment_start' => app(ShipmentService::class)->start(Shipment::findOrFail($job['id']), $job['actor'], 1),
             'shipment_receive' => app(ShipmentService::class)->receive(Shipment::findOrFail($job['id']), ShipmentStop::findOrFail($job['stop']), $job['actor']),
             'shipment_cancel' => app(ShipmentService::class)->cancel(Shipment::findOrFail($job['id'])),
+            'transfer_intent' => runIntentOperation($job),
+            'stock_reservation' => runReservationOperation($job),
+            'shipment_plan' => runPlanOperation($job),
+            'shipment_2_receipt' => runReceiptOperation($job),
+            'shipment_receipt_putaway' => runPutawayOperation($job),
+            'vehicle_update' => app(VehicleRegistry::class)->save(User::findOrFail($job['actor']), $job['data'], Vehicle::findOrFail($job['id'])),
+            'pick_task' => app(WarehouseTransferTaskService::class)->pick(User::findOrFail($job['actor']), TransferIntent::findOrFail($job['id']), $job['data']),
             'master_edit' => MasterDataEditor::update(
                 (new ($job['model']))->findOrFail($job['id']), Request::create('/', 'PUT', ['lock_version' => 1]), $job['data'], '/'),
             'partner_archive' => (new \App\Http\Controllers\PartnerController)->archive(Request::create('/', 'PATCH'), Partner::findOrFail($job['id'])),
@@ -75,8 +166,12 @@ if (($argv[1] ?? '') === '--worker') {
         };
         if ($outerSnapshot) DB::commit();
         echo "OK\n";
-    } catch (ValidationException $e) {
+    } catch (ValidationException|\Symfony\Component\HttpKernel\Exception\ConflictHttpException $e) {
         if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
+        if (isset($job['expected_blocker'])) {
+            check($e instanceof ShipmentDispatchBlocked && in_array($job['expected_blocker'], array_column($e->blockers, 'code'), true),
+                'The dispatch was not blocked by the expected prerequisite.');
+        }
         echo "REJECTED\n";
     } catch (Throwable $e) {
         if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
@@ -93,7 +188,10 @@ function check(bool $condition, string $message): void
     }
 }
 
-function race(string $database, int|array $productId, array $jobs, ?int $userBarrier = null, ?\Illuminate\Database\Eloquent\Model $recordBarrier = null): array
+function race(
+    string $database, int|array $productId, array $jobs, ?int $userBarrier = null,
+    ?\Illuminate\Database\Eloquent\Model $recordBarrier = null, ?Closure $beforeRelease = null,
+): array
 {
     $processes = [];
     DB::beginTransaction();
@@ -125,6 +223,7 @@ function race(string $database, int|array $productId, array $jobs, ?int $userBar
         foreach ($processes as $process) {
             check($process->isRunning(), 'A worker bypassed the selected start barrier.');
         }
+        if ($beforeRelease !== null) $beforeRelease();
         DB::commit();
         $results = [];
         foreach ($processes as $process) {
@@ -156,7 +255,7 @@ try {
     $created = true;
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
-    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements'];
+    $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations', 'transfer_intents', 'transfer_workflow_events', 'warehouse_memberships', 'transfer_stock_reservations', 'warehouse_transfer_tasks', 'warehouse_transfer_allocations', 'vehicles', 'vehicle_operations', 'shipment_assignment_cargos', 'shipment_cargo_confirmations', 'shipment_plan_operations', 'shipment_intent_assignments', 'shipment_dispatches', 'shipment_transit_items', 'shipment_receipts', 'shipment_receipt_items', 'shipment_receipt_putaways'];
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -783,6 +882,34 @@ try {
         check(array_sum(array_map(fn ($stock) => $stock->fresh()->quantity, $balances)) === 15, 'Rejected reservation changed source stock.');
         echo 'PASS: shared warehouse '.$limit.' capacity across different products and outer snapshots'.PHP_EOL;
     }
+    $otherPicker = User::factory()->create(['role' => 'worker']);
+    foreach ([false, true] as $outerSnapshot) {
+        $suffix = (int) $outerSnapshot;
+        $product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Concurrent pick '.$suffix, 'sku' => 'PICK-RACE-'.$suffix, 'price' => 1]);
+        $source = Warehouse::create(['warehouse_name' => 'Picking source '.$suffix]);
+        $target = Warehouse::create(['warehouse_name' => 'Picking target '.$suffix]);
+        $stock = Stock::create(['warehouse_id' => $source->getKey(), 'product_id' => $product->getKey(), 'quantity' => 20]);
+        $bin = $source->storageLocations()->create(['code' => 'B-01', 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
+        $bin->placements()->create(['stock_id' => $stock->id, 'quantity' => 10, 'cargo_weight_grams' => 5555]);
+        $data = [
+            'product_id' => $product->getKey(), 'from_warehouse_id' => $source->getKey(), 'to_warehouse_id' => $target->getKey(),
+            'quantity' => 7, 'source_allocations' => [['location_id' => $bin->id, 'quantity' => 7]],
+        ];
+        $jobs = array_map(
+            fn (User $picker) => ['action' => 'start', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(), 'data' => $data + ['user_id' => $picker->id]],
+            [$user, $otherPicker],
+        );
+
+        check(race($database, $product->getKey(), $jobs) === ['OK', 'REJECTED'], 'Two concurrent pickers withdrew the same bin stock.');
+        $transfer = InventoryTransfer::where('product_id', $product->getKey())->sole();
+        $picked = $transfer->sourceAllocations()->sole();
+        $remaining = $bin->placements()->sole();
+        check($stock->fresh()->quantity === 13 && $remaining->quantity === 3, 'Concurrent picking left inconsistent warehouse or bin stock.');
+        check($picked->quantity === 7 && $picked->warehouse_location_id === $bin->id, 'Concurrent picking left incorrect source history.');
+        check($picked->cargo_weight_grams + $remaining->cargo_weight_grams === 5555, 'Concurrent picking did not preserve bin load.');
+        check(DB::table('inventory_transfer_requests')->whereIn('request_key', array_column($jobs, 'requestKey'))->count() === 1, 'Rejected picking request left a write.');
+        echo 'PASS: concurrent withdrawals from one bin'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
     $placeWarehouse = Warehouse::create(['warehouse_name' => 'Repeated placement']);
     $placeLocation = $placeWarehouse->storageLocations()->create(['code' => 'P-1', 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
     $placeProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Repeated placement', 'sku' => 'CAP-PLACE', 'price' => 1]);
@@ -836,7 +963,1018 @@ try {
     check(race($database, [], [$configure, $reserve], recordBarrier: $rackWarehouse) === ['OK', 'REJECTED'], 'An incompatible category rule and reservation both succeeded.');
     check($bin->allowedCategories()->count() + $bin->reservations()->count() === 1, 'The bin has an incompatible reservation.');
     echo "PASS: a bin category restriction and an incompatible reservation cannot both succeed\n";
-    echo "69 MySQL concurrency checks passed.\n";
+    $requester = User::factory()->create(['role' => 'worker']);
+    $supervisor = User::factory()->create(['role' => 'worker']);
+    $secondSupervisor = User::factory()->create(['role' => 'worker']);
+    $intentSource = Warehouse::create(['warehouse_name' => 'Intent source']);
+    $intentDestination = Warehouse::create(['warehouse_name' => 'Intent destination']);
+    $intentSource->memberships()->create(['user_id' => $requester->id, 'role' => 'requester']);
+    $intentSource->memberships()->create(['user_id' => $supervisor->id, 'role' => 'supervisor']);
+    $intentSource->memberships()->create(['user_id' => $secondSupervisor->id, 'role' => 'supervisor']);
+    $intentProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Concurrent intents', 'sku' => 'INTENT-RACE', 'price' => 1]);
+    $intentService = app(TransferIntentService::class);
+    $intentData = ['product_id' => $intentProduct->getKey(), 'from_warehouse_id' => $intentSource->getKey(),
+        'to_warehouse_id' => $intentDestination->getKey(), 'quantity' => 12];
+    $intentRaceCount = 0;
+
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['approve versus reject', 'duplicate approval', 'same key with a different actor'] as $scenario) {
+            $result = $intentService->create($requester, $intentData + ['operation_key' => (string) Str::uuid()]);
+            $intent = TransferIntent::findOrFail($result['intent']['id']);
+            $approve = ['action' => 'transfer_intent', 'operation' => 'approve', 'id' => $intent->id, 'actor' => $supervisor->id,
+                'outerSnapshot' => $outerSnapshot, 'data' => ['version' => 1, 'operation_key' => (string) Str::uuid()]];
+            $other = $approve;
+            if ($scenario === 'approve versus reject') {
+                $other['operation'] = 'reject';
+                $other['actor'] = $secondSupervisor->id;
+                $other['data'] = ['version' => 1, 'operation_key' => (string) Str::uuid(), 'reason' => 'Párhuzamos elutasítás'];
+            }
+            if ($scenario === 'same key with a different actor') $other['actor'] = $secondSupervisor->id;
+
+            $outcomes = race($database, [], [$approve, $other], recordBarrier: $intent);
+            $expected = $scenario === 'duplicate approval' ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+            check($outcomes === $expected, $scenario.': incorrect concurrent decisions.');
+            $intent->refresh();
+            $decision = $intent->events()->where('event_type', '!=', 'created')->sole();
+            check($intent->version === 2 && $intent->status === $decision->event_type
+                && $decision->from_status === 'pending_approval' && $decision->to_status === $intent->status,
+                $scenario.': intent version and decision history diverged.');
+            check($intent->events()->count() === 2, $scenario.': a duplicate or incomplete event history was written.');
+            $intentRaceCount++;
+            echo 'PASS: intent '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+
+    foreach (['same payload', 'different payload'] as $scenario) {
+        $key = (string) Str::uuid();
+        $create = ['action' => 'transfer_intent', 'operation' => 'create', 'actor' => $requester->id, 'outerSnapshot' => true,
+            'data' => $intentData + ['operation_key' => $key]];
+        $other = $create;
+        if ($scenario === 'different payload') $other['data']['quantity'] = 13;
+
+        $before = TransferIntent::count();
+        $outcomes = race($database, $intentProduct->getKey(), [$create, $other]);
+        $expected = $scenario === 'same payload' ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+        check($outcomes === $expected, $scenario.': incorrect concurrent creation outcomes.');
+        $event = TransferWorkflowEvent::where('operation_key', $key)->sole();
+        check(TransferIntent::count() === $before + 1 && $event->intent->events()->count() === 1
+            && $event->actor_id === $requester->id && $event->event_type === 'created',
+            $scenario.': concurrent creation left a duplicate intent or missing audit event.');
+        $intentRaceCount++;
+        echo 'PASS: concurrent intent creation with '.$scenario.PHP_EOL;
+    }
+    check(Stock::where('product_id', $intentProduct->getKey())->doesntExist()
+        && InventoryTransfer::where('product_id', $intentProduct->getKey())->doesntExist(), 'Intent decisions booked inventory.');
+    $reservationRaceCount = 0;
+    $reservationService = app(TransferStockReservationService::class);
+    $availability = app(WarehouseStockAvailability::class);
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['two reservations', 'reservation versus out', 'reservation versus shipment', 'release versus cancel'] as $index => $scenario) {
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario,
+                'sku' => 'RES-RACE-'.$index.'-'.(int) $outerSnapshot, 'price' => 1]);
+            $stock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 200]);
+            $createApproved = function () use ($intentService, $requester, $supervisor, $intentData, $product) {
+                $created = $intentService->create($requester, array_replace($intentData, [
+                    'product_id' => $product->getKey(), 'quantity' => 150, 'operation_key' => (string) Str::uuid(),
+                ]));
+                $intent = TransferIntent::findOrFail($created['intent']['id']);
+                $intentService->approve($supervisor, $intent, ['version' => 1, 'operation_key' => (string) Str::uuid()]);
+
+                return $intent->refresh();
+            };
+            $job = fn (string $operation, TransferIntent $intent) => [
+                'action' => 'stock_reservation', 'operation' => $operation, 'actor' => $supervisor->id, 'id' => $intent->id,
+                'outerSnapshot' => $outerSnapshot, 'data' => ['version' => $intent->version, 'operation_key' => (string) Str::uuid(), 'reason' => 'Teszt'],
+            ];
+            $intent = $createApproved();
+            $reserve = $job('reserve', $intent);
+            $shipment = null;
+            $barrier = null;
+            switch ($scenario) {
+                case 'two reservations':
+                    $jobs = [$reserve, $job('reserve', $createApproved())];
+                    break;
+                case 'reservation versus out':
+                    $jobs = [$reserve, ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'product_id' => $product->getKey(), 'warehouse_id' => $intentSource->getKey(),
+                        'user_id' => $user->id, 'type' => 'out', 'quantity' => 100,
+                    ]]];
+                    break;
+                case 'reservation versus shipment':
+                    $shipment = app(ShipmentService::class)->save([
+                        'reference' => $scenario, 'origin_warehouse_id' => $intentSource->getKey(),
+                        'stops' => [['warehouse_id' => $intentDestination->getKey(), 'items' => [['product_id' => $product->getKey(), 'quantity' => 100]]]],
+                    ], $user->id);
+                    $jobs = [$reserve, ['action' => 'shipment_start', 'outerSnapshot' => $outerSnapshot, 'id' => $shipment->id, 'actor' => $user->id]];
+                    break;
+                case 'release versus cancel':
+                    $reservationService->reserve($supervisor, $intent, $reserve['data']);
+                    $intent->refresh();
+                    $jobs = [$job('release', $intent), $job('cancel', $intent)];
+                    $barrier = $intent;
+                    break;
+            }
+
+            $results = race($database, $product->getKey(), $jobs, recordBarrier: $barrier);
+            check($results === ['OK', 'REJECTED'], $scenario.': competing operations did not produce a single winner.');
+            $snapshot = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            $balance = [$stock->refresh()->quantity, $snapshot['source_reserved_quantity'], $snapshot['free_quantity']];
+            check($snapshot['consistent'], $scenario.': winning operation left inconsistent stock.');
+            if ($scenario === 'two reservations') {
+                check($balance === [200, 150, 50], $scenario.': reserve did not leave 50 free without changing physical stock.');
+                check(DB::table('transfer_stock_reservations')->where('stock_id', $stock->id)->count() === 1, 'Multiple reservation records survived.');
+            } elseif ($scenario === 'release versus cancel') {
+                check($balance === [200, 0, 200], $scenario.': release changed physical inventory or left a hold.');
+                check($intent->refresh()->version === 4 && $intent->events()->count() === 4, 'Both release and cancel changed the same intent version.');
+                check(DB::table('transfer_stock_reservations')->where('stock_id', $stock->id)->where('status', 'released')->count() === 1, 'Missing released reservation.');
+            } else {
+                check(in_array($balance, [[200, 150, 50], [100, 0, 100]], true), $scenario.': reservation and issue both took effect.');
+                if ($shipment) {
+                    $status = $balance[0] === 100 ? 'in_transit' : 'draft';
+                    check($shipment->refresh()->status === $status, 'Shipment status disagrees with stock posting.');
+                }
+            }
+            $reservationRaceCount++;
+            echo 'PASS: '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $pickingRaceCount = 0;
+    $tasks = app(WarehouseTransferTaskService::class);
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['same task', 'same pick replay', 'pick versus out', 'two tasks competing for one bin', 'two compatible tasks',
+            'same unassigned pick replay', 'two tasks competing for unassigned stock'] as $index => $scenario) {
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario,
+                'sku' => 'TASK-RACE-'.$index.'-'.(int) $outerSnapshot, 'price' => 1]);
+            $stock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 200]);
+            $bin = $intentSource->storageLocations()->create(['code' => $product->sku, 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
+            $bin->placements()->create(['stock_id' => $stock->id, 'quantity' => 150, 'cargo_weight_grams' => 15000]);
+            $createTask = static function (int $quantity) use ($intentService, $reservationService, $tasks, $requester, $supervisor, $intentData, $product): TransferIntent {
+                $result = $intentService->create($requester, array_replace($intentData, [
+                    'product_id' => $product->getKey(), 'quantity' => $quantity, 'operation_key' => (string) Str::uuid(),
+                ]));
+                $intent = TransferIntent::findOrFail($result['intent']['id']);
+                $command = static fn () => ['operation_key' => (string) Str::uuid(), 'version' => $intent->refresh()->version];
+                $intentService->approve($supervisor, $intent, $command());
+                $reservationService->reserve($supervisor, $intent, $command());
+                $tasks->create($supervisor, $intent, $command());
+
+                return $intent->refresh();
+            };
+            $manual = in_array($scenario, ['same unassigned pick replay', 'two tasks competing for unassigned stock'], true);
+            $confirmation = ['found' => true, 'description' => 'Kiadási terület mellett.'];
+            $makePick = static fn (TransferIntent $intent, User $actor, int $quantity) => [
+                'action' => 'pick_task', 'actor' => $actor->id, 'id' => $intent->id, 'outerSnapshot' => $outerSnapshot,
+                'data' => ['operation_key' => (string) Str::uuid(), 'version' => $intent->version, 'quantity' => $quantity,
+                    'source_allocations' => [[
+                        'source_type' => $manual ? 'unassigned' : 'location',
+                        'location_id' => $manual ? null : $bin->id, 'quantity' => $quantity,
+                    ]]] + ($manual ? ['unassigned_confirmation' => $confirmation] : []),
+            ];
+            $differentTasks = in_array($scenario, ['two tasks competing for one bin', 'two compatible tasks', 'two tasks competing for unassigned stock'], true);
+            $intent = $createTask($differentTasks ? 100 : 150);
+            $pick = $makePick($intent, $supervisor, $manual ? 30 : 100);
+            $other = match ($scenario) {
+                'same task' => $makePick($intent, $secondSupervisor, 100),
+                'same pick replay', 'same unassigned pick replay' => $pick,
+                'pick versus out' => ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'data' => [
+                    'product_id' => $product->getKey(), 'warehouse_id' => $intentSource->getKey(), 'user_id' => $user->id,
+                    'type' => 'out', 'quantity' => 51,
+                ]],
+                'two tasks competing for one bin' => $makePick($createTask(100), $secondSupervisor, 100),
+                'two compatible tasks' => $makePick($createTask(100), $secondSupervisor, 50),
+                'two tasks competing for unassigned stock' => $makePick($createTask(100), $secondSupervisor, 30),
+            };
+            $successes = in_array($scenario, ['same pick replay', 'same unassigned pick replay', 'two compatible tasks'], true) ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+            check(race($database, $product->getKey(), [$pick, $other]) === $successes, $scenario.': unexpected pick outcomes.');
+
+            $snapshot = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            $staged = match ($scenario) {
+                'two compatible tasks' => 150,
+                'same unassigned pick replay', 'two tasks competing for unassigned stock' => 30,
+                default => 100,
+            };
+            $reserved = ($differentTasks ? 200 : 150) - $staged;
+            check($snapshot['consistent'] && $snapshot['source_reserved_quantity'] === $reserved
+                && $snapshot['staged_quantity'] === $staged && $snapshot['free_quantity'] === 200 - $reserved - $staged,
+                $scenario.': staged, reserved or free balance changed incorrectly.');
+            check($stock->refresh()->quantity === 200, $scenario.': picking changed physical inventory.');
+            check((int) $bin->placements()->sum('quantity') === ($manual ? 150 : 150 - $staged), $scenario.': bin balance was changed twice or lost.');
+            $taskIds = DB::table('warehouse_transfer_tasks')->where('stock_id', $stock->id)->pluck('id');
+            $allocations = DB::table('warehouse_transfer_allocations')->whereIn('warehouse_transfer_task_id', $taskIds);
+            check((int) (clone $allocations)->sum('quantity') === $staged, $scenario.': pick has incomplete or duplicate allocation history.');
+            check($allocations->pluck('transfer_workflow_event_id')->unique()->count() === ($staged === 150 ? 2 : 1),
+                $scenario.': incorrect number of successful pick audit events.');
+            if ($manual) {
+                $allocation = $allocations->sole();
+                check($allocation->source_type === 'unassigned' && $allocation->warehouse_location_id === null && $snapshot['unassigned_quantity'] === 20,
+                    $scenario.': incorrect source type, bin or unassigned balance.');
+                $event = TransferWorkflowEvent::findOrFail($allocation->transfer_workflow_event_id);
+                $audit = $event->metadata['unassigned_confirmation'] ?? null;
+                check(($audit['found'] ?? null) === true && ($audit['description'] ?? null) === $confirmation['description']
+                    && (int) $event->actor_id === (int) $allocation->performed_by,
+                    $scenario.': the confirmed physical source or performer is missing from audit.');
+            }
+            $pickingRaceCount++;
+            echo 'PASS: picking '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $planningRaceCount = 0;
+    $planner = app(ShipmentPlanningService::class);
+    $planProduct = Product::create(['category_id' => $category->getKey(), 'product_name' => 'Concurrent shipment planning', 'sku' => 'PLAN-RACE', 'price' => 1]);
+    $planStock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $planProduct->getKey(), 'quantity' => 500]);
+    $makeApproved = function () use ($intentService, $requester, $supervisor, $intentData, $planProduct): TransferIntent {
+        $creation = $intentService->create($requester, array_replace($intentData, [
+            'product_id' => $planProduct->getKey(), 'quantity' => 20, 'operation_key' => (string) Str::uuid(),
+        ]));
+        $intent = TransferIntent::findOrFail($creation['intent']['id']);
+        $intentService->approve($supervisor, $intent, ['operation_key' => (string) Str::uuid(), 'version' => $intent->version]);
+
+        return $intent->refresh();
+    };
+    $makePlan = function (string $reference, array $intentIds = []) use ($planner, $supervisor, $intentSource): Shipment {
+        $result = $planner->create($supervisor, [
+            'operation_key' => (string) Str::uuid(), 'origin_warehouse_id' => $intentSource->getKey(),
+            'reference' => $reference, 'intent_ids' => $intentIds,
+        ]);
+
+        return Shipment::findOrFail($result['shipment']['id']);
+    };
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['cross-plan assignment', 'disjoint cross-plan assignments', 'attach versus detach', 'same attachment replay',
+            'attach versus intent cancellation'] as $scenario) {
+            $intent = $makeApproved();
+            $plan = $makePlan($scenario, $scenario === 'attach versus detach' ? [$intent->id] : []);
+            $disjoint = $scenario === 'disjoint cross-plan assignments';
+            $otherIntent = $scenario === 'attach versus detach' || $disjoint ? $makeApproved() : $intent;
+            $otherPlan = $scenario === 'cross-plan assignment' || $disjoint ? $makePlan('Competing plan') : $plan;
+            $beforeAudit = ShipmentPlanOperation::count();
+            $beforeBalances = $availability->snapshot($intentSource->getKey(), $planProduct->getKey());
+            $attach = fn (User $actor, Shipment $target, TransferIntent $cargo) => [
+                'action' => 'shipment_plan', 'operation' => 'attach', 'actor' => $actor->id,
+                'ship' => $target->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                    'operation_key' => (string) Str::uuid(), 'version' => $target->version, 'intent_ids' => [$cargo->id],
+                ],
+            ];
+            $first = $attach($supervisor, $plan, $otherIntent);
+            $second = match ($scenario) {
+                'cross-plan assignment' => $attach($secondSupervisor, $otherPlan, $intent),
+                'disjoint cross-plan assignments' => $attach($supervisor, $otherPlan, $intent),
+                'attach versus detach' => [
+                    'action' => 'shipment_plan', 'operation' => 'detach', 'actor' => $secondSupervisor->id,
+                    'ship' => $plan->id, 'intent' => $intent->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'operation_key' => (string) Str::uuid(), 'version' => $plan->version, 'reason' => 'Másik fuvar szükséges.',
+                    ],
+                ],
+                'same attachment replay' => $first,
+                'attach versus intent cancellation' => [
+                    'action' => 'stock_reservation', 'operation' => 'cancel', 'actor' => $secondSupervisor->id,
+                    'id' => $intent->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'operation_key' => (string) Str::uuid(), 'version' => $intent->version, 'reason' => 'Az igény megszűnt.',
+                    ],
+                ],
+            };
+            $barrier = in_array($scenario, ['attach versus detach', 'same attachment replay'], true) ? $plan : $intent;
+            $outcomes = $disjoint ? race($database, [], [$first, $second], userBarrier: $supervisor->id)
+                : race($database, [], [$first, $second], recordBarrier: $barrier);
+            $auditCount = ShipmentPlanOperation::count() - $beforeAudit;
+            $replay = $scenario === 'same attachment replay';
+            check($outcomes === ($replay || $disjoint ? ['OK', 'OK'] : ['OK', 'REJECTED']), $scenario.': concurrent plan mutations had unexpected results.');
+            $active = ShipmentIntentAssignment::where('transfer_intent_id', $intent->id)->active()->get();
+            if ($scenario === 'attach versus detach') {
+                $secondActive = ShipmentIntentAssignment::where('transfer_intent_id', $otherIntent->id)->active()->count();
+                check(($active->count() === 1 && $secondActive === 1) || ($active->isEmpty() && $secondActive === 0),
+                    $scenario.': concurrent commands left a mixed plan despite matching old version.');
+            } elseif ($scenario === 'attach versus intent cancellation') {
+                check(($intent->refresh()->status === 'approved' && $active->count() === 1) || ($intent->status === 'cancelled' && $active->isEmpty()),
+                    $scenario.': an intent can be cancelled and active on a plan at the same time.');
+            } elseif ($disjoint) {
+                check((int) $active->sole()->shipment_id === $otherPlan->id
+                    && (int) ShipmentIntentAssignment::where('transfer_intent_id', $otherIntent->id)->active()->sole()->shipment_id === $plan->id,
+                    $scenario.': separate assignments were skipped or crossed between plans.');
+            } else {
+                check($active->count() === 1, $scenario.': concurrent assignment left duplicate or missing active rows.');
+            }
+            $cancelWon = $scenario === 'attach versus intent cancellation' && $intent->status === 'cancelled';
+            check($auditCount === ($cancelWon ? 0 : ($disjoint ? 2 : 1)), $scenario.': duplicate or missing plan audit event.');
+            check($plan->fresh()->version + ($otherPlan->id === $plan->id ? 0 : $otherPlan->fresh()->version) ===
+                $plan->version + ($otherPlan->id === $plan->id ? 0 : $otherPlan->version) + $auditCount,
+                $scenario.': shipment version does not match the successful audit operation.');
+            check($availability->snapshot($intentSource->getKey(), $planProduct->getKey()) === $beforeBalances
+                && $planStock->refresh()->quantity === 500 && InventoryTransfer::where('product_id', $planProduct->getKey())->doesntExist(),
+                $scenario.': freight planning booked inventory.');
+            $planningRaceCount++;
+            echo 'PASS: shipment planning '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $cargoRaceCount = 0;
+    $cargoPreparation = app(ShipmentCargoPreparation::class);
+    $readiness = app(ShipmentPlanReadiness::class);
+    $vehicle = Vehicle::create(['name' => 'Nagy teherautó', 'registration_number' => 'TEST-120',
+        'payload_capacity_grams' => 1200000, 'pallet_slots_capacity' => 6, 'active' => true]);
+    $replacement = Vehicle::create(['name' => 'Kis teherautó', 'registration_number' => 'TEST-080',
+        'payload_capacity_grams' => 800000, 'pallet_slots_capacity' => 2, 'active' => true]);
+    $physicalTables = ['stocks', 'inventory_transfers', 'inventory_movements', 'warehouse_placements', 'inventory_transfer_source_allocations'];
+    $pickingTables = ['transfer_stock_reservations', 'warehouse_transfer_tasks', 'warehouse_transfer_allocations'];
+    $stateOf = static fn (array $tables): array => array_map(
+        static fn (string $table): string => DB::table($table)->orderBy('id')->get()->toJson(JSON_THROW_ON_ERROR), $tables,
+    );
+    $command = static fn ($record, array $data = []): array => $data + [
+        'operation_key' => (string) Str::uuid(), 'version' => $record->version,
+    ];
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['two confirmations', 'same confirmation replay', 'same key with changed cargo', 'confirmation versus vehicle change',
+            'confirmation versus picking'] as $index => $scenario) {
+            $sku = 'CARGO-RACE-'.$index.'-'.(int) $outerSnapshot;
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario, 'sku' => $sku, 'price' => 1]);
+            Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 100]);
+            Stock::create(['warehouse_id' => $intentDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 7]);
+            $bin = $intentDestination->storageLocations()->create(['code' => $sku, 'name' => 'Foglalt raklaphely', 'kind' => 'pallet',
+                'max_weight_grams' => 200000, 'max_pallet_slots' => 4]);
+            $service->startTransfer([
+                'product_id' => $product->getKey(), 'from_warehouse_id' => $intentSource->getKey(), 'to_warehouse_id' => $intentDestination->getKey(),
+                'quantity' => 5, 'user_id' => $supervisor->id, 'to_location_id' => $bin->id, 'cargo_weight_grams' => 12000, 'pallet_slots' => 1,
+            ]);
+            $created = $intentService->create($requester, array_replace($intentData, [
+                'product_id' => $product->getKey(), 'quantity' => 20, 'operation_key' => (string) Str::uuid(),
+            ]));
+            $intent = TransferIntent::findOrFail($created['intent']['id']);
+            $intentService->approve($supervisor, $intent, $command($intent));
+            $reservationService->reserve($supervisor, $intent, $command($intent->refresh()));
+            $tasks->create($supervisor, $intent, $command($intent->refresh()));
+            $pick = static fn (int $amount): array => $command($intent->refresh(), [
+                'quantity' => $amount, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => $amount]],
+                'unassigned_confirmation' => ['found' => true, 'description' => 'Kézi kiadási terület.'],
+            ]);
+            $tasks->pick($supervisor, $intent, $pick(15));
+            $plan = $makePlan($scenario, [$intent->id]);
+            $planner->selectVehicle($supervisor, $plan, $command($plan, ['vehicle_id' => $vehicle->id]));
+            $planner->saveCargoItem($supervisor, $plan, $plan->intentAssignments()->active()->sole()->id, $command($plan->refresh(), [
+                'source' => 'manual', 'gross_weight_grams' => 1000000, 'confirmed' => true,
+            ]));
+            $plan->refresh();
+            $basis = $cargoPreparation->details($plan, $plan->intentAssignments()->active()->get())['basis_revision'];
+            $first = ['action' => 'shipment_plan', 'operation' => 'confirm_cargo', 'actor' => $supervisor->id,
+                'ship' => $plan->id, 'outerSnapshot' => $outerSnapshot, 'data' => $command($plan, [
+                    'basis_revision' => $basis, 'gross_weight_grams' => 1000000, 'pallet_slots' => 4,
+                ])];
+            $second = match ($scenario) {
+                'same confirmation replay' => $first,
+                'confirmation versus vehicle change' => array_replace($first, [
+                    'operation' => 'select_vehicle', 'actor' => $secondSupervisor->id, 'data' => $command($plan, ['vehicle_id' => $replacement->id]),
+                ]),
+                'confirmation versus picking' => ['action' => 'pick_task', 'actor' => $secondSupervisor->id,
+                    'outerSnapshot' => $outerSnapshot, 'id' => $intent->id, 'data' => $pick(5)],
+                default => array_replace($first, ['data' => array_replace($first['data'], [
+                    'gross_weight_grams' => 1025000, 'reason' => 'A mérés további rögzítőanyagot igazolt.',
+                ])]),
+            };
+            if ($scenario === 'two confirmations') {
+                $second['actor'] = $secondSupervisor->id;
+                $second['data']['operation_key'] = (string) Str::uuid();
+            }
+            $picking = $scenario === 'confirmation versus picking';
+            $tables = $picking ? $physicalTables : [...$physicalTables, ...$pickingTables];
+            $beforeState = $stateOf($tables);
+            $beforeBalance = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            check($beforeBalance['physical_quantity'] === 95 && $beforeBalance['source_reserved_quantity'] === 5
+                && $beforeBalance['staged_quantity'] === 15, $scenario.': the stock fixture is not exercising a hold and staged inventory.');
+            $beforeAudit = $plan->planOperations()->max('id');
+            $beforeVersion = $plan->version;
+
+            $outcomes = race($database, [], [$first, $second], recordBarrier: $picking ? $intent : $plan);
+            $plan->refresh();
+            $confirmation = ShipmentCargoConfirmation::where('shipment_id', $plan->id)->first();
+            $events = $plan->planOperations()->where('id', '>', $beforeAudit)->get();
+            $currentBasis = $cargoPreparation->details($plan, $plan->intentAssignments()->active()->get())['basis_revision'];
+            $current = $readiness->assess($plan, $plan->intentAssignments()->active()->with(['intent', 'stop'])->get());
+            $balance = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            if ($picking) {
+                check($outcomes === ($confirmation ? ['OK', 'OK'] : ['OK', 'REJECTED']) && $currentBasis !== $basis
+                    && (!$confirmation || $confirmation->basis_revision === $basis) && !$current['cargo_ready'],
+                    $scenario.': a confirmation survived a change to the staged quantity.');
+                check($balance['staged_quantity'] === 20 && $balance['source_reserved_quantity'] === 0 && $current['stock_ready'],
+                    $scenario.': the winning pick did not move the remaining reserved pieces into staging.');
+            } else {
+                check($outcomes === ($scenario === 'same confirmation replay' ? ['OK', 'OK'] : ['OK', 'REJECTED'])
+                    && $balance === $beforeBalance && !$current['stock_ready'], $scenario.': concurrent mutations did not produce the expected winner.');
+                check(!$confirmation || ($confirmation->basis_revision === $currentBasis && $current['cargo_ready']),
+                    $scenario.': the confirmation has an inconsistent basis.');
+            }
+            $expectedEvents = $picking && !$confirmation ? 0 : 1;
+            check($events->count() === $expectedEvents && $plan->version === $beforeVersion + $expectedEvents,
+                $scenario.': duplicate audit or a version that disagrees with the successful operation.');
+            if ($confirmation) {
+                $event = $events->sole();
+                $winningPayload = $event->actor_id === $second['actor'] && $second['actor'] !== $first['actor'] ? $second['data'] : $first['data'];
+                $allowedWeights = $scenario === 'same key with changed cargo' ? [1000000, 1025000] : [$winningPayload['gross_weight_grams']];
+                check($event->action === 'confirm_cargo' && (int) $confirmation->confirmed_by === (int) $event->actor_id
+                    && in_array((int) $confirmation->gross_weight_grams, $allowedWeights, true) && (int) $confirmation->pallet_slots === 4
+                    && $plan->vehicle_id === $vehicle->id, $scenario.': the winner did not persist the confirmed load and vehicle together.');
+            } elseif (!$picking) {
+                check($events->sole()->action === 'select_vehicle' && $plan->vehicle_id === $replacement->id
+                    && !$current['cargo_ready'], $scenario.': replacing a vehicle silently confirmed stale cargo.');
+            }
+            $capacity = WarehouseLocation::withCapacityUsage()->findOrFail($bin->id);
+            check($stateOf($tables) === $beforeState && $capacity->freeWeight() === 188000 && $capacity->freeSlots() === 3
+                && $plan->status === 'draft' && $plan->started_at === null && $current['can_dispatch'] === $current['dispatch_prerequisites_met'],
+                $scenario.': the cargo operation booked inventory, changed the destination reservation or started the shipment.');
+            $cargoRaceCount++;
+            echo 'PASS: shipment cargo '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $dispatchRaceCount = 0;
+    $dispatchAdmin = User::factory()->create(['role' => 'admin']);
+    $secondDispatchDestination = Warehouse::create(['warehouse_name' => 'Dispatch second destination']);
+    $prepareDispatchIntent = static function (Product $product, Warehouse $destination, int $quantity, int $picked) use (
+        $intentService, $requester, $supervisor, $intentData, $reservationService, $tasks, $command,
+    ): TransferIntent {
+        $created = $intentService->create($requester, array_replace($intentData, [
+            'product_id' => $product->getKey(), 'to_warehouse_id' => $destination->getKey(),
+            'quantity' => $quantity, 'operation_key' => (string) Str::uuid(),
+        ]));
+        $intent = TransferIntent::findOrFail($created['intent']['id']);
+        $intentService->approve($supervisor, $intent, $command($intent));
+        $reservationService->reserve($supervisor, $intent, $command($intent->refresh()));
+        $tasks->create($supervisor, $intent, $command($intent->refresh()));
+        $tasks->pick($supervisor, $intent, $command($intent->refresh(), [
+            'quantity' => $picked, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => $picked]],
+            'unassigned_confirmation' => ['found' => true, 'description' => 'Kiadási gyűjtőhely.'],
+        ]));
+
+        return $intent->refresh();
+    };
+    $prepareDispatchPlan = static function (string $reference, Vehicle $vehicle, array $intents) use (
+        $makePlan, $planner, $supervisor, $command, $cargoPreparation,
+    ): Shipment {
+        $plan = $makePlan($reference, array_map(fn (TransferIntent $intent) => $intent->id, $intents));
+        $planner->selectVehicle($supervisor, $plan, $command($plan, ['vehicle_id' => $vehicle->id]));
+        $assignments = $plan->intentAssignments()->active()->with('intent')->orderBy('id')->get();
+        $weight = 0;
+        foreach ($assignments as $assignment) {
+            $lineWeight = $assignment->intent->quantity * 10000;
+            $planner->saveCargoItem($supervisor, $plan, $assignment->id, $command($plan->refresh(), [
+                'source' => 'manual', 'gross_weight_grams' => $lineWeight, 'confirmed' => true,
+            ]));
+            $weight += $lineWeight;
+        }
+        $basis = $cargoPreparation->details($plan->refresh(), $assignments)['basis_revision'];
+        $planner->confirmCargo($supervisor, $plan, $command($plan, [
+            'basis_revision' => $basis, 'gross_weight_grams' => $weight, 'pallet_slots' => 2,
+        ]));
+
+        return $plan->refresh();
+    };
+
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['double dispatch', 'same dispatch replay', 'detach', 'reorder', 'change vehicle', 'edit cargo', 'resize vehicle',
+            'issue free quantity', 'issue protected quantity', 'finish picking', 'two plans for one stock', 'latest vehicle capacity'] as $index => $scenario) {
+            $sku = 'DISPATCH-RACE-'.$index.'-'.(int) $outerSnapshot;
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario, 'sku' => $sku, 'price' => 1]);
+            $sourceStock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 80]);
+            $destinationStock = Stock::create(['warehouse_id' => $intentDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 7]);
+            $secondDestinationStock = Stock::create(['warehouse_id' => $secondDispatchDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 9]);
+            $truck = Vehicle::create(['name' => 'Dispatch '.$sku, 'payload_capacity_grams' => 1200000, 'pallet_slots_capacity' => 6]);
+            $twoPlans = $scenario === 'two plans for one stock';
+            $reorder = $scenario === 'reorder';
+            $partial = $scenario === 'finish picking';
+            $mainQuantity = $twoPlans || $reorder ? 30 : 65;
+            $intent = $prepareDispatchIntent($product, $intentDestination, $mainQuantity, $partial ? 64 : $mainQuantity);
+            $otherIntent = $twoPlans || $reorder ? $prepareDispatchIntent($product, $secondDispatchDestination, 35, 35) : null;
+            $intents = $otherIntent ? [$intent, $otherIntent] : [$intent];
+            $plan = $prepareDispatchPlan($scenario, $truck, $reorder ? $intents : [$intent]);
+            $otherPlan = $twoPlans ? $prepareDispatchPlan('Second departure', $truck, [$otherIntent]) : null;
+            $planIds = $otherPlan ? [$plan->id, $otherPlan->id] : [$plan->id];
+            $assignment = $plan->intentAssignments()->active()->where('transfer_intent_id', $intent->id)->sole();
+            $reversedStops = $reorder ? $plan->stops()->pluck('id')->reverse()->values()->all() : [];
+            $dispatch = static fn (Shipment $target, int $quantity): array => [
+                'action' => 'shipment_plan', 'operation' => 'dispatch', 'actor' => $supervisor->id,
+                'ship' => $target->id, 'outerSnapshot' => $outerSnapshot, 'expected_quantity' => $quantity,
+                'data' => $command($target, ['confirmed' => true, 'note' => 'A rakomány átadva.']),
+            ];
+            $first = $dispatch($plan, $reorder ? 65 : $mainQuantity);
+            $planChange = static fn (string $operation, array $payload, array $target = []): array => $target + [
+                'action' => 'shipment_plan', 'operation' => $operation, 'actor' => $secondSupervisor->id,
+                'ship' => $plan->id, 'outerSnapshot' => $outerSnapshot, 'data' => $command($plan, $payload),
+            ];
+            $resize = $command($truck, ['payload_capacity_kg' => 600]);
+            $second = match ($scenario) {
+                'same dispatch replay' => $first,
+                'double dispatch' => $planChange('dispatch', ['confirmed' => true]) + ['expected_quantity' => 65],
+                'detach' => $planChange('detach', ['reason' => 'Másik fuvar szükséges.'], ['intent' => $intent->id]),
+                'reorder' => $planChange('reorder', ['stop_ids' => $reversedStops]),
+                'change vehicle' => $planChange('select_vehicle', ['vehicle_id' => $replacement->id]),
+                'edit cargo' => $planChange('save_cargo_item', ['source' => 'manual', 'confirmed' => true, 'gross_weight_grams' => 600000],
+                    ['assignment' => $assignment->id]),
+                'resize vehicle' => ['action' => 'vehicle_update', 'id' => $truck->id, 'actor' => $dispatchAdmin->id,
+                    'outerSnapshot' => $outerSnapshot, 'data' => $resize],
+                'issue free quantity', 'issue protected quantity' => ['action' => 'movement', 'outerSnapshot' => $outerSnapshot,
+                    'data' => ['product_id' => $product->getKey(), 'warehouse_id' => $intentSource->getKey(), 'user_id' => $user->id,
+                        'type' => 'out', 'quantity' => $scenario === 'issue free quantity' ? 15 : 16]],
+                'finish picking' => ['action' => 'pick_task', 'actor' => $secondSupervisor->id, 'id' => $intent->id,
+                    'outerSnapshot' => $outerSnapshot, 'data' => $command($intent, [
+                        'quantity' => 1, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => 1]],
+                        'unassigned_confirmation' => ['found' => true, 'description' => 'Kiadási gyűjtőhely.'],
+                    ])],
+                'two plans for one stock' => $dispatch($otherPlan, 35),
+                'latest vehicle capacity' => null,
+            };
+            $intentIds = array_map(fn (TransferIntent $row) => $row->id, $intents);
+            $taskIds = DB::table('warehouse_transfer_tasks')->whereIn('transfer_intent_id', $intentIds)->pluck('id');
+            $history = static fn (): array => DB::table('warehouse_transfer_allocations')
+                ->whereIn('warehouse_transfer_task_id', $taskIds)->orderBy('id')->get()->toArray();
+            $beforeBalance = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            check($beforeBalance['consistent'] && $beforeBalance['free_quantity'] === 15 && $beforeBalance['physical_quantity'] === 80
+                && $beforeBalance['staged_quantity'] === ($partial ? 64 : 65), $scenario.': incomplete stock fixture.');
+            $beforeReadiness = $readiness->assess($plan, $plan->intentAssignments()->active()->with(['intent', 'stop'])->get());
+            check($beforeReadiness['can_dispatch'] === !$partial, $scenario.': incorrect departure readiness before the barrier.');
+            $beforeAudit = ShipmentPlanOperation::max('id');
+            $beforeHistory = $history();
+            $beforeVersions = $plan->version + ($otherPlan?->version ?? 0);
+            $forceResize = $scenario === 'latest vehicle capacity';
+            $vehiclesRace = $forceResize || $scenario === 'resize vehicle';
+            $samePlanRace = in_array($scenario, ['double dispatch', 'same dispatch replay', 'detach', 'reorder', 'change vehicle', 'edit cargo'], true);
+            $barrier = $vehiclesRace ? $truck : ($partial ? $intent : ($samePlanRace ? $plan : $product));
+            $outcomes = race($database, [], $second ? [$first, $second] : [$first], recordBarrier: $barrier,
+                beforeRelease: $forceResize ? fn () => app(VehicleRegistry::class)->save($dispatchAdmin, $resize, $truck) : null);
+
+            $plan->refresh();
+            $otherPlan?->refresh();
+            $dispatches = ShipmentDispatch::whereIn('shipment_id', $planIds)->get();
+            $transit = ShipmentTransitItem::whereIn('shipment_id', $planIds)->get()->keyBy('transfer_intent_id');
+            $winnerDispatch = $dispatches->isNotEmpty();
+            $expectedOutcomes = match ($scenario) {
+                'same dispatch replay', 'issue free quantity', 'two plans for one stock' => ['OK', 'OK'],
+                'latest vehicle capacity' => ['REJECTED'],
+                'resize vehicle' => $winnerDispatch ? ['OK', 'OK'] : ['OK', 'REJECTED'],
+                default => ['OK', 'REJECTED'],
+            };
+            check($outcomes === $expectedOutcomes, $scenario.': unexpected concurrent outcome '.implode(', ', $outcomes));
+            check($dispatches->count() === ($twoPlans ? 2 : ($winnerDispatch ? 1 : 0))
+                && (!$twoPlans || $otherPlan->status === 'in_transit')
+                && $plan->status === ($winnerDispatch ? 'in_transit' : 'draft'), $scenario.': dispatch multiplicity or status is wrong.');
+            if (in_array($scenario, ['double dispatch', 'same dispatch replay', 'issue free quantity', 'issue protected quantity'], true)) {
+                check($winnerDispatch, $scenario.': no dispatch was performed.');
+            }
+            if ($partial || $forceResize) check(!$winnerDispatch, $scenario.': changed prerequisites allowed dispatch.');
+            $expectedAudit = $twoPlans ? 2 : (($partial || $forceResize || ($vehiclesRace && !$winnerDispatch)) ? 0 : 1);
+            $events = ShipmentPlanOperation::whereIn('shipment_id', $planIds)->where('id', '>', $beforeAudit)->get();
+            check($events->count() === $expectedAudit && $plan->version + ($otherPlan?->version ?? 0) === $beforeVersions + $expectedAudit,
+                $scenario.': a concurrent operation incorrectly wrote the version or audit.');
+            check($events->where('action', 'dispatch')->count() === $dispatches->count(), $scenario.': missing or duplicate dispatch audit.');
+            if ($samePlanRace && !$winnerDispatch) {
+                check($events->sole()->action === $second['operation'], $scenario.': neither mutually exclusive action won.');
+            }
+            if ($vehiclesRace) {
+                check($truck->refresh()->version === 2 && $truck->payload_capacity_grams === 600000, $scenario.': the vehicle capacity change was lost.');
+                if ($winnerDispatch) {
+                    $snapshot = $dispatches->sole()->snapshot;
+                    check($snapshot['vehicle']['payload_capacity_grams'] === 1200000 && $snapshot['vehicle']['version'] === 1,
+                        $scenario.': dispatch did not preserve the locked vehicle state it verified.');
+                }
+            }
+
+            $moved = $winnerDispatch ? 65 : 0;
+            $otherIssue = $scenario === 'issue free quantity' ? 15 : 0;
+            $balance = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            check($balance['consistent'] && $sourceStock->refresh()->quantity === 80 - $moved - $otherIssue
+                && $balance['staged_quantity'] === 65 - $moved && $balance['free_quantity'] === 15 - $otherIssue
+                && $balance['source_reserved_quantity'] === 0, $scenario.': concurrent dispatch corrupted physical, free, staged or held stock.');
+            check($transit->count() === ($winnerDispatch ? count($intents) : 0)
+                && (int) $transit->sum('remaining_quantity') === $moved, $scenario.': duplicate or missing transit stock.');
+            foreach ($intents as $lineIntent) {
+                $task = $lineIntent->pickingTasks()->sole();
+                $reservation = $lineIntent->stockReservations()->sole();
+                check(($task->dispatched_at !== null) === $winnerDispatch && $task->status === 'picked'
+                    && $task->staged_quantity === $lineIntent->quantity && $reservation->status === 'consumed'
+                    && $reservation->remaining_quantity === 0, $scenario.': the picking or reservation history was lost.');
+                if (!$winnerDispatch) continue;
+                $item = $transit->get($lineIntent->id);
+                check($item && (int) $item->dispatched_quantity === $lineIntent->quantity && (int) $item->remaining_quantity === $lineIntent->quantity
+                    && (int) $item->warehouse_transfer_task_id === $task->id, $scenario.': the transit item was not linked to its original picking task.');
+            }
+            $ledger = InventoryMovement::where('product_id', $product->getKey())->orderBy('id')->get();
+            check($ledger->count() === $transit->count() + (int) ($otherIssue > 0)
+                && (int) $ledger->sum('quantity') === $moved + $otherIssue
+                && $ledger->whereNotNull('shipment_transit_item_id')->pluck('shipment_transit_item_id')->sort()->values()->all() === $transit->pluck('id')->sort()->values()->all(),
+                $scenario.': the existing inventory ledger does not match transit and ordinary issue.');
+            $running = 80;
+            foreach ($ledger as $movement) {
+                check($movement->type === 'out' && $movement->stock_before === $running && $movement->stock_after === $running - $movement->quantity,
+                    $scenario.': concurrent movements lost the chronological ledger balance.');
+                $running = $movement->stock_after;
+            }
+            check($destinationStock->refresh()->quantity === 7 && $secondDestinationStock->refresh()->quantity === 9
+                && InventoryTransfer::where('product_id', $product->getKey())->doesntExist(), $scenario.': dispatch changed destination or created a legacy shipment transfer.');
+            $afterHistory = $history();
+            check($partial ? count($afterHistory) === count($beforeHistory) + 1 && array_slice($afterHistory, 0, -1) == $beforeHistory : $afterHistory == $beforeHistory,
+                $scenario.': dispatch altered the historical source allocations.');
+            $dispatchRaceCount++;
+            echo 'PASS: shipment dispatch '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $vehicleRaceCount = 0;
+    $secondVehicleAdmin = User::factory()->create(['role' => 'admin']);
+    $vehicleRegistry = app(VehicleRegistry::class);
+    $dispatchState = app(ShipmentDispatchService::class);
+    $reason = 'Szervizben';
+    $vehicleChange = static fn (Vehicle $truck, User $admin, bool $outerSnapshot, array $data): array => [
+        'action' => 'vehicle_update', 'id' => $truck->id, 'actor' => $admin->id,
+        'outerSnapshot' => $outerSnapshot, 'data' => $command($truck, $data),
+    ];
+    $checkInactivation = static function (Vehicle $truck, array $job) use ($reason): void {
+        $event = $truck->operations()->sole();
+        check($truck->version === 2 && !$truck->active && $event->actor_id === $job['actor']
+            && $event->operation_key === $job['data']['operation_key'] && $event->occurred_at !== null,
+            'The inactivation was lost or its writer was not audited.');
+        $change = $event->result['status_change'] ?? [];
+        check(($change['previous_active'] ?? null) === true && ($change['active'] ?? null) === false && ($change['reason'] ?? null) === $reason,
+            'The inactivation audit did not retain the transition and reason.');
+    };
+
+    foreach ([false, true] as $outerSnapshot) {
+        $snapshotLabel = $outerSnapshot ? ' with outer snapshots' : '';
+        $truck = Vehicle::create(['name' => 'Concurrent registry edits']);
+        $inactivation = $vehicleChange($truck, $dispatchAdmin, $outerSnapshot, ['active' => false, 'inactivation_reason' => $reason]);
+        $rename = $vehicleChange($truck, $secondVehicleAdmin, $outerSnapshot, ['name' => 'Winning admin edit']);
+        $outcomes = race($database, [], [$inactivation, $rename], recordBarrier: $truck);
+        check($outcomes === ['OK', 'REJECTED'] && $truck->refresh()->version === 2,
+            'Both admins modified the same version of the vehicle.');
+        if ($truck->active) {
+            $event = $truck->operations()->sole();
+            check($truck->name === $rename['data']['name'] && $event->actor_id === $rename['actor']
+                && $event->operation_key === $rename['data']['operation_key'], 'The registry audit did not identify the winning admin.');
+        } else {
+            check($truck->name === 'Concurrent registry edits', 'The stale rename overwrote the inactivated vehicle.');
+            $checkInactivation($truck, $inactivation);
+        }
+        $vehicleRaceCount++;
+        echo 'PASS: vehicle inactivation versus stale admin edit'.$snapshotLabel.PHP_EOL;
+
+        foreach ([false, true] as $dispatchWins) {
+            $scenario = $dispatchWins ? 'dispatch before inactivation' : 'inactivation before dispatch';
+            $sku = 'VEHICLE-STATE-RACE-'.(int) $dispatchWins.'-'.(int) $outerSnapshot;
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario, 'sku' => $sku, 'price' => 1]);
+            $originStock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 80]);
+            $targetStock = Stock::create(['warehouse_id' => $intentDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 7]);
+            $truck = Vehicle::create(['name' => $sku, 'payload_capacity_grams' => 1200000, 'pallet_slots_capacity' => 6]);
+            $intent = $prepareDispatchIntent($product, $intentDestination, 65, 65);
+            $plan = $prepareDispatchPlan($scenario, $truck, [$intent]);
+            $version = $plan->version;
+            $inactivation = $vehicleChange($truck, $dispatchAdmin, $outerSnapshot, ['active' => false, 'inactivation_reason' => $reason]);
+            $dispatch = [
+                'action' => 'shipment_plan', 'operation' => 'dispatch', 'actor' => $supervisor->id,
+                'ship' => $plan->id, 'outerSnapshot' => $outerSnapshot, 'expected_quantity' => 65,
+                'data' => $command($plan, ['confirmed' => true]),
+            ];
+
+            // The worker waits for the barrier while the parent performs the other real operation under the same row lock.
+            $stateAtDispatch = null;
+            $outcomes = race($database, [], [$dispatchWins ? $inactivation : $dispatch + ['expected_blocker' => 'vehicle_inactive']],
+                recordBarrier: $truck, beforeRelease: function () use (
+                    $dispatchWins, $planner, $supervisor, $plan, $dispatch, $dispatchState, $vehicleRegistry, $dispatchAdmin, $inactivation, $truck, &$stateAtDispatch,
+                ): void {
+                    if ($dispatchWins) {
+                        $planner->dispatch($supervisor, $plan, $dispatch['data']);
+                        $stateAtDispatch = $dispatchState->state($plan->refresh());
+                    } else {
+                        $vehicleRegistry->save($dispatchAdmin, $inactivation['data'], $truck);
+                    }
+                });
+
+            $checkInactivation($truck->refresh(), $inactivation);
+            $state = $dispatchState->state($plan->refresh());
+            $balance = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            check($targetStock->refresh()->quantity === 7 && $balance['consistent'] && $balance['free_quantity'] === 15
+                && $plan->vehicle_id === $truck->id, $scenario.': a vehicle state change altered the assignment, destination or free stock.');
+            if ($dispatchWins) {
+                check($outcomes === ['OK'] && $plan->version === $version + 1 && $state['shipment']['status'] === 'in_transit'
+                    && $state['dispatch'] === $stateAtDispatch['dispatch'] && $state['transit_items'] === $stateAtDispatch['transit_items']
+                    && $state['dispatch']['snapshot']['vehicle']['active'] === true && $state['dispatch']['snapshot']['vehicle']['version'] === 1
+                    && $state['transit_quantity'] === 65 && $originStock->refresh()->quantity === 15 && $balance['staged_quantity'] === 0
+                    && InventoryMovement::where('product_id', $product->getKey())->count() === 1,
+                    $scenario.': inactivation changed dispatch history, transit or booked stock.');
+            } else {
+                check($outcomes === ['REJECTED'] && $plan->version === $version && $state['shipment']['status'] === 'draft'
+                    && $state['dispatch'] === null && $state['transit_items'] === [] && $originStock->refresh()->quantity === 80
+                    && $balance['staged_quantity'] === 65 && InventoryMovement::where('product_id', $product->getKey())->doesntExist(),
+                    $scenario.': a dispatch accepted an inactive vehicle or partially booked stock.');
+            }
+            $vehicleRaceCount++;
+            echo 'PASS: vehicle '.$scenario.$snapshotLabel.PHP_EOL;
+        }
+    }
+    $receiptRaceCount = 0;
+    $receivers = collect([User::factory()->create(['role' => 'worker']), User::factory()->create(['role' => 'worker'])]);
+    foreach ([$intentDestination, $secondDispatchDestination] as $warehouse) {
+        foreach ($receivers as $receiver) {
+            $warehouse->memberships()->create(['user_id' => $receiver->id, 'role' => 'receiving_operator']);
+        }
+    }
+    $receiptLocation = $intentDestination->storageLocations()->create([
+        'code' => 'RECEIPT-RACE', 'name' => 'Receipt concurrency shelf', 'kind' => 'shelf',
+        'max_weight_grams' => 100000, 'active' => true,
+    ]);
+    $receiptFixture = static function (string $sku, bool $secondStop = false) use (
+        $category, $intentSource, $intentDestination, $secondDispatchDestination,
+        $prepareDispatchIntent, $prepareDispatchPlan, $planner, $supervisor, $command,
+    ): array {
+        $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $sku, 'sku' => $sku, 'price' => 1]);
+        $origin = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 80]);
+        $target = Stock::create(['warehouse_id' => $intentDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 7]);
+        $other = Stock::create(['warehouse_id' => $secondDispatchDestination->getKey(), 'product_id' => $product->getKey(), 'quantity' => 9]);
+        $truck = Vehicle::create(['name' => $sku, 'payload_capacity_grams' => 1200000, 'pallet_slots_capacity' => 6]);
+        $intents = [$prepareDispatchIntent($product, $intentDestination, 20, 20)];
+        if ($secondStop) $intents[] = $prepareDispatchIntent($product, $secondDispatchDestination, 10, 10);
+        $plan = $prepareDispatchPlan($sku, $truck, $intents);
+        $planner->dispatch($supervisor, $plan, $command($plan, ['confirmed' => true]));
+        $transit = $plan->transitItems()->with('stop')->get()->keyBy('to_warehouse_id');
+
+        return [
+            $product, $plan->refresh(), $origin, $target, $other,
+            $transit[$intentDestination->getKey()], $transit->get($secondDispatchDestination->getKey()),
+        ];
+    };
+    $receiptJob = static fn (ShipmentTransitItem $line, User $receiver, int $quantity, bool $outerSnapshot): array => [
+        'action' => 'shipment_2_receipt', 'actor' => $receiver->id, 'ship' => $line->shipment_id,
+        'stop' => $line->shipment_stop_id, 'outerSnapshot' => $outerSnapshot,
+        'data' => [
+            'operation_key' => (string) Str::uuid(), 'version' => (int) $line->stop->receiving_version, 'confirmed' => true,
+            'items' => [['transit_item_id' => $line->id, 'quantity' => $quantity, 'note' => 'Ellenőrzött darabszám.']],
+        ],
+    ];
+    $scenarios = [
+        'same transit item', 'same receipt replay', 'same receipt key with different notes', 'different destination stops',
+        'ordinary issue uses older stock', 'manual placement uses older stock',
+        'ordinary issue after receipt cannot consume protected stock', 'manual placement after receipt cannot consume protected stock',
+    ];
+
+    foreach ([false, true] as $outerSnapshot) {
+        foreach ($scenarios as $index => $scenario) {
+            $differentStops = $scenario === 'different destination stops';
+            $isPartial = $scenario === 'same transit item';
+            $isIssue = str_starts_with($scenario, 'ordinary issue');
+            $isPlacement = str_starts_with($scenario, 'manual placement');
+            $protect = str_contains($scenario, 'cannot consume');
+            [$product, $plan, $origin, $target, $other, $line, $secondLine] = $receiptFixture(
+                'RECEIPT-RACE-'.$index.'-'.(int) $outerSnapshot, $differentStops,
+            );
+            $version = $plan->version;
+            $originalSnapshot = $plan->dispatch()->sole()->snapshot;
+            $first = $receiptJob($line, $receivers[0], $isPartial ? 15 : 20, $outerSnapshot);
+            $second = match ($scenario) {
+                'same transit item' => $receiptJob($line, $receivers[1], 15, $outerSnapshot),
+                'same receipt replay' => $first,
+                'same receipt key with different notes' => array_replace($first, [
+                    'data' => $first['data'] + ['note' => 'Eltérő átvételi megjegyzés.'],
+                ]),
+                'different destination stops' => $receiptJob($secondLine, $receivers[1], 10, $outerSnapshot),
+                default => $isIssue
+                    ? ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'product_id' => $product->getKey(), 'warehouse_id' => $target->warehouse_id, 'user_id' => $user->id,
+                        'type' => 'out', 'quantity' => $protect ? 8 : 7,
+                    ]]
+                    : ['action' => 'place', 'id' => $receiptLocation->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'product_id' => $product->getKey(), 'quantity' => $protect ? 8 : 7, 'cargo_weight_kg' => 1,
+                    ]],
+            };
+            // Wait with the stock writer's old snapshot open, then commit a real receipt before it obtains the product lock.
+            $jobs = $protect ? [$second] : [$first, $second];
+            $outcomes = race($database, [], $jobs, recordBarrier: $isIssue || $isPlacement ? $product : $plan,
+                beforeRelease: $protect ? fn () => runReceiptOperation($first) : null);
+            $expected = match (true) {
+                $protect => ['REJECTED'],
+                $isPartial || $scenario === 'same receipt key with different notes' => ['OK', 'REJECTED'],
+                default => ['OK', 'OK'],
+            };
+            check($outcomes === $expected, $scenario.': unexpected concurrent outcome '.implode(', ', $outcomes));
+
+            $plan->refresh();
+            $line->refresh();
+            $booked = $isPartial ? 15 : 20;
+            $issued = $isIssue && !$protect ? 7 : 0;
+            $placed = $isPlacement && !$protect ? 7 : 0;
+            check($origin->refresh()->quantity === 80 - ($differentStops ? 30 : 20)
+                && $target->refresh()->quantity === 7 + $booked - $issued
+                && $other->refresh()->quantity === ($differentStops ? 19 : 9), $scenario.': physical stock was booked incorrectly.');
+            $stock = $availability->snapshot($target->warehouse_id, $product->getKey());
+            check($stock['consistent'] && $stock['direct_issue_quantity'] === 7 - $issued - $placed
+                && (int) $receiptLocation->placements()->where('stock_id', $target->id)->sum('quantity') === $placed,
+                $scenario.': receipt stock was exposed to another stock write or placement.');
+            $stop = $line->stop()->sole();
+            check($line->remaining_quantity === 20 - $booked && $line->status === ($isPartial ? 'in_transit' : 'received')
+                && ($stop->received_at !== null) === !$isPartial
+                && (int) $stop->receiving_version === $first['data']['version'] + 1,
+                $scenario.': receipt left an inconsistent transit, stop or receiving version.');
+            if ($differentStops) {
+                $secondStop = $secondLine->stop()->sole();
+                check($secondLine->refresh()->remaining_quantity === 0 && $secondLine->status === 'received'
+                    && $secondStop->received_at !== null && (int) $secondStop->receiving_version === $second['data']['version'] + 1,
+                    $scenario.': the other stop was skipped or used the first stop’s version.');
+            }
+            check($plan->status === ($isPartial ? 'in_transit' : 'completed') && ($plan->finished_at !== null) === !$isPartial
+                && $plan->version === $version + ($differentStops ? 2 : 1)
+                && $plan->dispatch()->sole()->snapshot === $originalSnapshot, $scenario.': shipment completion, version or historical dispatch is wrong.');
+
+            $receipts = DB::table('shipment_receipts')->where('shipment_id', $plan->id)->get();
+            $items = DB::table('shipment_receipt_items')->where('product_id', $product->getKey())->get();
+            $movements = InventoryMovement::where('product_id', $product->getKey())->get();
+            check($receipts->count() === ($differentStops ? 2 : 1) && $items->count() === $receipts->count()
+                && $movements->count() === $items->count() * 2 + (int) ($issued > 0),
+                $scenario.': duplicate or missing receipt, receipt item or inventory movement.');
+            foreach ($items as $item) {
+                $receipt = $receipts->firstWhere('id', $item->shipment_receipt_id);
+                $transit = (int) $item->shipment_transit_item_id === $line->id ? $line : $secondLine;
+                $movement = $movements->where('shipment_receipt_item_id', $item->id)->sole();
+                check($receipt && $transit && (int) $receipt->shipment_stop_id === (int) $transit->shipment_stop_id
+                    && (int) $receipt->to_warehouse_id === (int) $transit->to_warehouse_id
+                    && (int) $item->transfer_intent_id === (int) $transit->transfer_intent_id
+                    && (int) $item->received_quantity === ($transit->id === $line->id ? $booked : 10)
+                    && (int) $item->pending_putaway_quantity === (int) $item->received_quantity
+                    && $movement->type === 'in' && (int) $movement->warehouse_id === (int) $transit->to_warehouse_id
+                    && $movement->quantity === (int) $item->received_quantity
+                    && $movement->stock_after - $movement->stock_before === $movement->quantity
+                    && (int) $movement->user_id === (int) $receipt->actor_id,
+                    $scenario.': the receipt audit is not linked to the correct load, item, warehouse and incoming movement.');
+            }
+            $receiptRaceCount++;
+            echo 'PASS: shipment receipt '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+
+    [$product, $plan, $origin, $target, , $line] = $receiptFixture('RECEIPT-ROLLBACK');
+    $receipt = $receiptJob($line, $receivers[0], 20, false);
+    $version = $plan->version;
+    $originalSnapshot = $plan->dispatch()->sole()->snapshot;
+    DB::unprepared("CREATE TRIGGER test_reject_receipt_movement BEFORE INSERT ON inventory_movements FOR EACH ROW
+        BEGIN IF NEW.shipment_receipt_item_id IS NOT NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Forced receipt movement failure';
+        END IF; END");
+    try {
+        try {
+            runReceiptOperation($receipt);
+            check(false, 'The receipt did not reach the forced movement failure.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            check(str_contains($exception->getMessage(), 'Forced receipt movement failure'), 'Unexpected error in receipt rollback test.');
+        }
+        $stop = $line->stop()->sole();
+        check($target->refresh()->quantity === 7 && $origin->refresh()->quantity === 60 && $line->refresh()->remaining_quantity === 20
+            && $plan->refresh()->status === 'in_transit' && $plan->version === $version && $plan->finished_at === null
+            && $plan->dispatch()->sole()->snapshot === $originalSnapshot && $stop->received_at === null
+            && (int) $stop->receiving_version === $receipt['data']['version']
+            && DB::table('shipment_receipts')->where('shipment_id', $plan->id)->doesntExist()
+            && DB::table('shipment_receipt_items')->where('product_id', $product->getKey())->doesntExist()
+            && InventoryMovement::where('product_id', $product->getKey())->count() === 1,
+            'A late receipt movement failure left inventory, transit, status or audit changes.');
+    } finally {
+        DB::unprepared('DROP TRIGGER test_reject_receipt_movement');
+    }
+    runReceiptOperation($receipt);
+    check($target->refresh()->quantity === 27 && $line->refresh()->remaining_quantity === 0,
+        'A fully rolled back receipt could not be retried with its original key.');
+    $receiptRaceCount++;
+    echo 'PASS: shipment receipt rolls back after a late movement failure'.PHP_EOL;
+    $putawayRaceCount = 0;
+    $putawayFixture = static function (string $sku) use ($receiptFixture, $receiptJob, $receivers): array {
+        [$product, , , $target, , $line] = $receiptFixture($sku);
+        runReceiptOperation($receiptJob($line, $receivers[0], 20, false));
+
+        return [$product, $target, ShipmentReceiptItem::where('shipment_transit_item_id', $line->id)->sole()];
+    };
+    $putawayLocation = static fn (string $code) => $intentDestination->storageLocations()->create([
+        'code' => $code, 'name' => $code, 'kind' => 'shelf', 'max_weight_grams' => 30000, 'active' => true,
+    ]);
+    $putawayJob = static fn (ShipmentReceiptItem $item, User $actor, WarehouseLocation $location, int $quantity, bool $outerSnapshot): array => [
+        'action' => 'shipment_receipt_putaway', 'id' => $item->id, 'actor' => $actor->id, 'outerSnapshot' => $outerSnapshot,
+        'data' => [
+            'operation_key' => (string) Str::uuid(), 'version' => (int) $item->putaway_version, 'confirmed' => true,
+            'to_location_id' => $location->id, 'quantity' => $quantity, 'cargo_weight_kg' => 20,
+            'pallet_slots' => 0, 'site_verified' => true,
+        ],
+    ];
+    $scenarios = [
+        'same receipt item' => ['OK', 'REJECTED'],
+        'stale receipt version' => ['OK', 'REJECTED'],
+        'same UUID replay' => ['OK', 'OK'],
+        'same UUID different payload' => ['OK', 'REJECTED'],
+        'different receipts share bin capacity' => ['OK', 'REJECTED'],
+        'same UUID across different receipts' => ['OK', 'REJECTED'],
+        'ordinary issue uses older stock' => ['OK', 'OK'],
+        'manual placement uses older stock' => ['OK', 'OK'],
+        'manual placement shares bin capacity' => ['OK', 'REJECTED'],
+        'ordinary issue cannot consume receipt stock' => ['REJECTED'],
+        'manual placement cannot consume receipt stock' => ['REJECTED'],
+    ];
+
+    foreach ([false, true] as $outerSnapshot) {
+        foreach ($scenarios as $scenario => $expected) {
+            $sku = 'PUTAWAY-RACE-'.$putawayRaceCount;
+            [$product, $target, $item] = $putawayFixture($sku);
+            $bin = $putawayLocation($sku);
+            $otherBin = $putawayLocation($sku.'-OTHER');
+            $otherReceipt = in_array($scenario, ['different receipts share bin capacity', 'same UUID across different receipts'], true)
+                ? $putawayFixture($sku.'-SKU') : null;
+            $manualCapacity = $scenario === 'manual placement shares bin capacity';
+            $issue = str_starts_with($scenario, 'ordinary issue');
+            $manual = str_starts_with($scenario, 'manual placement');
+            $mustProtect = str_contains($scenario, 'cannot consume');
+            $quantity = $scenario === 'stale receipt version' ? 8 : 15;
+            $first = $putawayJob($item, $receivers[0], $bin, $quantity, $outerSnapshot);
+            $second = match ($scenario) {
+                'same receipt item', 'stale receipt version' => $putawayJob($item, $receivers[1], $otherBin, $quantity, $outerSnapshot),
+                'same UUID replay' => $first,
+                'same UUID different payload' => array_replace($first, [
+                    'data' => array_replace($first['data'], ['to_location_id' => $otherBin->id]),
+                ]),
+                'different receipts share bin capacity' => $putawayJob($otherReceipt[2], $receivers[1], $bin, $quantity, $outerSnapshot),
+                'same UUID across different receipts' => $putawayJob($otherReceipt[2], $receivers[1], $otherBin, $quantity, $outerSnapshot),
+                default => $issue
+                    ? ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'product_id' => $product->getKey(), 'warehouse_id' => $target->warehouse_id, 'user_id' => $user->id,
+                        'type' => 'out', 'quantity' => $mustProtect ? 8 : 7,
+                    ]]
+                    : ['action' => 'place', 'id' => $manualCapacity ? $bin->id : $otherBin->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                        'product_id' => $product->getKey(), 'quantity' => $mustProtect ? 8 : 7,
+                        'cargo_weight_kg' => $manualCapacity ? 20 : 1,
+                    ]],
+            };
+            if ($scenario === 'same UUID across different receipts') $second['data']['operation_key'] = $first['data']['operation_key'];
+
+            // The competing stock writer can start with an older snapshot even if putaway commits first.
+            $outcomes = race($database, [], $mustProtect ? [$second] : [$first, $second],
+                recordBarrier: $otherReceipt === null ? $product : $intentDestination,
+                beforeRelease: $mustProtect ? fn () => runPutawayOperation($first) : null);
+            check($outcomes === $expected, $scenario.': unexpected concurrent outcome '.implode(', ', $outcomes));
+
+            $stocks = [[$product, $target, $item]];
+            if ($otherReceipt !== null) $stocks[] = $otherReceipt;
+            $audits = DB::table('shipment_receipt_putaways')->whereIn('shipment_receipt_item_id', collect($stocks)->pluck(2)->pluck('id'))->get();
+            $manualPlaced = $manual && !$mustProtect && (!$manualCapacity || $audits->isEmpty()) ? 7 : 0;
+            $issued = $issue && !$mustProtect ? 7 : 0;
+            $placements = $bin->placements()->get()->concat($otherBin->placements()->get());
+            check($audits->count() === ($manualCapacity && $manualPlaced > 0 ? 0 : 1)
+                && $placements->count() === $audits->count() + (int) ($manualPlaced > 0)
+                && $placements->where('warehouse_location_id', $bin->id)->sum('cargo_weight_grams') <= $bin->max_weight_grams,
+                $scenario.': missing or duplicate placement evidence, or bin capacity was exceeded.');
+
+            foreach ($stocks as [$stockProduct, $stock, $receiptItem]) {
+                $audit = $audits->firstWhere('shipment_receipt_item_id', $receiptItem->id);
+                $assigned = $audit ? $quantity : 0;
+                $isOriginal = $stock->id === $target->id;
+                $issuedForStock = $isOriginal ? $issued : 0;
+                $manualForStock = $isOriginal ? $manualPlaced : 0;
+                $snapshot = $availability->snapshot($stock->warehouse_id, $stockProduct->getKey());
+                check($stock->refresh()->quantity === 27 - $issuedForStock
+                    && InventoryMovement::where('product_id', $stockProduct->getKey())->count() === 2 + (int) ($issuedForStock > 0)
+                    && $receiptItem->refresh()->received_quantity === 20
+                    && $receiptItem->pending_putaway_quantity === 20 - $assigned
+                    && (int) $receiptItem->putaway_version === $first['data']['version'] + (int) ($assigned > 0)
+                    && $snapshot['consistent'] && $snapshot['pending_putaway_quantity'] === 20 - $assigned
+                    && $snapshot['assigned_quantity'] === $assigned + $manualForStock
+                    && $snapshot['direct_issue_quantity'] === 7 - $issuedForStock - $manualForStock,
+                    $scenario.': physical, pending, assigned or ordinary issue quantities drifted.');
+
+                if ($audit) {
+                    $placement = $placements->firstWhere('id', (int) $audit->warehouse_placement_id);
+                    check($placement && $placement->stock_id === $stock->id && $placement->quantity === $quantity
+                        && $placement->warehouse_location_id === (int) $audit->warehouse_location_id
+                        && $placement->cargo_weight_grams === 20000 && $placement->pallet_slots === 0,
+                        $scenario.': audit does not identify the actual placement and load.');
+                }
+            }
+            $putawayRaceCount++;
+            echo 'PASS: shipment receipt putaway '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+
+    [$product, $stock, $item] = $putawayFixture('PUTAWAY-ROLLBACK');
+    $bin = $putawayLocation('PUTAWAY-ROLLBACK');
+    $job = $putawayJob($item, $receivers[0], $bin, 15, false);
+    DB::unprepared("CREATE TRIGGER test_reject_putaway_audit BEFORE INSERT ON shipment_receipt_putaways FOR EACH ROW
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Forced putaway audit failure'");
+    try {
+        try {
+            runPutawayOperation($job);
+            check(false, 'Putaway did not reach the forced audit failure.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            check(str_contains($exception->getMessage(), 'Forced putaway audit failure'), 'Unexpected error in putaway rollback test.');
+        }
+        check($stock->refresh()->quantity === 27 && InventoryMovement::where('product_id', $product->getKey())->count() === 2
+            && $item->refresh()->pending_putaway_quantity === 20
+            && (int) $item->putaway_version === $job['data']['version']
+            && $bin->placements()->doesntExist()
+            && DB::table('shipment_receipt_putaways')->where('operation_key', $job['data']['operation_key'])->doesntExist(),
+            'An audit failure left stock, receipt item, placement or audit changes.');
+    } finally {
+        DB::unprepared('DROP TRIGGER test_reject_putaway_audit');
+    }
+    runPutawayOperation($job);
+    check($item->refresh()->pending_putaway_quantity === 5 && $bin->placements()->sole()->quantity === 15,
+        'A fully rolled back putaway could not be retried with its original key.');
+    $putawayRaceCount++;
+    echo 'PASS: shipment receipt putaway rolls back after a late audit failure'.PHP_EOL;
+
+    echo (69 + $intentRaceCount + $reservationRaceCount + $pickingRaceCount + $planningRaceCount + $cargoRaceCount
+        + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount)." MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

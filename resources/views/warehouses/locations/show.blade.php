@@ -33,7 +33,7 @@
                                 <select name="product_id" required class="mt-1 block w-full rounded-md border-gray-300 text-sm">
                                     <option value="">Válassz terméket…</option>
                                     @foreach($stocks as $stock)
-                                        <option value="{{ $stock->product_id }}" @selected($input('product_id') === (string) $stock->product_id)>{{ $stock->product->product_name }} · {{ $stock->available_quantity - $stock->assigned_quantity }} db</option>
+                                        <option value="{{ $stock->product_id }}" @selected($input('product_id') === (string) $stock->product_id)>{{ $stock->product->product_name }} · {{ $stock->available_quantity - $stock->assigned_quantity - $stock->staged_quantity }} db</option>
                                     @endforeach
                                 </select>
                             </label>
@@ -60,7 +60,13 @@
             <ul class="divide-y divide-gray-100">
                 @forelse($placements as $placement)
                     <li class="flex flex-wrap items-center justify-between gap-3 py-3">
-                        <div class="min-w-0"><p class="dashboard-text font-medium">{{ $placement->stock->product->product_name }}</p><p class="dashboard-text text-sm text-gray-600">{{ $placement->stock->product->sku }} · {{ $placement->quantity }} db · {{ $kg($placement->cargo_weight_grams) }} kg @if($placement->pallet_slots) · {{ $placement->pallet_slots }} raklap @endif</p></div>
+                        <div class="min-w-0">
+                            <p class="dashboard-text font-medium">{{ $placement->stock->product->product_name }}</p>
+                            <p class="dashboard-text text-sm text-gray-600">{{ $placement->stock->product->sku }} · {{ $placement->quantity }} db · {{ $kg($placement->cargo_weight_grams) }} kg @if($placement->pallet_slots) · {{ $placement->pallet_slots }} raklap @endif</p>
+                            @if($placement->load_requires_verification)
+                                <p class="text-xs font-medium text-amber-800">Korábbi terhelés fenntartva a fennmaradó tétel ellenőrzéséig.</p>
+                            @endif
+                        </div>
                         <form method="POST" action="{{ route('warehouses.locations.release', $locationParams + ['placement' => $placement]) }}" onsubmit="return confirm('A teljes tétel kikerüljön a tárhelyről?')">
                             @csrf @method('DELETE')
                             <button class="min-h-10 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50">Kivétel a tárhelyről</button>

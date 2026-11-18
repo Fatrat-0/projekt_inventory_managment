@@ -16,7 +16,15 @@ class WarehouseStatisticsReport
     {
         $assigned = (int) $rows->sum('assigned_units');
         $quarantined = (int) $rows->sum('quarantined_units');
-        $stock = [$assigned, max(0, (int) $rows->sum('physical_units') - $assigned - $quarantined), $quarantined];
+        $staged = (int) $rows->sum('staged_units');
+        $stock = [$assigned, max(0, (int) $rows->sum('physical_units') - $assigned - $quarantined - $staged), $quarantined];
+        $stockLegend = ['Tárhelyen', 'Tárhely nélkül kiadható', 'Elkülönítve'];
+        $stockColors = ['#4f46e5', '#0ea5e9', '#f59e0b'];
+        if ($staged > 0) {
+            $stock[] = $staged;
+            $stockLegend[] = 'Összekészítve';
+            $stockColors[] = '#64748b';
+        }
 
         $this->charts = [
             'weight' => self::capacity($rows, $singleWarehouse, 'weight', 'Terhelési kapacitás', 'kg',
@@ -27,7 +35,7 @@ class WarehouseStatisticsReport
                 'title' => 'Helyi készlet összetétele', 'subtitle' => 'Megoszlás tárolási állapot szerint',
                 'parts' => $stock, 'total' => array_sum($stock), 'unit' => 'db', 'empty' => 'Nincs fizikai készlet.',
                 'value' => self::format(array_sum($stock), 'db'), 'valueLabel' => 'Fizikai készlet',
-                'legend' => ['Tárhelyen', 'Tárhely nélkül kiadható', 'Elkülönítve'], 'colors' => ['#4f46e5', '#0ea5e9', '#f59e0b'],
+                'legend' => $stockLegend, 'colors' => $stockColors,
             ],
         ];
         $this->counters = collect(['location_count' => 'Aktív tárhely', 'incoming_count' => 'Beérkező átmozgatási tétel', 'outgoing_count' => 'Kimenő átmozgatási tétel'])

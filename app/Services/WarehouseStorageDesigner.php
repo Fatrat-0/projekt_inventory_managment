@@ -129,7 +129,7 @@ class WarehouseStorageDesigner
             }
             $limit = WarehouseCapacity::grams($data['max_weight_kg']);
             $committed = $this->capacity->committedWeights([$bin->id])[$bin->id] ?? 0;
-            if ($committed > $limit || ($committed > 0 && !$data['active'])) {
+            if ($committed > $limit || (!$data['active'] && ($committed > 0 || $bin->placements()->lockForUpdate()->first(['id'])))) {
                 throw ValidationException::withMessages(['max_weight_kg' => 'A tárolt és lefoglalt tételek mellett a rekesz nem kapcsolható ki és a határ nem csökkenthető a lekötött tömeg alá.']);
             }
             $categories = array_map('intval', $data['categories'] ?? []);

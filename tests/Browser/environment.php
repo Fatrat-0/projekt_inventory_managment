@@ -1,8 +1,11 @@
 <?php
 
 $root = dirname(__DIR__, 2);
-$runtime = __DIR__.'/.runtime';
-if (!is_dir($runtime)) mkdir($runtime, 0777, true);
+$runtime = realpath(getenv('INVENTORY_BROWSER_RUNTIME') ?: '');
+if (!$runtime || !preg_match('/^inventory-browser-[A-Za-z0-9]+$/D', basename($runtime))
+    || dirname($runtime) !== realpath(sys_get_temp_dir())) {
+    throw new RuntimeException('Browser tests require a temporary directory allocated by their runner.');
+}
 foreach (['storage/framework/sessions', 'storage/framework/views', 'storage/framework/cache', 'storage/logs'] as $folder) {
     if (!is_dir($runtime.'/'.$folder)) mkdir($runtime.'/'.$folder, 0777, true);
 }

@@ -8,6 +8,7 @@ use App\Models\Warehouse;
 use App\Models\Partner;
 use Illuminate\Http\Request;
 use App\Services\InventoryService;
+use App\Services\WarehouseStockAvailability;
 
 class InventoryMovementController extends Controller
 {
@@ -79,17 +80,22 @@ class InventoryMovementController extends Controller
         return view('movements.show', compact('movement', 'returnUrl', 'returnLabel', 'returned', 'remaining', 'returnHistory', 'context', 'qualityHistory', 'qualityRemaining', 'qualityReleased', 'qualityScrapped', 'qualityKey'));
     }
 
-    public function stock(Request $request)
+    public function stock(Request $request, WarehouseStockAvailability $availability)
     {
         $data = $request->validate([
             'product_id' => 'required|integer|exists:products,product_id',
             'warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
         ]);
-        $stock = \App\Models\Stock::where('product_id', $data['product_id'])->where('warehouse_id', $data['warehouse_id'])
-            ->withSum('placements as assigned_quantity', 'quantity')->first();
-        $balance = ['quantity' => $stock?->available_quantity ?? 0, 'physical_quantity' => $stock?->quantity ?? 0,
-            'quarantined_quantity' => $stock?->quarantined_quantity ?? 0];
-        if ($stock?->assigned_quantity) $balance['assigned_quantity'] = (int) $stock->assigned_quantity;
+        $stock = $availability->snapshot($data['warehouse_id'], $data['product_id']);
+        $balance = ['quantity' => $stock['physical_quantity'] - $stock['quarantined_quantity'] - $stock['pending_putaway_quantity'],
+            'physical_quantity' => $stock['physical_quantity'], 'quarantined_quantity' => $stock['quarantined_quantity']];
+        if ($stock['assigned_quantity']) $balance['assigned_quantity'] = $stock['assigned_quantity'];
+        if ($stock['pending_putaway_quantity']) $balance['pending_putaway_quantity'] = $stock['pending_putaway_quantity'];
+        if ($stock['source_reserved_quantity'] || $stock['staged_quantity'] || $stock['pending_putaway_quantity'] || !$stock['consistent']) {
+            $balance['source_reserved_quantity'] = $stock['source_reserved_quantity'];
+            $balance['direct_issue_quantity'] = $stock['direct_issue_quantity'];
+            $balance['staged_quantity'] = $stock['staged_quantity'];
+        }
 
         return response()->json($balance)->header('Cache-Control', 'no-store');
     }

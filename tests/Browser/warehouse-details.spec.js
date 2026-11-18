@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { legacyDraft, shipmentCommand as command } from './shipment-fixtures';
 
 async function post(page, path, data) {
     const token = await page.locator('meta[name="csrf-token"]').getAttribute('content');
@@ -51,6 +52,26 @@ test('warehouse details display local stock and separate incoming and already-de
     await page.screenshot({ path: 'tests/Browser/.runtime/warehouse-details-desktop.png', fullPage: true });
     await incoming.getByRole('link', { name: 'Összes (1)', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/transfers' && url.searchParams.get('to_warehouse_id') === local && url.searchParams.get('status') === 'pending');
+});
+
+test('long product names and SKUs stay inside the local stock workspace', async ({ page }) => {
+    const marker = crypto.randomUUID();
+    const local = await warehouse(page, 'DETAILS-LONG-' + marker);
+    const sku = 'DETAILS-' + marker + 'W'.repeat(6);
+    const name = 'W'.repeat(100);
+    await command(page, 'POST', '/products', { product_name: name, sku, price: 1, category_id: 1 }, 302);
+    const html = await (await page.request.get('/products?search=' + sku)).text();
+    const product = html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1];
+    await movement(page, local, product, 3);
+    await page.goto('/warehouses/' + local);
+
+    for (const width of [768, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        const row = page.locator(`tr[data-stock-product-id="${product}"]`);
+        await expect(row.getByRole('cell', { name, exact: true })).toBeInViewport();
+        await expect(row.getByRole('cell', { name: sku, exact: true })).toBeInViewport();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    }
 });
 
 test('local suggestions, automatic stock filters and editing preserve detail and warehouse list state', async ({ page }) => {
@@ -112,18 +133,11 @@ test('shipment-managed incoming items open the shipment workflow', async ({ page
     const local = await warehouse(page, 'DETAILS-SHIPMENT-A');
     const other = await warehouse(page, 'DETAILS-SHIPMENT-B');
     await movement(page, other, '1', 4);
-    await page.goto('/shipments/create');
-    await page.getByLabel('Szállítmány hivatkozása', { exact: true }).fill('DETAILS-SHIPMENT');
-    await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('DETAILS-SHIPMENT-B');
-    await page.getByRole('listbox', { name: 'Raktártalálatok', exact: true }).getByRole('option', { name: 'DETAILS-SHIPMENT-B', exact: true }).click();
-    const stop = page.getByRole('group', { name: '1. megálló', exact: true });
-    await stop.getByLabel('Célraktár', { exact: true }).selectOption(local);
-    await stop.getByLabel('Termék', { exact: true }).selectOption('1');
-    await stop.getByLabel('Mennyiség (db)', { exact: true }).fill('2');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await page.getByRole('button', { name: 'Szállítmány indítása', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Megálló átvétele', exact: true })).toBeVisible();
-    const shipmentUrl = page.url();
+    const path = await legacyDraft(page, 'DETAILS-SHIPMENT', Number(other), [{
+        warehouse_id: Number(local), items: [{ product_id: 1, quantity: 2 }],
+    }]);
+    await command(page, 'POST', path+'/start', { version: 1 }, 302);
+    const shipmentUrl = new URL(path, page.url()).href;
     await page.goto('/warehouses/'+local);
     await expect(page.locator('[data-summary="incoming"]')).toContainText('2 db');
     const incoming = page.getByRole('region', { name: 'Beérkező átmozgatások', exact: true });

@@ -35,17 +35,51 @@ test('single transfer uses suggestions, stock lookup, replay protection and rece
     expect((await target.json()).quantity).toBe(targetBefore + 1);
 });
 
-test('transfer validation preserves selections and cancel retains list context', async ({ page }) => {
+test('correcting warehouse validation synchronizes names and submitted IDs', async ({ page }) => {
     await page.goto('/transfers?status=pending&sort_by=quantity&sort_dir=asc&per_page=25');
     await page.getByRole('link', { name: '+ Új átmozgatás', exact: true }).click();
     await choose(page, 'Termék', 'ALPHA', 'Alpha teszttermék (ALPHA-001)');
-    await choose(page, 'Forrásraktár', 'Teszt raktár', 'Teszt raktár · Test');
     await choose(page, 'Célraktár', 'Teszt raktár', 'Teszt raktár · Test');
-    await page.getByRole('button', { name: 'Átmozgatás indítása', exact: true }).click();
-    await expect(page.getByRole('alert')).toBeVisible();
+    const target = page.getByRole('combobox', { name: 'Célraktár', exact: true });
+    const targetId = page.locator('input[name="to_warehouse_id"]');
+    await expect(targetId).toHaveValue('1');
+    await choose(page, 'Forrásraktár', 'Teszt raktár', 'Teszt raktár · Test');
+    await expect(target).toHaveValue('');
+    await expect(targetId).toHaveValue('');
+    await target.fill('Teszt raktár');
+    await expect(page.getByRole('option', { name: 'Teszt raktár · Test', exact: true })).toHaveCount(0);
+
+    const form = page.getByRole('main').locator('form[action$="/transfers"]');
+    const invalid = await page.request.post('/transfers', {
+        headers: { Referer: page.url() }, maxRedirects: 0,
+        form: {
+            _token: await form.locator('input[name="_token"]').inputValue(),
+            request_key: await form.locator('input[name="request_key"]').inputValue(),
+            context: await form.locator('input[name="context"]').inputValue(),
+            product_id: '1', from_warehouse_id: '1', to_warehouse_id: '1', quantity: '1',
+        },
+    });
+    expect(invalid.status()).toBe(302);
+    await page.goto(invalid.headers().location);
+    const error = page.getByText('A forrásraktár és a célraktár nem lehet ugyanaz.', { exact: true });
+    await expect(error).toBeVisible();
+    await expect(target).toHaveValue('Teszt raktár · Test');
+    await expect(target).toHaveAttribute('aria-invalid', 'true');
+
+    await choose(page, 'Célraktár', 'Nyugati', 'Nyugati tesztraktár · Bemutató célállomás');
+    await expect(error).toBeHidden();
+    await expect(target).toHaveAttribute('aria-invalid', 'false');
+    await expect(target).toHaveValue('Nyugati tesztraktár · Bemutató célállomás');
     await expect(page.getByRole('combobox', { name: 'Forrásraktár', exact: true })).toHaveValue('Teszt raktár · Test');
-    await expect(page.getByRole('combobox', { name: 'Célraktár', exact: true })).toHaveAttribute('aria-invalid', 'true');
-    await page.getByRole('link', { name: 'Mégse', exact: true }).click();
+    await expect(targetId).toHaveValue('4');
+    await expect(page.locator('input[name="from_warehouse_id"]')).toHaveValue('1');
+    await expect(page.getByRole('link', { name: 'Mégse', exact: true })).toHaveAttribute('href', /status=pending/);
+    const submitted = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/transfers');
+    await page.getByRole('button', { name: 'Átmozgatás indítása', exact: true }).click();
+    const fields = new URLSearchParams((await submitted).postData());
+    expect(fields.get('from_warehouse_id')).toBe('1');
+    expect(fields.get('to_warehouse_id')).toBe('4');
+    await expect(page.getByRole('status')).toContainText('Átmozgatás elindítva');
     await expect(page).toHaveURL(/status=pending/);
     expect(new URL(page.url()).searchParams.get('sort_by')).toBe('quantity');
     expect(new URL(page.url()).searchParams.get('per_page')).toBe('25');

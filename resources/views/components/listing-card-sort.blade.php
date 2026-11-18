@@ -1,5 +1,6 @@
 @props(['sorts', 'filters', 'form'])
-<details data-listing-card-sort="block" class="rounded-lg border border-gray-200 bg-white p-3 text-sm">
+<details data-listing-card-sort="block"
+    {{ $attributes->class('rounded-lg border border-gray-200 bg-white p-3 text-sm') }}>
     <summary class="cursor-pointer font-medium text-gray-700">Rendezés: {{ $sorts[$filters['sort_by']] }} {{ $filters['sort_dir'] === 'asc' ? '↑' : '↓' }}</summary>
     <div class="mt-2 flex flex-wrap gap-2">
         @foreach($sorts as $key => $label)

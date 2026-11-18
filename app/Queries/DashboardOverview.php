@@ -2,6 +2,7 @@
 
 namespace App\Queries;
 
+use App\Services\WarehouseStockAvailability;
 use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, Shipment, Stock, Warehouse};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -23,7 +24,10 @@ class DashboardOverview
 
     public static function productAlerts(): Builder
     {
-        $stocks = DB::table('stocks')->select('product_id')->selectRaw('SUM(quantity) AS physical, SUM(quarantined_quantity) AS quarantined, SUM(quantity - quarantined_quantity) AS available')->groupBy('product_id');
+        $usableStock = WarehouseStockAvailability::usableStockSql();
+        $stocks = DB::table('stocks')->select('product_id')
+            ->selectRaw("SUM(quantity) AS physical, SUM(quarantined_quantity) AS quarantined, SUM({$usableStock}) AS available")
+            ->groupBy('product_id');
         $minimum = 'COALESCE(products.min_stock_override, alert_categories.default_item_min_stock)';
         $available = 'COALESCE(product_stock.available, 0)';
         return Product::query()->leftJoinSub($stocks, 'product_stock', 'product_stock.product_id', '=', 'products.product_id')
@@ -36,8 +40,9 @@ class DashboardOverview
     public static function categoryAlerts(): Builder
     {
         // Only directly assigned products contribute; child categories have their own minima.
+        $usableStock = WarehouseStockAvailability::usableStockSql();
         $stocks = DB::table('products')->leftJoin('stocks', 'stocks.product_id', '=', 'products.product_id')->select('products.category_id')
-            ->selectRaw('COALESCE(SUM(stocks.quantity), 0) AS physical, COALESCE(SUM(stocks.quarantined_quantity), 0) AS quarantined, COALESCE(SUM(stocks.quantity - stocks.quarantined_quantity), 0) AS available')
+            ->selectRaw("COALESCE(SUM(stocks.quantity), 0) AS physical, COALESCE(SUM(stocks.quarantined_quantity), 0) AS quarantined, COALESCE(SUM({$usableStock}), 0) AS available")
             ->groupBy('products.category_id');
         $available = 'COALESCE(category_stock.available, 0)';
         return Category::query()->leftJoinSub($stocks, 'category_stock', 'category_stock.category_id', '=', 'categories.category_id')
@@ -55,10 +60,13 @@ class DashboardOverview
             $categoryAlerts = self::categoryAlerts();
             $productCount = (clone $productAlerts)->count();
             $categoryCount = (clone $categoryAlerts)->count();
-            $stock = Stock::query()->selectRaw('COALESCE(SUM(quantity), 0) AS physical, COALESCE(SUM(quarantined_quantity), 0) AS quarantined, COALESCE(SUM(quantity - quarantined_quantity), 0) AS available')->first();
-            $warehouseTotals = DB::table('stocks')->select('warehouse_id')->selectRaw('SUM(quantity) AS physical, SUM(quarantined_quantity) AS quarantined')->groupBy('warehouse_id');
+            $usableStock = WarehouseStockAvailability::usableStockSql();
+            $stock = Stock::query()->selectRaw("COALESCE(SUM(quantity), 0) AS physical, COALESCE(SUM(quarantined_quantity), 0) AS quarantined, COALESCE(SUM({$usableStock}), 0) AS available")->first();
+            $warehouseTotals = DB::table('stocks')->select('warehouse_id')
+                ->selectRaw("SUM(quantity) AS physical, SUM(quarantined_quantity) AS quarantined, SUM({$usableStock}) AS available")
+                ->groupBy('warehouse_id');
             $warehouseStocks = Warehouse::query()->leftJoinSub($warehouseTotals, 'totals', 'totals.warehouse_id', '=', 'warehouses.warehouse_id')
-                ->select('warehouses.*')->selectRaw('COALESCE(totals.physical, 0) AS physical, COALESCE(totals.quarantined, 0) AS quarantined, COALESCE(totals.physical - totals.quarantined, 0) AS available')
+                ->select('warehouses.*')->selectRaw('COALESCE(totals.physical, 0) AS physical, COALESCE(totals.quarantined, 0) AS quarantined, COALESCE(totals.available, 0) AS available')
                 ->orderByDesc('physical')->orderBy('warehouses.warehouse_id');
             $warehousePeak = max(1, (int)DB::query()->fromSub($warehouseTotals, 'totals')->max('physical'));
             $replenishments = ReplenishmentSuggestions::query();
@@ -68,7 +76,8 @@ class DashboardOverview
                 ->where('status', 'pending')->orderBy('created_at')->orderBy('id');
             $recent = InventoryMovement::with(['product', 'warehouse', 'user'])->where('created_at', '<=', $asOf)->orderByDesc('created_at')->orderByDesc('id');
             $movementCount = (clone $recent)->count();
-            $shipments = Shipment::query()->selectRaw("COALESCE(SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END), 0) AS in_transit, COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS drafts")->first();
+            $shipments = Shipment::where('planning_mode', Shipment::MODE_LEGACY)
+                ->selectRaw("COALESCE(SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END), 0) AS in_transit, COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS drafts")->first();
             $activity = InventoryMovement::where('created_at', '>=', $start)->where('created_at', '<=', $asOf)
                 ->selectRaw("DATE(created_at) AS day, SUM(CASE WHEN type = 'in' THEN 1 ELSE 0 END) AS in_count, SUM(CASE WHEN type = 'out' THEN 1 ELSE 0 END) AS out_count")
                 ->selectRaw("SUM(CASE WHEN type = 'in' THEN quantity ELSE 0 END) AS in_quantity, SUM(CASE WHEN type = 'out' THEN quantity ELSE 0 END) AS out_quantity")

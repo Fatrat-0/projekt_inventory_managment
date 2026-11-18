@@ -8,6 +8,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class RoleMiddleware
 {
+    public const INVENTORY_ROLES = ['admin', 'manager', 'worker'];
+
     /**
      * Handle an incoming request.
      *

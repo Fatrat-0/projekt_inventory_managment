@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
-const pages = ['products', 'stock', 'movements', 'transfers', 'shipments', 'partners', 'categories', 'warehouses', 'quality-returns', 'users'];
+const pages = ['products', 'stock', 'movements', 'transfers', 'partners', 'categories', 'warehouses', 'quality-returns', 'users'];
 const table = page => page.locator('[data-listing-table]');
 const picker = page => page.getByRole('button', { name: 'Táblázat oszlopai', exact: true });
 const panel = page => page.getByRole('dialog', { name: 'Táblázat oszlopai', exact: true });
@@ -25,7 +25,6 @@ test.beforeAll(async ({ browser }) => {
         const product = Number(productHtml.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
         await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'in', quantity: 10 });
         await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 });
-        await post(page, '/shipments', { reference: marker, origin_warehouse_id: 1, stops: [{ warehouse_id: 2, items: [{ product_id: product, quantity: 1 }] }] });
         await post(page, '/partners', { name: marker, type: 'both' });
         await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'out', quantity: 1, reference: marker });
         const issues = await (await page.request.get('/movements?search='+marker)).text();
@@ -39,7 +38,7 @@ for (const path of pages) {
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.setViewportSize({ width: 1440, height: 1000 }); await login(page); await page.goto('/'+path);
         await page.getByRole('button', { name: 'Táblázatos nézet', exact: true }).click();
-        const headingKey = path === 'movements' ? 'product_name' : path === 'shipments' ? 'reference' : 'actions';
+        const headingKey = path === 'movements' ? 'product_name' : 'actions';
         await expect(table(page).locator('thead [data-listing-column="'+headingKey+'"]').getByRole('button', { name: 'Táblázat oszlopai', exact: true })).toBeVisible();
         await expect(page.locator('[data-page-toolbar]').getByRole('button', { name: 'Táblázat oszlopai', exact: true })).toHaveCount(0);
         await picker(page).focus(); await page.keyboard.press('Enter'); await expect(panel(page)).toBeVisible();
@@ -75,7 +74,6 @@ for (const path of pages) {
         expect(anchor.x + anchor.width).toBeLessThanOrEqual(Math.min(region.x + region.width, 1440));
         const popup = await panel(page).boundingBox();
         expect(popup.x).toBeGreaterThanOrEqual(0); expect(popup.x + popup.width).toBeLessThanOrEqual(1440);
-        if (path === 'stock') await page.screenshot({ path: 'tests/Browser/.runtime/stock-columns-header.png', fullPage: true });
         await panel(page).locator('input[data-column-key="'+optional[0].key+'"]').uncheck();
         await page.keyboard.press('Escape');
         await page.getByRole('button', { name: 'Kártyás nézet', exact: true }).click(); await expect(picker(page)).toBeHidden();
@@ -151,7 +149,7 @@ test('column changes work with blocked storage and default columns remain availa
     const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 1440, height: 900 } });
     try {
         const fallback = await context.newPage(); await login(fallback);
-        for (const path of pages.filter(path => path !== 'shipments')) {
+        for (const path of pages) {
             await fallback.goto('/'+path); await expect(picker(fallback)).toBeHidden();
             const headers = await table(fallback).locator('thead th').count();
             await expect(table(fallback).locator('thead th:visible')).toHaveCount(headers);
@@ -190,7 +188,7 @@ test('clicks on panel padding, title, help and fixed labels keep it open while o
 
 test('empty result rows span exactly the selected columns', async ({ page }) => {
     await login(page);
-    for (const path of ['products', 'shipments', 'partners', 'categories', 'warehouses', 'quality-returns']) {
+    for (const path of ['products', 'partners', 'categories', 'warehouses', 'quality-returns']) {
         await page.goto('/'+path); await page.getByRole('button', { name: 'Táblázatos nézet', exact: true }).click(); await picker(page).click();
         for (const input of await panel(page).locator('input:not(:disabled)').all()) await input.uncheck();
         await page.keyboard.press('Escape');

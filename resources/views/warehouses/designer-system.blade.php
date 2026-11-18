@@ -1,7 +1,9 @@
 <template x-if="selected.systemId">
     <div class="space-y-3">
         <p class="text-xs text-gray-600" x-text="`${selected.code} · Zóna: ${selected.zone}`"></p>
-        <a :href="selected.frontUrl" x-text="selected.kind === 'floor' ? 'Tárolóterület megnyitása' : 'Állvány megnyitása'" class="inline-flex min-h-10 items-center rounded-md bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100"></a>
+        @unless($previewLocation)
+            <a :href="selected.frontUrl" x-text="selected.kind === 'floor' ? 'Tárolóterület megnyitása' : 'Állvány megnyitása'" class="inline-flex min-h-10 items-center rounded-md bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100"></a>
+        @endunless
         <p x-show="selected.rackHeight !== null" class="text-xs text-gray-600" x-text="selected.rackHeight === null ? '' : `Állványmagasság · ${selected.rackHeight.toLocaleString('hu-HU')} m`"></p>
         @if($plan['canEdit'])
             <button type="button" x-show="!systemEdit" @click="beginSystemEdit(selected)" :disabled="changed || saving || stale" class="min-h-10 text-sm font-medium text-indigo-700 disabled:opacity-50">Tulajdonságok szerkesztése</button>
@@ -20,23 +22,30 @@
                 </fieldset>
             </template>
         @endif
-        <h3 class="font-semibold" x-text="selected.kind === 'floor' ? 'Padlóhelyek' : 'Szintek és tárolóhelyek'"></h3>
+        <h3 x-show="!pickingPreview || selected.levels.length" class="font-semibold" x-text="selected.kind === 'floor' ? 'Padlóhelyek' : 'Szintek és tárolóhelyek'"></h3>
         <template x-for="level in selected.levels" :key="level.name">
-            <details class="rounded border border-gray-200 p-2">
-                <summary class="cursor-pointer text-sm font-medium" x-text="`${level.name} · ${level.bins.length} hely · ${capacityState(level)}`"></summary>
+            <details :open="focusBin !== null && level.bins.some(bin => bin.id === focusBin)" class="rounded border border-gray-200 p-2">
+                <summary class="cursor-pointer text-sm font-medium" x-text="`${level.name} · ${level.bins.length} hely${focusBin === null ? ' · ' + capacityState(level) : ''}`"></summary>
                 <div class="mt-2 space-y-2">
-                    @include('warehouses.designer-capacity', ['item' => 'level'])
+                    @unless($previewLocation) @include('warehouses.designer-capacity', ['item' => 'level']) @endunless
                     <template x-for="bin in level.bins" :key="bin.id">
-                        <details class="border-t border-gray-100 py-2">
-                            <summary class="cursor-pointer text-xs font-medium" x-text="`${bin.code} · ${capacityState(bin)}`"></summary>
-                            <div class="mt-2 space-y-1">
-                                @include('warehouses.designer-capacity', ['item' => 'bin'])
-                                <p x-show="!bin.products.length" class="text-xs">A tárhely üres.</p>
-                                <template x-for="product in bin.products" :key="product.id"><p class="break-words text-xs" x-text="`${product.name} · ${product.quantity} db`"></p></template>
-                                <p x-show="bin.productCount > bin.products.length" class="text-xs" x-text="`További ${bin.productCount - bin.products.length} termék a tárhely adatlapján`"></p>
-                                <a :href="bin.url" class="text-xs font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
-                            </div>
-                        </details>
+                        @if($previewLocation)
+                            <p {{ isset($putawayTarget) ? ':data-putaway-target' : ':data-picking-source' }}="bin.id === focusBin ? bin.code : null"
+                               :aria-current="bin.id === focusBin ? 'true' : null"
+                               :class="bin.id === focusBin ? 'bg-indigo-100 font-bold text-indigo-900' : 'text-gray-700'"
+                               class="rounded px-2 py-1 text-xs" x-text="bin.id === focusBin ? @js(isset($putawayTarget) ? 'Célrekesz · ' : 'Forrásrekesz · ') + bin.code : bin.code"></p>
+                        @else
+                            <details class="border-t border-gray-100 py-2">
+                                <summary class="cursor-pointer text-xs font-medium" x-text="`${bin.code} · ${capacityState(bin)}`"></summary>
+                                <div class="mt-2 space-y-1">
+                                    @include('warehouses.designer-capacity', ['item' => 'bin'])
+                                    <p x-show="!bin.products.length" class="text-xs">A tárhely üres.</p>
+                                    <template x-for="product in bin.products" :key="product.id"><p class="break-words text-xs" x-text="`${product.name} · ${product.quantity} db`"></p></template>
+                                    <p x-show="bin.productCount > bin.products.length" class="text-xs" x-text="`További ${bin.productCount - bin.products.length} termék a tárhely adatlapján`"></p>
+                                    <a :href="bin.url" class="text-xs font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
+                                </div>
+                            </details>
+                        @endif
                     </template>
                 </div>
             </details>

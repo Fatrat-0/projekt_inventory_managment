@@ -1,38 +1,145 @@
 <x-app-layout>
-    <div class="app-page py-4 space-y-4" data-listing-page="shipments" data-listing-default="cards" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('shipments', { defaultView: 'cards', filtersOpen: {{ count($labels) ? 'true' : 'false' }} })">
-        <x-page-toolbar title="Szállítmányok" description="Több megálló, közös rakomány, fordított felrakodási sorrend." :count="$shipments->total()">
-            <a href="{{ route('shipments.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">+ Új rakodási terv</a>
-            <x-listing-view-toggle />
+    @php
+        $field = 'mt-1 min-h-11 w-full min-w-0 rounded-md border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500';
+        $primary = 'inline-flex min-h-11 items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600';
+        $statuses = \App\Models\Shipment::STATUSES;
+        $sorts = \App\Services\ShipmentPlanReader::SORTS;
+        $desktopColumns = 'xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.85fr)_minmax(0,1fr)]';
+
+        $filtered = filled($filters['search'] ?? null) || filled($filters['origin_warehouse_id'] ?? null) || filled($filters['status'] ?? null);
+    @endphp
+    <div class="app-page min-w-0 space-y-4 py-4" data-shipment-plan-list>
+        <x-page-toolbar title="Fuvarok és szállítmányok" :count="$plans->total()" unit="fuvar">
+            @if ($canCreate && ($plans->isNotEmpty() || $filtered))
+                <a href="{{ route('shipments.create') }}" class="{{ $primary }}">Új fuvar tervezése</a>
+            @endif
         </x-page-toolbar>
         @include('transfers.tabs')
-        <x-operation-feedback />
-        <x-operation-status-filters :statuses="\App\Models\Shipment::STATUSES" :counts="$statusCounts" :filters="$filters" route="shipments.index" />
-        <form id="shipment-filters" x-ref="filtersForm" method="GET" action="{{ route('shipments.index') }}" class="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
-            <div class="flex gap-2"><x-movement-search :products="$products" :query="$filters['search']" id="shipment-search" label="Szállítmányok keresése" placeholder="Hivatkozás, jármű, raktár, termék vagy SZALL-azonosító…" selection-hint="Enter: a kijelölt terméket szállító szállítmányok" /><button type="button" @click="filtersOpen = !filtersOpen" :aria-expanded="filtersOpen" aria-controls="shipment-filter-panel" class="rounded-md border border-gray-300 px-3 py-2 text-sm">Szűrők</button></div>
-            <div id="shipment-filter-panel" x-show="filtersOpen" @if(!count($labels)) style="display:none;" @endif class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div class="sm:col-span-2 lg:col-span-4"><x-listing-date-presets :presets="$datePresets" /></div>
-                <div><label for="shipment-status" class="block text-xs text-gray-600 mb-1">Állapot</label><select id="shipment-status" x-ref="status" name="status" class="w-full rounded-md border-gray-300 text-sm"><option value="">Minden állapot</option>@foreach(\App\Models\Shipment::STATUSES as $key => $label)<option value="{{ $key }}" @selected($filters['status'] === $key)>{{ $label }}</option>@endforeach</select></div>
-                <div><label for="shipment-filter-product" class="block text-xs text-gray-600 mb-1">Termék</label><x-product-picker :products="$products" id="shipment-filter-product" :value="$filters['product_id'] ?? ''" /></div>
-                @foreach(['origin_warehouse_id' => 'Induló raktár', 'destination_warehouse_id' => 'Célraktár'] as $key => $label)<div><label for="shipment-filter-{{ $key }}" class="block text-xs text-gray-600 mb-1">{{ $label }}</label><select id="shipment-filter-{{ $key }}" name="{{ $key }}" class="w-full rounded-md border-gray-300 text-sm"><option value="">Összes</option>@foreach($warehouses as $warehouse)<option value="{{ $warehouse->warehouse_id }}" @selected((string)$filters[$key] === (string)$warehouse->warehouse_id)>{{ $warehouse->warehouse_name }}</option>@endforeach</select></div>@endforeach
-                <div><label for="shipment-date-from" class="block text-xs text-gray-600 mb-1">Dátumtól</label><input id="shipment-date-from" x-ref="dateFrom" type="date" name="date_from" value="{{ $filters['date_from'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
-                <div><label for="shipment-date-to" class="block text-xs text-gray-600 mb-1">Dátumig (beleértve)</label><input id="shipment-date-to" x-ref="dateTo" type="date" name="date_to" value="{{ $filters['date_to'] }}" class="w-full rounded-md border-gray-300 text-sm"></div>
-                <p class="sm:col-span-2 lg:col-span-4 text-xs text-gray-500">A dátumszűrés a terv létrehozásának idejére vonatkozik. Termék és célraktár együttes szűrésénél a terméknek az adott megállóhoz kell tartoznia.</p>
-                <button class="justify-self-start rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white">Szűrés alkalmazása</button>
+
+        @if ($filterErrors)
+            <div role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                @foreach ($filterErrors as $message)<p>{{ $message }}</p>@endforeach
+                <a href="{{ route('shipments.index') }}" class="font-semibold underline">Alaphelyzet visszaállítása</a>
             </div>
-            <div data-listing-card-sort class="flex flex-wrap gap-3 border-t border-gray-100 pt-3"><div class="flex min-w-0 flex-wrap items-center gap-2"><label for="shipment-sort" class="text-xs text-gray-500">Rendezés</label><select id="shipment-sort" name="sort_by" onchange="this.form.requestSubmit()" class="max-w-full min-w-0 rounded-md border-gray-300 text-sm">@foreach(\App\Queries\ShipmentListing::SORTS as $key => $label)<option value="{{ $key }}" @selected($filters['sort_by'] === $key)>{{ $label }}</option>@endforeach</select></div><select name="sort_dir" aria-label="Rendezés iránya" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm"><option value="desc" @selected($filters['sort_dir'] === 'desc')>Csökkenő</option><option value="asc" @selected($filters['sort_dir'] === 'asc')>Növekvő</option></select></div>
+        @endif
+
+        <form id="shipment-filters" method="get" action="{{ route('shipments.index') }}" aria-label="Fuvarlista szűrése" class="relative rounded-lg border border-gray-200 bg-white p-4">
+
+                @if (isset($filters['per_page']))<input type="hidden" name="per_page" value="{{ $filters['per_page'] }}">@endif
+                <div class="grid min-w-0 items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_auto]">
+                    <div class="min-w-0 sm:col-span-2 xl:col-span-1">
+                        <label for="plan-search" class="block text-sm font-medium text-gray-700">Fuvarok keresése</label>
+                        <x-listing-search :endpoint="route('shipments.index')" :query="$filters['search'] ?? ''"
+                            id="plan-search" label="Fuvarok keresése" placeholder="Azonosító, hivatkozás, raktár…"
+                            selection-hint="Enter: a kijelölt javaslatra keresés" input-class="min-h-11" class="mt-1" />
+                    </div>
+                    <div class="min-w-0">
+                        <label for="plan-origin" class="block text-sm font-medium text-gray-700">Induló raktár</label>
+                        <select id="plan-origin" name="origin_warehouse_id" class="{{ $field }} truncate">
+                            <option value="">Minden induló raktár</option>
+                            @foreach ($warehouses as $warehouse)
+                                <option value="{{ $warehouse->warehouse_id }}" @selected((string) ($filters['origin_warehouse_id'] ?? '') === (string) $warehouse->warehouse_id)>{{ $warehouse->warehouse_name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="min-w-0">
+                        <label for="plan-status" class="block text-sm font-medium text-gray-700">Állapot</label>
+                        <select id="plan-status" name="status" class="{{ $field }}">
+                            <option value="">Minden állapot</option>
+                            @foreach ($statuses as $key => $label)
+                                <option value="{{ $key }}" @selected(($filters['status'] ?? '') === $key)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 sm:col-span-2 xl:col-span-1">
+                        <button type="submit" class="{{ $primary }}">Szűrés</button>
+                    <x-listing-sort :sorts="$sorts" :filters="$filters" form="shipment-filters" />
+                        @if ($filtered)<a href="{{ route('shipments.index') }}" class="text-sm font-semibold text-indigo-700 underline underline-offset-2">Szűrők törlése</a>@endif
+                    </div>
+                </div>
         </form>
-        @if($labels)<div class="flex flex-wrap gap-2 text-xs">@foreach($labels as $key => $label)<a class="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-1 text-indigo-800" href="{{ request()->fullUrlWithQuery([$key => null, 'page' => null]) }}" aria-label="{{ $label }} szűrő eltávolítása">{{ $label }} ×</a>@endforeach<a href="{{ route('shipments.index') }}" class="p-1 underline text-gray-600">Összes visszaállítása</a></div>@endif
-        @include('shipments.table')
-        <div data-listing-cards>@forelse($shipments as $shipment)
-            <a data-shipment-id="{{ $shipment->id }}" href="{{ route('shipments.show', ['shipment' => $shipment, 'context' => $context]) }}" class="rounded-lg border border-gray-200 bg-white p-5 space-y-3 hover:border-indigo-300 hover:shadow-sm">
-                <div class="flex justify-between items-start gap-2"><span class="font-mono text-xs text-indigo-600">{{ $shipment->shipment_number }}</span><span class="rounded-md px-2 py-1 text-xs {{ match($shipment->status) { 'in_transit' => 'bg-amber-50 text-amber-800', 'completed' => 'bg-green-50 text-green-800', 'draft' => 'bg-indigo-50 text-indigo-800', default => 'bg-gray-100 text-gray-600' } }}">{{ \App\Models\Shipment::STATUSES[$shipment->status] }}</span></div>
-                <h3 class="font-semibold text-gray-900 break-words">{{ $shipment->reference }}</h3><p class="text-sm text-gray-500">{{ $shipment->origin->warehouse_name }}</p>
-                <p class="text-sm text-gray-600">{{ $shipment->stops_count }} megálló · {{ $shipment->vehicle_label ?? 'Jármű nincs megadva' }}</p>
-                <p class="text-xs text-gray-500">{{ $shipment->stops->pluck('warehouse.warehouse_name')->join(' → ') }}</p>
-                <div><p class="mb-1.5 text-xs text-gray-500">Átvett megállók: {{ $shipment->received_stops_count }} / {{ $shipment->stops_count }}</p><div role="progressbar" aria-label="Átvett megállók" aria-valuemin="0" aria-valuemax="{{ $shipment->stops_count }}" aria-valuenow="{{ $shipment->received_stops_count }}" class="h-1.5 overflow-hidden rounded-full bg-gray-100"><div class="h-full bg-green-500" style="width: {{ $shipment->stops_count ? (int)round(100 * $shipment->received_stops_count / $shipment->stops_count) : 0 }}%"></div></div></div>
-                @if($shipment->status === 'in_transit' && ($next = $shipment->stops->firstWhere('received_at', null)))<p class="text-xs font-medium text-amber-800">Következő: {{ $next->warehouse->warehouse_name }}</p>@endif
-            </a>
-        @empty<p role="status" class="rounded-lg border bg-white p-10 text-center text-sm text-gray-500">Nincs a feltételeknek megfelelő szállítmány.</p>@endforelse</div>
-        <div class="flex flex-wrap gap-3 justify-between items-center text-sm text-gray-600"><div class="flex flex-wrap gap-3 items-center"><span>{{ $shipments->firstItem() ?? 0 }}–{{ $shipments->lastItem() ?? 0 }} / {{ $shipments->total() }} találat</span><label for="shipment-per-page" class="sr-only">Találatok oldalanként</label><select id="shipment-per-page" name="per_page" form="shipment-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">@foreach([15,25,50,100] as $size)<option value="{{ $size }}" @selected($filters['per_page'] === $size)>{{ $size }} / oldal</option>@endforeach</select></div>{{ $shipments->links('pagination.inventory') }}</div>
+
+        @if ($plans->isEmpty())
+            <section aria-labelledby="plans-empty-title" class="rounded-lg border border-gray-200 bg-white px-4 py-9 text-center">
+                <h2 id="plans-empty-title" class="font-semibold text-gray-900">
+                    @if ($filtered) A szűrésnek megfelelő fuvar nem található.
+                    @elseif ($plans->total()) Ezen az oldalon nincs fuvar.
+                    @else Még nincs fuvarterv.
+                    @endif
+                </h2>
+                @if ($filtered)
+                    <a href="{{ route('shipments.index') }}" class="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-indigo-700 hover:underline">Összes fuvar megjelenítése</a>
+                @elseif ($plans->total())
+                    <a href="{{ $plans->url(1) }}" class="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-indigo-700 hover:underline">Ugrás az első oldalra</a>
+                @elseif ($canCreate)
+                    <p class="mt-1 text-sm text-gray-600">A tervezethez jóváhagyott átmozgatási igényeket rendelhetsz.</p>
+                    <a href="{{ route('shipments.create') }}" class="{{ $primary }} mt-4">Új fuvar tervezése</a>
+                @endif
+            </section>
+        @else
+            <section aria-label="Fuvarlista" class="min-w-0">
+
+                <div role="table" aria-label="Fuvarok" class="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white text-sm">
+                    <div role="row" class="hidden {{ $desktopColumns }} gap-3 bg-gray-50 px-4 py-3 text-xs font-semibold text-gray-600 xl:grid">
+                    <span role="columnheader" class="min-w-0 py-1">Fuvar és hivatkozás</span>
+                    <span role="columnheader" class="min-w-0 py-1">Induló raktár</span>
+                    <span role="columnheader" class="min-w-0 py-1">Időpontok</span>
+                    <span role="columnheader" class="min-w-0 py-1">Jármű és állapot</span>
+                    <span role="columnheader" class="min-w-0 py-1">Előkészítés</span>
+                </div>
+                <div role="rowgroup" class="divide-y divide-gray-200 xl:border-t xl:border-gray-200">
+                    @foreach ($plans as $plan)
+                        <div role="row" data-plan-id="{{ $plan['id'] }}" class="grid min-w-0 items-start gap-3 p-4 text-sm sm:grid-cols-2 {{ $desktopColumns }}">
+                            <div role="cell" class="min-w-0 [overflow-wrap:anywhere]">
+                                <a href="{{ route('shipments.show', $plan['id']) }}" class="block rounded text-indigo-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">
+                                    <span class="block font-mono text-xs font-semibold">{{ $plan['shipment_number'] }}</span>
+                                    <span class="mt-0.5 block font-semibold">{{ $plan['reference'] }}</span>
+                                </a>
+                            </div>
+                            <div role="cell" class="min-w-0 [overflow-wrap:anywhere]">
+                                <span class="text-xs font-medium text-gray-600">Induló raktár</span>
+                                <p class="font-medium text-gray-900">{{ $plan['origin_warehouse_name'] }}</p>
+                                <p class="mt-1 text-xs text-gray-700">{{ $plan['stop_count'] }} megálló · {{ $plan['assignment_count'] }} igény</p>
+                            </div>
+                            <dl role="cell" class="min-w-0 [overflow-wrap:anywhere]">
+                                <div><dt class="text-xs font-medium text-gray-600">Tervezett indulás</dt><dd>
+                                    @if ($plan['planned_departure_at'])
+                                        <time datetime="{{ $plan['planned_departure_at'] }}">{{ \Illuminate\Support\Carbon::parse($plan['planned_departure_at'])->timezone('Europe/Budapest')->format('Y. m. d. H:i') }}</time>
+                                    @else — @endif
+                                </dd></div>
+                                <div class="mt-1.5"><dt class="text-xs font-medium text-gray-600">Létrehozva</dt><dd>
+                                    @if ($plan['created_at'])
+                                        <time datetime="{{ $plan['created_at'] }}">{{ \Illuminate\Support\Carbon::parse($plan['created_at'])->timezone('Europe/Budapest')->format('Y. m. d. H:i') }}</time>
+                                    @else — @endif
+                                </dd></div>
+                            </dl>
+                            <div role="cell" class="min-w-0 [overflow-wrap:anywhere]">
+                                <p class="text-xs font-medium text-gray-600 xl:hidden">Jármű és állapot</p>
+                                <p>{{ $plan['vehicle_label'] ?? '—' }}</p>
+                                <span class="mt-1.5 inline-block rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-800">{{ $statuses[$plan['status']] }}</span>
+                            </div>
+                            <dl role="cell" class="min-w-0 text-xs">
+                                <div>
+                                    <dt class="font-medium text-gray-600">Készletoldali előkészítés</dt>
+                                    <dd class="mt-0.5 font-semibold {{ $plan['stock_ready'] ? 'text-emerald-800' : 'text-amber-800' }}">
+                                        @if($plan['stock_status'] === 'dispatched') Feladva
+                                        @elseif($plan['assignment_count'] === 0) Nincs hozzárendelt igény
+                                        @else {{ $plan['stock_ready_count'].' / '.$plan['assignment_count'].' összekészítve' }}
+                                        @endif
+                                    </dd>
+                                </div>
+                                <div class="mt-2">
+                                    <dt class="font-medium text-gray-600">Fuvaradatok</dt>
+                                    <dd class="mt-0.5 font-medium text-gray-800">{{ $plan['transport_status'] === 'dispatched' || $plan['transport_ready'] ? 'Ellenőrizve' : 'Ellenőrzésre vár' }}</dd>
+                                </div>
+                            </dl>
+                        </div>
+                    @endforeach
+                </div>
+                </div>
+            </section>
+        @endif
+
+        {{ $plans->links('pagination.inventory') }}
     </div>
 </x-app-layout>

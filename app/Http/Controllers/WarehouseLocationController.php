@@ -30,10 +30,13 @@ class WarehouseLocationController extends Controller
         $sharedFreeWeight = WarehouseStorageOverview::locationFreeWeights($location->newCollection([$location]));
         $placements = $location->placements()->with('stock.product')->latest('id')->paginate(20)->withQueryString();
         $allowed = $location->system_id === null ? collect() : $location->allowedCategories()->pluck('categories.category_id');
-        $stocks = $warehouse->stocks()->with('product')->withSum('placements as assigned_quantity', 'quantity')
+        $stocks = $warehouse->stocks()->with('product')->withPendingPutaway()->withSum('placements as assigned_quantity', 'quantity')
+            ->selectSub(\App\Services\WarehouseStockAvailability::stagedTasks()
+                ->whereColumn('warehouse_transfer_tasks.stock_id', 'stocks.id')
+                ->selectRaw('COALESCE(SUM(staged_quantity), 0)'), 'staged_quantity')
             ->when($allowed->isNotEmpty(), fn ($query) => $query->whereHas('product', fn ($products) => $products->whereIn('category_id', $allowed)))
             ->whereColumn('quantity', '>', 'quarantined_quantity')->get()
-            ->filter(fn ($stock) => $stock->available_quantity > $stock->assigned_quantity)
+            ->filter(fn ($stock) => $stock->available_quantity > $stock->assigned_quantity + $stock->staged_quantity)
             ->sortBy('product.product_name');
 
         return view('warehouses.locations.show', $this->viewData($request, $warehouse) + compact('location', 'placements', 'stocks', 'sharedFreeWeight'));
@@ -75,7 +78,7 @@ class WarehouseLocationController extends Controller
         abort_unless((int) $placement->warehouse_location_id === $location->id, 404);
         $capacity->release($location, $placement);
 
-        return $this->backToLocation($request, $warehouse, $location, 'A tétel kikerült a tárhelyről, kiadásra előkészíthető.');
+        return $this->backToLocation($request, $warehouse, $location, 'A tétel kikerült a tárhelyről. A raktári foglalások érvényben maradnak.');
     }
 
     private function locationData(Request $request, bool $editing = false): array

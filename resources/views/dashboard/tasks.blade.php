@@ -24,7 +24,8 @@
             <section aria-label="Szállítmányok állapota" class="min-w-0 break-words rounded-lg border border-gray-200 bg-white p-4 sm:p-5">
                 <h2 class="text-sm font-medium text-gray-700">Úton lévő szállítmányok</h2>
                 <p class="mt-2 text-3xl font-bold tabular-nums text-gray-900" data-dashboard-card="shipments">{{ number_format($shipmentSummary['in_transit'], 0, ',', ' ') }}</p>
-                <a href="{{ route('shipments.index', ['status' => 'draft']) }}" class="mt-1 block text-sm text-gray-600 underline">{{ number_format($shipmentSummary['drafts'], 0, ',', ' ') }} tervezet</a>
-                <a href="{{ route('shipments.index', ['status' => 'in_transit']) }}" class="mt-4 inline-block text-sm font-semibold text-indigo-700 hover:underline">Szállítmányok megnyitása →</a>
+                @can('viewAnyPlan', \App\Models\Shipment::class)
+                    <a href="{{ route('shipments.index') }}" class="mt-4 inline-block text-sm font-semibold text-indigo-700 hover:underline">Fuvartervek megnyitása →</a>
+                @endcan
             </section>
         </div>

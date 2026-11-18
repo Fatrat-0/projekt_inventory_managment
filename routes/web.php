@@ -10,6 +10,18 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\InventoryTransferController;
+use App\Http\Controllers\TransferIntentController;
+use App\Http\Controllers\TransferIntentPageController;
+use App\Http\Controllers\TransferStockReservationController;
+use App\Http\Controllers\WarehouseTransferTaskController;
+use App\Http\Controllers\WarehousePickingPageController;
+use App\Http\Controllers\WarehouseTaskCountsController;
+use App\Http\Controllers\ShipmentPlanningController;
+use App\Http\Controllers\ShipmentReceivingController;
+use App\Http\Controllers\WarehouseReceivingPageController;
+use App\Http\Controllers\ShipmentReceiptPutawayController;
+use App\Http\Controllers\ShipmentPlanPageController;
+use App\Http\Controllers\VehicleController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\ExportController;
@@ -31,13 +43,97 @@ Route::middleware(['auth', 'verified'])->group(function () {
 // Csak bejelentkezett felhasználóknak (auth), és beállítjuk a jogosultságokat (role)
 Route::middleware(['auth'])->group(function () {
 
+    Route::prefix('shipment-plans')->name('shipment-plans.')->controller(ShipmentPlanningController::class)->group(function () {
+        Route::get('/', 'index')->name('index');
+        Route::get('/eligible-intents', 'eligible')->name('eligible');
+        Route::post('/', 'store')->name('store');
+        Route::get('/receiving', [ShipmentReceivingController::class, 'index'])->name('receiving.index');
+        Route::get('/receiving/pending-putaway', [ShipmentReceivingController::class, 'pendingPutaway'])->name('receiving.pending-putaway');
+        Route::get('/vehicles', [VehicleController::class, 'index'])->name('vehicles.index');
+        Route::post('/vehicles', [VehicleController::class, 'store'])->name('vehicles.store');
+        Route::patch('/vehicles/{vehicle}', [VehicleController::class, 'update'])->whereNumber('vehicle')->name('vehicles.update');
+        Route::get('/vehicles/{vehicle}/shipments', [VehicleController::class, 'relatedShipments'])->whereNumber('vehicle')->name('vehicles.shipments');
+        Route::where(['shipment' => '[0-9]+'])->group(function () {
+            Route::get('/{shipment}', 'show')->name('show');
+            Route::post('/{shipment}/intents', 'attach')->name('intents.attach');
+            Route::delete('/{shipment}/intents/{transferIntent}', 'detach')->whereNumber('transferIntent')->name('intents.detach');
+            Route::get('/{shipment}/stops', 'stops')->name('stops.show');
+            Route::patch('/{shipment}/stops', 'reorder')->name('stops.update');
+            Route::get('/{shipment}/stops/{stop}/receiving', [ShipmentReceivingController::class, 'show'])->whereNumber('stop')->name('stops.receiving.show');
+            Route::get('/{shipment}/stops/{stop}/receipts', [ShipmentReceivingController::class, 'history'])->whereNumber('stop')->name('stops.receipts.index');
+            Route::post('/{shipment}/stops/{stop}/receipts', [ShipmentReceivingController::class, 'store'])->whereNumber('stop')->name('stops.receipts.store');
+            Route::get('/{shipment}/loading-order', 'loadingOrder')->name('loading-order');
+            Route::get('/{shipment}/readiness', 'readiness')->name('readiness');
+            Route::get('/{shipment}/cargo', 'cargo')->name('cargo.show');
+            Route::patch('/{shipment}/vehicle', 'selectVehicle')->name('vehicle.update');
+            Route::patch('/{shipment}/cargo/items/{assignment}', 'saveCargoItem')->whereNumber('assignment')->name('cargo.items.update');
+            Route::patch('/{shipment}/cargo', 'confirmCargo')->name('cargo.confirm');
+            Route::get('/{shipment}/dispatch', 'dispatchState')->name('dispatch.show');
+            Route::post('/{shipment}/dispatch', 'dispatch')->name('dispatch.store');
+        });
+    });
+
+    Route::prefix('shipment-receipt-items/{item}/putaway')->name('shipment-receipt-items.putaway.')
+        ->where(['item' => '[0-9]+'])->controller(ShipmentReceiptPutawayController::class)->group(function () {
+            Route::get('/', 'show')->name('show');
+            Route::get('/history', 'history')->name('history');
+            Route::post('/recommendations', 'recommendations')->name('recommendations');
+            Route::post('/locations', 'locations')->name('locations');
+            Route::post('/', 'store')->name('store');
+        });
+
+    Route::get('/shipments', [ShipmentPlanPageController::class, 'index'])->name('shipments.index');
+    Route::get('/shipments/create', [ShipmentPlanPageController::class, 'create'])->name('shipments.create');
+    Route::get('/shipments/{shipment}', [ShipmentPlanPageController::class, 'show'])->whereNumber('shipment')->name('shipments.show');
+
+    Route::get('/atmozgatasok', [TransferIntentPageController::class, 'index'])->name('transfer-intent-pages.index');
+    Route::get('/atmozgatasok/jarmuvek', [VehicleController::class, 'page'])->name('vehicle-pages.index');
+    Route::get('/atmozgatasok/uj-igeny', [TransferIntentPageController::class, 'create'])->name('transfer-intent-pages.create');
+    Route::get('/atmozgatasok/igenyek/{transferIntent}', [TransferIntentPageController::class, 'show'])->whereNumber('transferIntent')->name('transfer-intent-pages.show');
+    Route::prefix('/atmozgatasok/raktari-feladatok')->controller(WarehouseReceivingPageController::class)->group(function () {
+        Route::get('/atvetel', 'index')->name('warehouse-receiving-pages.index');
+        Route::get('/atvetel/{shipment}/{stop}', 'show')->whereNumber(['shipment', 'stop'])->name('warehouse-receiving-pages.show');
+        Route::get('/betarolas', 'putawayIndex')->name('warehouse-putaway-pages.index');
+        Route::get('/betarolas/{item}', 'putaway')->whereNumber('item')->name('warehouse-putaway-pages.show');
+        Route::get('/betarolas/{item}/alaprajz/{warehouseLocation}', [WarehouseFloorPlanController::class, 'putaway'])
+            ->whereNumber(['item', 'warehouseLocation'])->name('warehouse-putaway-pages.plan');
+    });
+
+
+    Route::get('/atmozgatasok/raktari-feladatok/szamlalok', WarehouseTaskCountsController::class)->name('warehouse-task-counts');
+    Route::get('/atmozgatasok/raktari-feladatok', [WarehousePickingPageController::class, 'index'])->name('warehouse-picking-pages.index');
+    Route::get('/atmozgatasok/raktari-feladatok/{transferIntent}', [WarehousePickingPageController::class, 'show'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('warehouse-picking-pages.show');
+    Route::get('/atmozgatasok/raktari-feladatok/{transferIntent}/alaprajz/{warehouseLocation}', [WarehouseFloorPlanController::class, 'picking'])
+        ->whereNumber(['transferIntent', 'warehouseLocation'])->can('viewPickingTask', 'transferIntent')->name('warehouse-picking-pages.plan');
+
+    Route::resource('transfer-intents', TransferIntentController::class)
+        ->parameters(['transfer-intents' => 'transferIntent'])->only(['index', 'store', 'show']);
+    Route::patch('/transfer-intents/{transferIntent}/approve', [TransferIntentController::class, 'approve'])->name('transfer-intents.approve');
+    Route::patch('/transfer-intents/{transferIntent}/reject', [TransferIntentController::class, 'reject'])->name('transfer-intents.reject');
+    Route::patch('/transfer-intents/{transferIntent}/cancel', [TransferIntentController::class, 'cancel'])->name('transfer-intents.cancel');
+    Route::get('/transfer-intents/{transferIntent}/stock-reservation', [TransferStockReservationController::class, 'show'])
+        ->whereNumber('transferIntent')->name('transfer-intents.stock-reservation.show');
+    Route::post('/transfer-intents/{transferIntent}/stock-reservation', [TransferStockReservationController::class, 'store'])
+        ->whereNumber('transferIntent')->can('reserveStock', 'transferIntent')->name('transfer-intents.stock-reservation.store');
+    Route::patch('/transfer-intents/{transferIntent}/stock-reservation/release', [TransferStockReservationController::class, 'release'])
+        ->whereNumber('transferIntent')->can('releaseStock', 'transferIntent')->name('transfer-intents.stock-reservation.release');
+    Route::get('/transfer-intents/{transferIntent}/picking-task', [WarehouseTransferTaskController::class, 'show'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('transfer-intents.picking-task.show');
+    Route::post('/transfer-intents/{transferIntent}/picking-task', [WarehouseTransferTaskController::class, 'store'])
+        ->whereNumber('transferIntent')->can('createPickingTask', 'transferIntent')->name('transfer-intents.picking-task.store');
+    Route::get('/transfer-intents/{transferIntent}/picking-task/recommendations', [WarehouseTransferTaskController::class, 'recommendations'])
+        ->whereNumber('transferIntent')->can('viewPickingTask', 'transferIntent')->name('transfer-intents.picking-task.recommendations');
+    Route::post('/transfer-intents/{transferIntent}/picking-task/picks', [WarehouseTransferTaskController::class, 'pick'])
+        ->whereNumber('transferIntent')->can('executePickingTask', 'transferIntent')->name('transfer-intents.picking-task.picks');
+
     // Breeze Profil kezelése
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
     
     // Mindenki, aki be van jelentkezve (admin, manager, worker) láthatja és kezelheti a termékeket
-    Route::middleware(['role:admin,manager,worker'])->group(function () {
+    Route::middleware(['role:'.implode(',', \App\Http\Middleware\RoleMiddleware::INVENTORY_ROLES)])->group(function () {
         Route::resource('products', ProductController::class);
         Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
         Route::get('/warehouses/{warehouse}/floor-plan', [WarehouseFloorPlanController::class, 'show'])->name('warehouses.floor-plan.show');
@@ -58,8 +154,11 @@ Route::middleware(['auth'])->group(function () {
         Route::patch('/partners/{partner}/archive', [PartnerController::class, 'archive'])->name('partners.archive');
         Route::patch('/partners/{partner}/restore', [PartnerController::class, 'restore'])->name('partners.restore');
         Route::resource('partners', PartnerController::class)->except(['show']);
+        Route::get('/transfers/putaway-recommendations', [InventoryTransferController::class, 'putawayRecommendations'])->name('transfers.putaway-recommendations');
+        Route::get('/transfers/picking-sources', [InventoryTransferController::class, 'pickingSources'])->name('transfers.picking-sources');
         Route::resource('transfers', InventoryTransferController::class)->only(['index', 'create', 'store', 'show']);
-        Route::resource('shipments', \App\Http\Controllers\ShipmentController::class)->only(['index', 'create', 'store', 'show', 'edit', 'update']);
+        Route::resource('shipments', \App\Http\Controllers\ShipmentController::class)->only(['store', 'update']);
+        Route::get('/shipments/{shipment}/edit', [ShipmentPlanPageController::class, 'edit'])->whereNumber('shipment')->name('shipments.edit');
         Route::post('/shipments/{shipment}/start', [\App\Http\Controllers\ShipmentController::class, 'start'])->name('shipments.start');
         Route::patch('/shipments/{shipment}/stops/{stop}/receive', [\App\Http\Controllers\ShipmentController::class, 'receive'])->name('shipments.receive');
         Route::patch('/shipments/{shipment}/cancel', [\App\Http\Controllers\ShipmentController::class, 'cancel'])->name('shipments.cancel');

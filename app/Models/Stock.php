@@ -2,7 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Services\WarehouseStockAvailability;
+use Illuminate\Database\Eloquent\{Builder, Model};
 
 class Stock extends Model
 {
@@ -14,9 +15,17 @@ class Stock extends Model
         return ['quantity' => 'integer', 'quarantined_quantity' => 'integer', 'min_quantity' => 'integer'];
     }
 
+    public function scopeWithPendingPutaway(Builder $query): Builder
+    {
+        if ($query->getQuery()->columns === null) $query->select('stocks.*');
+
+        return $query->selectSub(WarehouseStockAvailability::pendingPutawayQuantityForStock(), 'pending_putaway_quantity');
+    }
+
     public function getAvailableQuantityAttribute(): int
     {
-        return (int)$this->quantity - (int)$this->quarantined_quantity;
+        return (int) $this->quantity - (int) $this->quarantined_quantity
+            - (int) ($this->attributes['pending_putaway_quantity'] ?? 0);
     }
 
     public function warehouse()

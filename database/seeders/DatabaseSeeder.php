@@ -11,18 +11,19 @@ use App\Models\Stock;
 use App\Models\User;
 use App\Models\Warehouse;
 use App\Services\InventoryService;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
     public function run(): void
     {
-        DB::transaction(fn () => $this->seedDemoData());
+        DB::transaction(function () {
+            Model::withoutEvents(fn () => $this->seedDemoData());
+            $this->call(ShipmentCargoDemoSeeder::class);
+        });
     }
 
     private function seedDemoData(): void
@@ -267,6 +268,7 @@ class DatabaseSeeder extends Seeder
         $this->call(ReturnQualityDemoSeeder::class);
         $this->call(WarehouseCapacityDemoSeeder::class);
         $this->call(WarehouseFloorPlanDemoSeeder::class);
+        $this->call(SmartPutawayDemoSeeder::class);
     }
 
     private function warehouse(array $data): Warehouse

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { shipmentCommand } from './shipment-fixtures';
 
 async function login(page, email = 'browser@example.test') {
     await page.goto('/login');
@@ -421,8 +422,9 @@ test('pending shipment items link to the shipment and receipt clears the live da
     await pending.getByRole('link').click();
     await expect(page).toHaveURL(url => url.pathname === shipment);
     await expect(page.getByRole('heading', { name: reference, exact: true })).toBeVisible();
-    page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Megálló átvétele', exact: true }).click();
+    const destination = await page.locator('[data-legacy-stop-id]').getAttribute('data-legacy-stop-id');
+    await shipmentCommand(page, 'PATCH', `${shipment}/stops/${destination}/receive`, {}, 302);
+    await page.reload();
     await expect(page.getByText('Teljesítve', { exact: true })).toBeVisible();
     await page.goto('/dashboard');
     await expect(page.locator('[data-pending-transfer]').filter({ hasText: item.name })).toHaveCount(0);

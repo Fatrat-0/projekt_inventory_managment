@@ -15,6 +15,35 @@
                     <div><dt class="text-gray-500">Terhelés</dt><dd class="mt-1 font-medium">{{ \App\Models\WarehouseLocation::formatWeight($transfer->cargo_weight_grams) }} kg @if($transfer->pallet_slots) · {{ $transfer->pallet_slots }} raklap @endif</dd></div>
                 @endif
             </dl>
+            @if($transfer->sourceAllocations->isNotEmpty())
+                <section class="border-t border-gray-200 pt-4" aria-labelledby="transfer-picking-history">
+                    <h2 id="transfer-picking-history" class="text-sm font-semibold text-gray-900">Kitárolási forráshelyek</h2>
+                    <ul class="mt-2 divide-y divide-gray-100 text-sm">
+                        @foreach($transfer->sourceAllocations->groupBy('location_code') as $allocations)
+                            @php
+                                $source = $allocations->first();
+                                $needsPlacement = $allocations->whereStrict('returned_to_location', false)->sum('quantity');
+                            @endphp
+                            <li class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-2">
+                                <div class="min-w-0">
+                                    @if($source->warehouse_location_id)
+                                        <a class="font-medium text-indigo-700 hover:underline" href="{{ route('warehouses.locations.show', ['warehouse' => $transfer->from_warehouse_id, 'warehouseLocation' => $source->warehouse_location_id]) }}">{{ $source->location_code }} · {{ $source->location_name }}</a>
+                                    @else
+                                        <span class="font-medium text-gray-900">{{ $source->location_code !== null ? $source->location_code.' · '.$source->location_name : 'Tárhely nélküli készlet' }}</span>
+                                    @endif
+                                    @if($needsPlacement > 0)
+                                        <p class="text-xs text-amber-800">
+                                            {{ number_format($needsPlacement, 0, ',', ' ') }} db tárhely nélkül került vissza.
+                                            <a class="font-medium underline" href="{{ route('warehouses.locations.index', $transfer->from_warehouse_id) }}">Tárhely keresése</a>
+                                        </p>
+                                    @endif
+                                </div>
+                                <span class="font-medium text-gray-900">{{ number_format($allocations->sum('quantity'), 0, ',', ' ') }} db</span>
+                            </li>
+                        @endforeach
+                    </ul>
+                </section>
+            @endif
             <p class="text-xs text-gray-500">Az úton lévő mennyiség már nem elérhető a forrásraktárban. A célraktár készlete az átvételkor növekszik.</p>
             @if($transfer->to_location_id && $transfer->status === 'pending')
                 <p class="text-sm text-indigo-700">A tétel helye az átvételig le van foglalva a cél tárhelyen.</p>

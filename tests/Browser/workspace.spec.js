@@ -32,10 +32,17 @@ test('list pages use the full desktop workspace and collapsed sidebar space whil
     await page.getByRole('button', { name: 'Oldalsáv megjelenítése', exact: true }).click();
     await page.setViewportSize({ width: 1920, height: 1000 });
     await page.screenshot({ path: 'tests/Browser/.runtime/workspace-stock-wide.png', fullPage: true });
-    for (const path of ['/movements/create', '/transfers/create', '/partners/create']) {
+    for (const path of ['/movements/create', '/partners/create']) {
         await page.goto(path);
         expect((await page.locator('#main-content form').first().boundingBox()).width).toBeLessThan(1000);
     }
+    await page.goto('/transfers/create');
+    const workspace = await page.locator('#main-content').boundingBox();
+    const transfer = await page.locator('#main-content form').first().boundingBox();
+    expect(transfer.width).toBeLessThanOrEqual(1400);
+    expect(transfer.x).toBeGreaterThanOrEqual(workspace.x);
+    expect(transfer.x + transfer.width).toBeLessThanOrEqual(workspace.x + workspace.width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1920);
 });
 
 test('global search shortcuts preserve the current draft and keyboard navigation opens a real product', async ({ page }) => {
@@ -90,15 +97,28 @@ test('search ignores old responses and recovers from failure and closing during 
     } finally { release(); await page.unroute('**/search?**'); }
 });
 
-test('task indicator uses real pending transfers, supports keyboard and closes before opening search', async ({ page }) => {
+test('task indicator uses real pending transfers, supports keyboard and closes before opening search', async ({ page, browser, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 800 });
     await login(page);
     const sku = randomUUID();
+    const fixture = await browser.newContext({ baseURL });
+    let targetId;
+    try {
+        const adminPage = await fixture.newPage();
+        await login(adminPage, true);
+        const warehouse = 'Feladatjelző célraktára ' + sku.slice(0, 8);
+        expect((await post(adminPage, '/warehouses', { warehouse_name: warehouse, location: 'Feladatjelző próba' })).status()).toBe(302);
+        await adminPage.goto(`/warehouses?search=${encodeURIComponent(warehouse)}`);
+        const href = await adminPage.getByRole('link', { name: warehouse, exact: true }).getAttribute('href');
+        targetId = Number(new URL(href, adminPage.url()).pathname.split('/').at(-1));
+    } finally {
+        await fixture.close();
+    }
     expect((await post(page, '/products', { product_name: 'Feladat teszt', sku, category_id: 1, price: 1, min_stock_override: 0 })).status()).toBe(302);
     const html = await (await page.request.get('/products?search='+sku)).text();
     const product = Number(html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
     expect((await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, quantity: 5, type: 'in' })).status()).toBe(302);
-    expect((await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 })).status()).toBe(302);
+    expect((await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: targetId, quantity: 1 })).status()).toBe(302);
     await page.reload();
     const trigger = page.getByRole('button', { name: /^Nyitott feladatok,/ });
     await expect(trigger).not.toHaveAttribute('aria-label', 'Nyitott feladatok, 0 tétel');
@@ -110,8 +130,10 @@ test('task indicator uses real pending transfers, supports keyboard and closes b
     await page.keyboard.press('Escape');
     await trigger.click(); await menu.getByRole('menuitem', { name: /Átvételre váró átmozgatások/ }).click();
     await expect(page).toHaveURL(url => url.pathname === '/transfers' && url.searchParams.get('status') === 'pending');
-    const listing = await (await page.request.get('/transfers?status=pending&product_id='+product)).text();
-    const id = listing.match(/href="[^"]*\/transfers\/(\d+)(?:\?|\"|\/pdf)/)[1];
+    await page.goto(`/transfers?status=pending&product_id=${product}`);
+    const record = page.locator('[data-transfer-id]:visible').filter({ hasText: sku });
+    await expect(record).toHaveCount(1);
+    const id = await record.getAttribute('data-transfer-id');
     expect((await post(page, '/transfers/'+id+'/cancel', { _method: 'PATCH' })).status()).toBe(302);
 });
 

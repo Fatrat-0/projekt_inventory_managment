@@ -2,15 +2,20 @@
 
 namespace App\Services;
 
-use App\Models\{Category, InventoryTransfer, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
+use App\Models\{Category, InventoryTransfer, InventoryTransferSourceAllocation, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use LogicException;
 
 class WarehouseCapacity
 {
     public const WEIGHT_RULE = 'numeric|decimal:0,3|min:0.001|max:1000000';
     public const SLOT_RULE = 'integer|min:1|max:1000000';
+
+    public function __construct(private WarehouseStockAvailability $availability)
+    {
+    }
 
     public static function cargoRules(string $prefix = ''): array
     {
@@ -67,7 +72,8 @@ class WarehouseCapacity
                     throw ValidationException::withMessages(['code' => 'A létrehozott tárhely kódja és típusa rögzített. A teherbírást a tervrajzon módosíthatod.']);
                 }
                 [$usedWeight, $usedSlots] = $this->usage($current);
-                if ($usedWeight > 0 && (!$active || $data['kind'] !== $current->kind)) {
+                if ((!$active || $data['kind'] !== $current->kind)
+                    && ($usedWeight > 0 || $current->placements()->lockForUpdate()->first(['id']))) {
                     throw ValidationException::withMessages(['kind' => 'Csak üres, foglalás nélküli tárhely kapcsolható ki vagy alakítható át.']);
                 }
                 if ($usedWeight > $weight || ($slots !== null && $usedSlots > $slots)) {
@@ -100,12 +106,13 @@ class WarehouseCapacity
                 $product = Product::whereKey($productId)->lockForUpdate()->firstOrFail();
                 $this->lockWarehouses([$location->warehouse_id]);
                 $current = WarehouseLocation::whereKey($location->id)->lockForUpdate()->firstOrFail();
-                $stock = Stock::where('warehouse_id', $current->warehouse_id)->where('product_id', $productId)->lockForUpdate()->first();
-                if (!$stock || $quantity > $stock->available_quantity - $this->assignedQuantity($stock)) {
+                $stock = $this->availability->snapshotForUpdate($current->warehouse_id, $productId);
+                // Moving stock into an active location preserves the warehouse's pickable pool.
+                if (!$stock['consistent'] || !$stock['stock_id'] || $quantity > $stock['unassigned_usable_quantity']) {
                     throw ValidationException::withMessages(['quantity' => 'Ennyi kiadható, tárhely nélküli készlet nem áll rendelkezésre ebben a raktárban.']);
                 }
                 $this->assertFits($current, $weight, $slots, (int) $product->category_id);
-                $current->placements()->create(['stock_id' => $stock->id, 'quantity' => $quantity,
+                $current->placements()->create(['stock_id' => $stock['stock_id'], 'quantity' => $quantity,
                     'cargo_weight_grams' => $weight, 'pallet_slots' => $slots]);
             }, 3);
         } catch (UniqueConstraintViolationException $e) {
@@ -118,6 +125,39 @@ class WarehouseCapacity
         }
     }
 
+    /**
+     * Add an ordinary placement for stock already received. The caller holds the
+     * product, warehouse, stock and location locks and moves the receipt hold.
+     *
+     * @return array{placement: WarehousePlacement, geometry_status: 'verified'|'site_verified'}
+     */
+    public function placeReceiptStock(
+        WarehouseLocation $location, Product $product, int $stockId, int $quantity, int $weight, int $slots,
+        array $dimensions, bool $siteVerified,
+    ): array {
+        if (DB::transactionLevel() === 0) {
+            throw new LogicException('Az átvett készlet elhelyezéséhez aktív tranzakció szükséges.');
+        }
+
+        $occupied = $this->assertFits($location, $weight, $slots, (int) $product->category_id);
+        $geometry = $this->dimensionChecks($dimensions, $this->locationDimensions($location), $occupied);
+        if (($geometry['dimensions_fit']['passed'] ?? null) === false) {
+            throw ValidationException::withMessages(['dimensions_cm' => $geometry['dimensions_fit']['message']]);
+        }
+        $unknownGeometry = array_filter($geometry, fn (array $check) => $check['passed'] === null) !== [];
+        if ($unknownGeometry && !$siteVerified) {
+            throw ValidationException::withMessages([
+                'site_verified' => 'A rakomány elférése a megadott adatokból nem igazolható. Ellenőrizd a helyszínen, és erősítsd meg az elférését.',
+            ]);
+        }
+
+        $placement = $location->placements()->create([
+            'stock_id' => $stockId, 'quantity' => $quantity, 'cargo_weight_grams' => $weight, 'pallet_slots' => $slots,
+        ]);
+
+        return ['placement' => $placement, 'geometry_status' => $unknownGeometry ? 'site_verified' : 'verified'];
+    }
+
     public function release(WarehouseLocation $location, WarehousePlacement $placement): void
     {
         $stock = $placement->stock;
@@ -126,11 +166,6 @@ class WarehouseCapacity
             $this->lockWarehouses([$location->warehouse_id]);
             $location->placements()->whereKey($placement->id)->delete();
         }, 3);
-    }
-
-    public function assignedQuantity(Stock $stock): int
-    {
-        return (int) $stock->placements()->lockForUpdate()->get(['quantity'])->sum('quantity');
     }
 
     /** The caller holds the destination warehouse lock until the transfer is written. */
@@ -165,40 +200,142 @@ class WarehouseCapacity
         ]);
     }
 
-    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId): void
+    /** Attempt to restore a pick after the caller locks the product and warehouse. */
+    public function restorePickedAllocation(InventoryTransferSourceAllocation $allocation, int $warehouseId, int $categoryId): bool
     {
-        if (!$location->active) {
-            throw ValidationException::withMessages(['to_location_id' => 'Ez a tárhely ki van kapcsolva. Válassz aktív tárhelyet.']);
-        }
-        if ($location->system_id !== null) $this->assertCategoryAllowed($location, $categoryId, 'to_location_id');
-        if ($weight < 1 || $weight > 1000000000) {
-            throw ValidationException::withMessages(['cargo_weight_kg' => 'Add meg a tétel teljes tömegét kilogrammban.']);
-        }
-        if (($location->kind === 'pallet' && $slots < 1) || ($location->kind === 'shelf' && $slots !== 0)) {
-            throw ValidationException::withMessages(['pallet_slots' => 'Raklaphelyhez add meg a raklapok számát. Polchoz hagyd üresen a mezőt.']);
-        }
-        [$usedWeight, $usedSlots] = $this->usage($location);
-        $errors = [];
-        if ($weight > $location->max_weight_grams - $usedWeight) {
-            $errors['cargo_weight_kg'] = $location->code.' tárhelyen '.WarehouseLocation::formatWeight($location->max_weight_grams - $usedWeight).' kg szabad teherbírás maradt.';
-        }
-        if ($location->max_pallet_slots !== null && $slots > $location->max_pallet_slots - $usedSlots) {
-            $free = $location->max_pallet_slots - $usedSlots;
-            $errors['pallet_slots'] = $location->code.' tárhelyen '.$free.' szabad raklaphely van. Hiányzik '.($slots - $free).' hely.';
-        }
-        if ($errors) throw ValidationException::withMessages($errors);
+        if ($allocation->warehouse_location_id === null || $allocation->cargo_weight_grams === null) return false;
+        $location = WarehouseLocation::where('warehouse_id', $warehouseId)
+            ->whereKey($allocation->warehouse_location_id)->lockForUpdate()->first();
+        if (!$location) return false;
 
+        $original = $location->placements()->whereKey($allocation->source_placement_id)
+            ->where('stock_id', $allocation->stock_id)->lockForUpdate()->first();
+        $weight = ($original?->cargo_weight_grams ?? 0) + $allocation->cargo_weight_grams;
+        $slots = ($original?->pallet_slots ?? 0) + $allocation->pallet_slots;
+        try {
+            $this->assertFits($location, $weight, $slots, $categoryId, $original);
+        } catch (ValidationException) {
+            return false;
+        }
+        $data = ['quantity' => ($original?->quantity ?? 0) + $allocation->quantity, 'cargo_weight_grams' => $weight, 'pallet_slots' => $slots];
+        if ($original) {
+            $original->update($data);
+        } else {
+            $location->placements()->create($data + ['stock_id' => $allocation->stock_id]);
+        }
+
+        return true;
+    }
+
+    /** Validate the locked capacity and return whether the geometry is already occupied or reserved. */
+    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId, ?WarehousePlacement $replaced = null): bool
+    {
+        $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
+        [$usedWeight, $usedSlots, $occupied] = $this->usage($location);
+        $usedWeight -= $replaced?->cargo_weight_grams ?? 0;
+        $usedSlots -= $replaced?->pallet_slots ?? 0;
+        $limits = ['location_grams' => $location->max_weight_grams - $usedWeight,
+            'slots' => $location->max_pallet_slots === null ? null : $location->max_pallet_slots - $usedSlots];
+        $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
         if ($location->system_id !== null) {
             $system = $location->system()->lockForUpdate()->firstOrFail();
             $level = $location->level_id === null ? null : $location->level()->lockForUpdate()->firstOrFail();
             $bins = $system->locations()->lockForUpdate()->get(['id', 'level_id']);
             $committed = $this->committedWeights($bins->modelKeys());
-            if ($level && $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0) + $weight > $level->max_weight_grams) {
-                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná az állványszint szabad teherbírását.']);
+            if ($replaced) $committed[$location->id] -= $replaced->cargo_weight_grams;
+            $limits['system_grams'] = $system->max_weight_grams - array_sum($committed);
+            $limits['system_name'] = $system->name;
+            if ($level) {
+                $limits['level_grams'] = $level->max_weight_grams - $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0);
             }
-            if (array_sum($committed) + $weight > $system->max_weight_grams) {
-                throw ValidationException::withMessages(['cargo_weight_kg' => 'A tétel meghaladná a(z) '.$system->name.' szabad teherbírását.']);
+
+            $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
+        }
+
+        return $occupied;
+    }
+
+    /**
+     * Evaluate the same rules against a capacity snapshot, without queries or writes.
+     * A null result marks an unknown input, not a passed check.
+     *
+     * @param list<int> $allowedCategories
+     * @param array{location_grams: int, slots: ?int, level_grams?: int, system_grams?: int, system_name?: string} $limits
+     * @return array<string, array{passed: ?bool, field: string, message: string}>
+     */
+    public function fitChecks(WarehouseLocation $location, int $categoryId, ?int $weight, ?int $slots, array $allowedCategories, array $limits): array
+    {
+        $weightFits = fn (int $free) => $weight === null ? ($free <= 0 ? false : null) : $weight <= $free;
+        $check = fn (?bool $passed, string $field, string $message) => compact('passed', 'field', 'message');
+        $pallet = $location->kind === 'pallet';
+        $checks = [
+            'active' => $check($location->active, 'to_location_id', 'Ez a tárhely ki van kapcsolva. Válassz aktív tárhelyet.'),
+            'category' => $check($location->system_id === null || $this->categoryAllowed($allowedCategories, $categoryId),
+                'to_location_id', $this->categoryMessage($location)),
+            'weight_input' => $check($weight === null ? null : ($weight >= 1 && $weight <= 1000000000),
+                'cargo_weight_kg', 'Add meg a tétel teljes tömegét kilogrammban.'),
+            'pallet_kind' => $check($slots === null ? null : ($pallet ? $slots >= 1 : ($location->kind !== 'shelf' || $slots === 0)),
+                'pallet_slots', 'Add meg a raklaphelyigényt. A raklapos tárhely legalább egy raklapot, a polcos tárhely raklap nélküli rakományt fogad.'),
+            'location_weight' => $check($weightFits($limits['location_grams']), 'cargo_weight_kg', $location->code.' tárhelyen '
+                .WarehouseLocation::formatWeight($limits['location_grams']).' kg szabad teherbírás maradt.'),
+        ];
+        if ($limits['slots'] !== null) {
+            $free = $limits['slots'];
+            $checks['pallet_space'] = $check($slots === null && $pallet ? ($free <= 0 ? false : null) : ($slots ?? 0) <= $free,
+                'pallet_slots', $location->code.' tárhelyen '.$free.' szabad raklaphely van.'
+                    .($slots === null ? '' : ' Hiányzik '.($slots - $free).' hely.'));
+        }
+        if (isset($limits['level_grams'])) {
+            $checks['level_weight'] = $check($weightFits($limits['level_grams']), 'cargo_weight_kg', 'A tétel meghaladná az állványszint szabad teherbírását.');
+        }
+        if (isset($limits['system_grams'])) {
+            $checks['system_weight'] = $check($weightFits($limits['system_grams']), 'cargo_weight_kg',
+                'A tétel meghaladná a(z) '.$limits['system_name'].' szabad teherbírását.');
+        }
+
+        return $checks;
+    }
+
+    public function locationDimensions(WarehouseLocation $location): array
+    {
+        $dimensions = [];
+        foreach (['width', 'depth', 'height'] as $axis) {
+            $size = (int) $location->{$axis.'_cm'};
+            if ($size > 0) $dimensions[$axis] = $size;
+        }
+
+        return $dimensions;
+    }
+
+    /** Check the stored orientation and mark unknown geometry separately from a known mismatch. */
+    public function dimensionChecks(array $cargo, array $bin, bool $hasCommittedCargo): array
+    {
+        $cargo = array_filter($cargo, fn ($value) => $value !== null);
+        $checks = [];
+        if (count($cargo) !== 3) $checks['cargo_dimensions'] = ['passed' => null, 'message' => 'A rakomány külső méretei hiányosak.'];
+        if (count($bin) !== 3) $checks['location_dimensions'] = ['passed' => null, 'message' => 'A tárhely rögzített fizikai méretei hiányosak.'];
+        $comparable = array_intersect_key($cargo, $bin);
+        $tooLarge = array_filter($comparable, fn ($size, $axis) => $size > $bin[$axis], ARRAY_FILTER_USE_BOTH);
+        if ($tooLarge || (!$hasCommittedCargo && count($comparable) === 3)) {
+            $checks['dimensions_fit'] = ['passed' => !$tooLarge, 'message' => 'A rakomány a megadott tájolásban meghaladja a tárhely méretét.'];
+        }
+        if (!$tooLarge && $hasCommittedCargo) {
+            $checks['remaining_physical_space'] = ['passed' => null, 'message' => 'A tárolt vagy lefoglalt áru szabadon hagyott fizikai helye nem ismert.'];
+        }
+
+        return $checks;
+    }
+
+    private function assertChecks(array $checks): void
+    {
+        foreach ([['active'], ['category'], ['weight_input'], ['pallet_kind'], ['location_weight', 'pallet_space'], ['level_weight'], ['system_weight']] as $group) {
+            $errors = [];
+            foreach ($group as $key) {
+                if (isset($checks[$key]) && $checks[$key]['passed'] !== true) {
+                    $errors[$checks[$key]['field']] = $checks[$key]['message'];
+                }
             }
+            if ($errors) throw ValidationException::withMessages($errors);
         }
     }
 
@@ -233,11 +370,25 @@ class WarehouseCapacity
 
     private function assertCategoryAllowed(WarehouseLocation $location, int $categoryId, string $field): void
     {
-        $allowed = DB::table('warehouse_location_categories')->where('location_id', $location->id)
-            ->sharedLock()->pluck('category_id')->map(fn ($id) => (int) $id);
-        if ($allowed->isNotEmpty() && !$allowed->containsStrict($categoryId)) {
-            throw ValidationException::withMessages([$field => 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.']);
+        if (!$this->categoryAllowed($this->lockedCategoryIds($location), $categoryId)) {
+            throw ValidationException::withMessages([$field => $this->categoryMessage($location)]);
         }
+    }
+
+    private function lockedCategoryIds(WarehouseLocation $location): array
+    {
+        return DB::table('warehouse_location_categories')->where('location_id', $location->id)
+            ->sharedLock()->pluck('category_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    private function categoryAllowed(array $allowed, int $categoryId): bool
+    {
+        return $allowed === [] || in_array($categoryId, $allowed, true);
+    }
+
+    private function categoryMessage(WarehouseLocation $location): string
+    {
+        return 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.';
     }
 
     public function committedWeights(array $locationIds): array
@@ -264,6 +415,7 @@ class WarehouseCapacity
         return [
             (int) $occupied->sum('cargo_weight_grams') + (int) $reserved->sum('cargo_weight_grams'),
             (int) $occupied->sum('pallet_slots') + (int) $reserved->sum('pallet_slots'),
+            $occupied->isNotEmpty() || $reserved->isNotEmpty(),
         ];
     }
 }

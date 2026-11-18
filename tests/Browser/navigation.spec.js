@@ -133,7 +133,7 @@ test('related pages highlight their section, show one page heading and retain co
     await page.setViewportSize({ width: 1440, height: 900 });
     await login(page);
     for (const [path, section, label, back] of [
-        ['/shipments/create', 'Átmozgatások', 'Új rakodási terv', '← Szállítmányok'],
+        ['/shipments/create', 'Átmozgatások', 'Új fuvar tervezése', null],
         ['/quality-returns', 'Készletmozgások', 'Visszáru-minősítés', null],
         ['/products/1/edit', 'Termékek', 'Szerkesztés', '← Termékek'],
         ['/warehouses/1', 'Raktárak', 'Adatlap', '← Raktárak'],

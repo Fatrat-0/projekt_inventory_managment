@@ -6,6 +6,7 @@ use App\Models\{Category, InventoryTransfer, InventoryTransferSourceAllocation, 
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use LogicException;
 
 class WarehouseCapacity
 {
@@ -124,6 +125,39 @@ class WarehouseCapacity
         }
     }
 
+    /**
+     * Add an ordinary placement for stock already received. The caller holds the
+     * product, warehouse, stock and location locks and moves the receipt hold.
+     *
+     * @return array{placement: WarehousePlacement, geometry_status: 'verified'|'site_verified'}
+     */
+    public function placeReceiptStock(
+        WarehouseLocation $location, Product $product, int $stockId, int $quantity, int $weight, int $slots,
+        array $dimensions, bool $siteVerified,
+    ): array {
+        if (DB::transactionLevel() === 0) {
+            throw new LogicException('Az átvett készlet elhelyezéséhez aktív tranzakció szükséges.');
+        }
+
+        $occupied = $this->assertFits($location, $weight, $slots, (int) $product->category_id);
+        $geometry = $this->dimensionChecks($dimensions, $this->locationDimensions($location), $occupied);
+        if (($geometry['dimensions_fit']['passed'] ?? null) === false) {
+            throw ValidationException::withMessages(['dimensions_cm' => $geometry['dimensions_fit']['message']]);
+        }
+        $unknownGeometry = array_filter($geometry, fn (array $check) => $check['passed'] === null) !== [];
+        if ($unknownGeometry && !$siteVerified) {
+            throw ValidationException::withMessages([
+                'site_verified' => 'A rakomány elférése a megadott adatokból nem igazolható. Ellenőrizd a helyszínen, és erősítsd meg az elférését.',
+            ]);
+        }
+
+        $placement = $location->placements()->create([
+            'stock_id' => $stockId, 'quantity' => $quantity, 'cargo_weight_grams' => $weight, 'pallet_slots' => $slots,
+        ]);
+
+        return ['placement' => $placement, 'geometry_status' => $unknownGeometry ? 'site_verified' : 'verified'];
+    }
+
     public function release(WarehouseLocation $location, WarehousePlacement $placement): void
     {
         $stock = $placement->stock;
@@ -193,10 +227,11 @@ class WarehouseCapacity
         return true;
     }
 
-    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId, ?WarehousePlacement $replaced = null): void
+    /** Validate the locked capacity and return whether the geometry is already occupied or reserved. */
+    private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId, ?WarehousePlacement $replaced = null): bool
     {
         $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
-        [$usedWeight, $usedSlots] = $this->usage($location);
+        [$usedWeight, $usedSlots, $occupied] = $this->usage($location);
         $usedWeight -= $replaced?->cargo_weight_grams ?? 0;
         $usedSlots -= $replaced?->pallet_slots ?? 0;
         $limits = ['location_grams' => $location->max_weight_grams - $usedWeight,
@@ -216,6 +251,8 @@ class WarehouseCapacity
 
             $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
         }
+
+        return $occupied;
     }
 
     /**
@@ -238,7 +275,7 @@ class WarehouseCapacity
             'weight_input' => $check($weight === null ? null : ($weight >= 1 && $weight <= 1000000000),
                 'cargo_weight_kg', 'Add meg a tétel teljes tömegét kilogrammban.'),
             'pallet_kind' => $check($slots === null ? null : ($pallet ? $slots >= 1 : ($location->kind !== 'shelf' || $slots === 0)),
-                'pallet_slots', 'Raklaphelyhez add meg a raklapok számát. Polchoz hagyd üresen a mezőt.'),
+                'pallet_slots', 'Add meg a raklaphelyigényt. A raklapos tárhely legalább egy raklapot, a polcos tárhely raklap nélküli rakományt fogad.'),
             'location_weight' => $check($weightFits($limits['location_grams']), 'cargo_weight_kg', $location->code.' tárhelyen '
                 .WarehouseLocation::formatWeight($limits['location_grams']).' kg szabad teherbírás maradt.'),
         ];
@@ -254,6 +291,36 @@ class WarehouseCapacity
         if (isset($limits['system_grams'])) {
             $checks['system_weight'] = $check($weightFits($limits['system_grams']), 'cargo_weight_kg',
                 'A tétel meghaladná a(z) '.$limits['system_name'].' szabad teherbírását.');
+        }
+
+        return $checks;
+    }
+
+    public function locationDimensions(WarehouseLocation $location): array
+    {
+        $dimensions = [];
+        foreach (['width', 'depth', 'height'] as $axis) {
+            $size = (int) $location->{$axis.'_cm'};
+            if ($size > 0) $dimensions[$axis] = $size;
+        }
+
+        return $dimensions;
+    }
+
+    /** Check the stored orientation and mark unknown geometry separately from a known mismatch. */
+    public function dimensionChecks(array $cargo, array $bin, bool $hasCommittedCargo): array
+    {
+        $cargo = array_filter($cargo, fn ($value) => $value !== null);
+        $checks = [];
+        if (count($cargo) !== 3) $checks['cargo_dimensions'] = ['passed' => null, 'message' => 'A rakomány külső méretei hiányosak.'];
+        if (count($bin) !== 3) $checks['location_dimensions'] = ['passed' => null, 'message' => 'A tárhely rögzített fizikai méretei hiányosak.'];
+        $comparable = array_intersect_key($cargo, $bin);
+        $tooLarge = array_filter($comparable, fn ($size, $axis) => $size > $bin[$axis], ARRAY_FILTER_USE_BOTH);
+        if ($tooLarge || (!$hasCommittedCargo && count($comparable) === 3)) {
+            $checks['dimensions_fit'] = ['passed' => !$tooLarge, 'message' => 'A rakomány a megadott tájolásban meghaladja a tárhely méretét.'];
+        }
+        if (!$tooLarge && $hasCommittedCargo) {
+            $checks['remaining_physical_space'] = ['passed' => null, 'message' => 'A tárolt vagy lefoglalt áru szabadon hagyott fizikai helye nem ismert.'];
         }
 
         return $checks;
@@ -348,6 +415,7 @@ class WarehouseCapacity
         return [
             (int) $occupied->sum('cargo_weight_grams') + (int) $reserved->sum('cargo_weight_grams'),
             (int) $occupied->sum('pallet_slots') + (int) $reserved->sum('pallet_slots'),
+            $occupied->isNotEmpty() || $reserved->isNotEmpty(),
         ];
     }
 }

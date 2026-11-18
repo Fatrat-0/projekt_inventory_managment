@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
-use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ProductPackaging, ReturnQualityAction, Stock, User};
+use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ProductPackaging, ReturnQualityAction, ShipmentDispatch, ShipmentReceipt, ShipmentReceiptItem, Stock, User};
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use LogicException;
 
 /** All application stock writes use one transaction and the same product-row lock. */
 class InventoryService
@@ -280,7 +282,9 @@ class InventoryService
         $source = Stock::where('product_id', $payload['product_id'])->where('warehouse_id', $payload['from_warehouse_id'])->lockForUpdate()->first();
         $incoming = InventoryTransfer::where('product_id', $payload['product_id'])->where('to_warehouse_id', $payload['to_warehouse_id'])
             ->where('status', 'pending')->lockForUpdate()->get(['quantity'])->sum('quantity');
-        $shortage = $target ? $target->min_quantity - $target->available_quantity - $incoming : 0;
+        $pending = $target ? $this->availability->snapshotForUpdate($target->warehouse_id, $target->product_id)['pending_putaway_quantity'] : 0;
+        $targetUsable = $target ? $target->quantity - $target->quarantined_quantity - $pending : 0;
+        $shortage = $target ? $target->min_quantity - $targetUsable - $incoming : 0;
         $available = $source ? $this->availability->snapshotForUpdate($source->warehouse_id, $source->product_id) : null;
         $surplus = empty($available['consistent']) ? 0
             : min($available['direct_issue_quantity'], $available['free_quantity'] - $source->min_quantity);
@@ -329,6 +333,66 @@ class InventoryService
         return Product::whereKey($productId)->lockForUpdate()->firstOrFail();
     }
 
+    /** Post only transit-backed issues after dispatch has validated and locked its preparation. */
+    public function bookShipmentDispatch(ShipmentDispatch $dispatch, Collection $items, array $stocks): void
+    {
+        if (DB::transactionLevel() === 0 || !$dispatch->exists || $items->isEmpty()) {
+            throw new LogicException('A fuvar készletkönyveléséhez rögzített feladás és aktív tranzakció szükséges.');
+        }
+
+        $origin = $dispatch->snapshot['shipment']['origin_warehouse_id'];
+        foreach ($items->groupBy('product_id')->sortKeys() as $productId => $lines) {
+            $expected = $stocks[$productId] ?? [];
+            $quantity = $lines->sum('dispatched_quantity');
+            if (!($expected['consistent'] ?? false) || $quantity <= 0 || $quantity > $expected['staged_quantity']
+                || $lines->contains(fn ($line) => !$line->exists || $line->shipment_dispatch_id !== $dispatch->id || $line->from_warehouse_id !== $origin)) {
+                throw ValidationException::withMessages(['dispatch' => 'A feladandó tételek és a védett forráskészlet nem egyeznek.'])->status(409);
+            }
+
+            $stock = Stock::whereKey($expected['stock_id'])->where('product_id', $productId)->where('warehouse_id', $origin)->lockForUpdate()->first();
+            if (!$stock || $stock->quantity !== $expected['physical_quantity']) {
+                throw ValidationException::withMessages(['dispatch' => 'A forráskészlet adatai időközben megváltoztak.'])->status(409);
+            }
+
+            $balance = $stock->quantity;
+            $stock->update(['quantity' => $balance - $quantity]);
+            foreach ($lines as $line) {
+                $after = $balance - $line->dispatched_quantity;
+                InventoryMovement::create([
+                    'shipment_transit_item_id' => $line->id, 'product_id' => $productId, 'warehouse_id' => $origin,
+                    'user_id' => $dispatch->actor_id, 'type' => 'out', 'quantity' => $line->dispatched_quantity,
+                    'reference' => 'Fuvarfeladás · '.$dispatch->snapshot['shipment']['shipment_number'],
+                    'stock_before' => $balance, 'stock_after' => $after,
+                ]);
+                $balance = $after;
+            }
+        }
+    }
+
+    /** Book the received units under the product, destination warehouse and stock locks held by the receipt transaction. */
+    public function bookShipmentReceipt(ShipmentReceipt $receipt, Collection $items): void
+    {
+        if (DB::transactionLevel() === 0 || !$receipt->exists || $items->isEmpty()) {
+            throw new LogicException('A készletnöveléshez rögzített fuvarátvétel és aktív tranzakció szükséges.');
+        }
+
+        $warehouseId = (int) $receipt->to_warehouse_id;
+        $reference = 'Fuvarátvétel · '.$receipt->shipment->shipment_number;
+        foreach ($items->sortBy([['product_id', 'asc'], ['id', 'asc']]) as $item) {
+            if (!($item instanceof ShipmentReceiptItem) || !$item->exists || (int) $item->shipment_receipt_id !== $receipt->id
+                || (int) $item->to_warehouse_id !== $warehouseId || $item->received_quantity < 1
+                || $item->pending_putaway_quantity !== $item->received_quantity) {
+                throw ValidationException::withMessages(['receipt' => 'Az átvételi tétel és a betárolásra váró mennyiség nem egyezik az átvétel adataival.'])->status(409);
+            }
+
+            $balances = $this->changeStock($item->product_id, $warehouseId, $item->received_quantity);
+            InventoryMovement::create($balances + [
+                'shipment_receipt_item_id' => $item->id, 'product_id' => $item->product_id, 'warehouse_id' => $warehouseId,
+                'user_id' => $receipt->actor_id, 'type' => 'in', 'quantity' => $item->received_quantity, 'reference' => $reference,
+            ]);
+        }
+    }
+
     private function changeStock(int $productId, int $warehouseId, int $delta, int $quarantineDelta = 0): array
     {
         $stock = Stock::where('product_id', $productId)->where('warehouse_id', $warehouseId)
@@ -351,6 +415,9 @@ class InventoryService
                 throw ValidationException::withMessages(['quantity' => 'A raktári készlet, a tárhelyek vagy a foglalások adatai eltérnek. Ellenőrizd a készletet.']);
             }
             $requested = $quarantineDelta - $delta;
+            if ($available['pending_putaway_quantity'] > 0 && $requested > $available['free_quantity']) {
+                throw ValidationException::withMessages(['quantity' => 'A betárolásra váró készlet védett. Legfeljebb '.$available['free_quantity'].' db szabad készlet használható fel.']);
+            }
             if ($available['source_reserved_quantity'] + $available['staged_quantity'] > 0 && $requested > $available['free_quantity']) {
                 throw ValidationException::withMessages(['quantity' => 'A foglalt és összekészített tételek mellett legfeljebb '.$available['free_quantity'].' db szabad készlet használható fel.']);
             }

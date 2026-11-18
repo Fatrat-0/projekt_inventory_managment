@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\{BelongsTo, HasMany};
+use Illuminate\Database\Eloquent\Relations\{BelongsTo, HasMany, HasOne};
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -87,5 +87,15 @@ class TransferIntent extends Model
     public function pickingTasks(): HasMany
     {
         return $this->hasMany(WarehouseTransferTask::class)->where('type', WarehouseTransferTask::TYPE_PICKING);
+    }
+
+    public function shipmentAssignments(): HasMany
+    {
+        return $this->hasMany(ShipmentIntentAssignment::class);
+    }
+
+    public function transitItem(): HasOne
+    {
+        return $this->hasOne(ShipmentTransitItem::class);
     }
 }

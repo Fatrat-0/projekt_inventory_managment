@@ -4,10 +4,10 @@ namespace App\Services;
 
 use App\Models\{Product, Warehouse, WarehouseLocation};
 use Illuminate\Support\Facades\{DB, Validator};
+use Illuminate\Support\Str;
 
 final class SmartPutaway
 {
-    private const AXES = ['width', 'depth', 'height'];
 
     public function __construct(private WarehouseCapacity $capacity) {}
 
@@ -33,7 +33,30 @@ final class SmartPutaway
      */
     public function recommend(Warehouse $warehouse, Product $product, array $cargo): array
     {
-        $data = Validator::make($cargo, [
+        $data = $this->validatedCargo($cargo);
+        $candidates = $this->candidates($warehouse, $product, $data);
+        $recommendations = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] !== 'rejected'));
+        $rejected = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] === 'rejected'));
+        usort($recommendations, fn (array $a, array $b) => PutawayRanking::compare($a['score'], $b['score'], $a['code'], $b['code']));
+
+        return ['warehouse_id' => (int) $warehouse->getKey(), 'product_id' => (int) $product->getKey(), 'quantity' => (int) $data['quantity'],
+            'recommendations' => array_slice($recommendations, 0, 5), 'rejected' => $rejected];
+    }
+
+    /**
+     * Read the matching candidates, including rejected ones, in code order.
+     * Location filters do not exclude other bins from shared capacity totals.
+     *
+     * @return list<array>
+     */
+    public function assessLocations(Warehouse $warehouse, Product $product, array $cargo, ?int $locationId = null, ?string $search = null): array
+    {
+        return $this->candidates($warehouse, $product, $this->validatedCargo($cargo), $locationId, $search);
+    }
+
+    private function validatedCargo(array $cargo): array
+    {
+        return Validator::make($cargo, [
             'quantity' => 'required|integer|min:1|max:2147483647',
             'cargo_weight_kg' => 'nullable|'.WarehouseCapacity::WEIGHT_RULE,
             'pallet_slots' => 'nullable|integer|min:0|max:1000000',
@@ -45,30 +68,29 @@ final class SmartPutaway
             'pallet_slots.*' => 'A szükséges raklaphelyek száma 0 és 1 000 000 közötti egész szám legyen.',
             'dimensions_cm.*' => 'A rakomány méreteit centiméterben add meg, 1 és 65 535 közötti egész számokkal.',
         ])->validate();
-
-        $weight = isset($data['cargo_weight_kg']) ? WarehouseCapacity::grams($data['cargo_weight_kg']) : null;
-        $slots = isset($data['pallet_slots']) ? (int) $data['pallet_slots'] : null;
-        $dimensions = array_filter($data['dimensions_cm'] ?? [], fn ($value) => $value !== null);
-        [$recommendations, $rejected] = $this->candidates($warehouse, $product, $weight, $slots, $dimensions);
-        usort($recommendations, fn (array $a, array $b) => PutawayRanking::compare($a['score'], $b['score'], $a['code'], $b['code']));
-
-        return ['warehouse_id' => (int) $warehouse->getKey(), 'product_id' => (int) $product->getKey(), 'quantity' => (int) $data['quantity'],
-            'recommendations' => array_slice($recommendations, 0, 5), 'rejected' => $rejected];
     }
 
-    private function candidates(Warehouse $warehouse, Product $product, ?int $weight, ?int $slots, array $dimensions): array
+    private function candidates(Warehouse $warehouse, Product $product, array $cargo, ?int $locationId = null, ?string $search = null): array
     {
-        return DB::transaction(function () use ($warehouse, $product, $weight, $slots, $dimensions) {
+        $weight = isset($cargo['cargo_weight_kg']) ? WarehouseCapacity::grams($cargo['cargo_weight_kg']) : null;
+        $slots = isset($cargo['pallet_slots']) ? (int) $cargo['pallet_slots'] : null;
+        $dimensions = $cargo['dimensions_cm'] ?? [];
+        $needle = Str::lower(Str::ascii(trim($search ?? '')));
+
+        return DB::transaction(function () use ($warehouse, $product, $weight, $slots, $dimensions, $locationId, $needle) {
             $category = (int) $product->newQuery()->findOrFail($product->getKey(), ['category_id'])->category_id;
-            $locations = $warehouse->storageLocations()->withCapacityUsage()->with(['system', 'level', 'allowedCategories'])
+            $locations = $warehouse->storageLocations()->withCapacityUsage()->with(['system.zone', 'level', 'allowedCategories'])
                 ->withExists(['placements', 'reservations', 'placements as stores_product' => fn ($query) => $query
                     ->whereHas('stock', fn ($stock) => $stock->where('product_id', $product->getKey()))])
                 ->orderBy('code')->get();
             $committed = fn ($bins) => $bins->sum(fn ($bin) => (int) $bin->occupied_weight + (int) $bin->reserved_weight);
             $bySystem = $locations->whereNotNull('system_id')->groupBy('system_id')->map($committed);
             $byLevel = $locations->whereNotNull('level_id')->groupBy('level_id')->map($committed);
-            $recommendations = $rejected = [];
+            $candidates = [];
             foreach ($locations as $location) {
+                if ($locationId !== null && (int) $location->id !== $locationId) continue;
+                if ($needle !== '' && !$this->matchesLocation($location, $needle)) continue;
+
                 $limits = ['location_grams' => $location->freeWeight(), 'slots' => $location->freeSlots()];
                 if ($location->system !== null) {
                     $limits['system_grams'] = $location->system->max_weight_grams - $bySystem[$location->system_id];
@@ -77,25 +99,31 @@ final class SmartPutaway
                 if ($location->level !== null) {
                     $limits['level_grams'] = $location->level->max_weight_grams - $byLevel[$location->level_id];
                 }
-                $candidate = $this->candidate($location, $category, $weight, $slots, $dimensions, $limits);
-                if ($candidate['status'] === 'rejected') $rejected[] = $candidate;
-                else $recommendations[] = $candidate;
+                $candidates[] = $this->candidate($location, $category, $weight, $slots, $dimensions, $limits);
             }
 
-            return [$recommendations, $rejected];
+            return $candidates;
         });
+    }
+
+    private function matchesLocation(WarehouseLocation $location, string $needle): bool
+    {
+        $position = array_filter($location->pickingPosition());
+        $label = Str::lower(Str::ascii(implode(' ', [$location->code, $location->name, ...array_values($position)])));
+        foreach (preg_split('/\s+/u', $needle, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $term) {
+            if (!str_contains($label, $term)) return false;
+        }
+
+        return true;
     }
 
     private function candidate(WarehouseLocation $location, int $category, ?int $weight, ?int $slots, array $dimensions, array $limits): array
     {
         $categories = array_map('intval', $location->allowedCategories->modelKeys());
         $checks = $this->capacity->fitChecks($location, $category, $weight, $slots, $categories, $limits);
-        $binDimensions = [];
-        foreach (self::AXES as $axis) {
-            $value = (int) $location->{$axis.'_cm'};
-            if ($value > 0) $binDimensions[$axis] = $value;
-        }
-        $checks += $this->dimensionChecks($location, $dimensions, $binDimensions);
+        $binDimensions = $this->capacity->locationDimensions($location);
+        $checks += $this->capacity->dimensionChecks($dimensions, $binDimensions,
+            $location->placements_exists || $location->reservations_exists);
         $failed = array_filter($checks, fn ($check) => $check['passed'] === false);
         $missing = array_filter($checks, fn ($check) => $check['passed'] === null);
         $passed = array_filter($checks, fn ($check) => $check['passed'] === true);
@@ -120,24 +148,6 @@ final class SmartPutaway
         ];
 
         return $result + ['score' => $score, 'reasons' => $this->rankingReasons($score)];
-    }
-
-    private function dimensionChecks(WarehouseLocation $location, array $cargo, array $bin): array
-    {
-        $checks = [];
-        if (count($cargo) !== 3) $checks['cargo_dimensions'] = ['passed' => null, 'message' => 'A rakomány külső méretei hiányosak.'];
-        if (count($bin) !== 3) $checks['location_dimensions'] = ['passed' => null, 'message' => 'A tárhely rögzített fizikai méretei hiányosak.'];
-        $comparable = array_intersect_key($cargo, $bin);
-        $tooLarge = array_filter($comparable, fn ($size, $axis) => $size > $bin[$axis], ARRAY_FILTER_USE_BOTH);
-        $hasCommittedCargo = $location->placements_exists || $location->reservations_exists;
-        if ($tooLarge || (!$hasCommittedCargo && count($comparable) === 3)) {
-            $checks['dimensions_fit'] = ['passed' => !$tooLarge, 'message' => 'A rakomány a megadott tájolásban meghaladja a tárhely méretét.'];
-        }
-        if (!$tooLarge && $hasCommittedCargo) {
-            $checks['remaining_physical_space'] = ['passed' => null, 'message' => 'A tárolt vagy lefoglalt áru szabadon hagyott fizikai helye nem ismert.'];
-        }
-
-        return $checks;
     }
 
     private function rankingReasons(array $score): array

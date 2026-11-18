@@ -32,7 +32,7 @@ class WarehouseStockListing
     public function query()
     {
         $f = $this->filters;
-        $query = Stock::with('product')->where('warehouse_id', $this->warehouse->warehouse_id);
+        $query = Stock::with('product')->withPendingPutaway()->where('warehouse_id', $this->warehouse->warehouse_id);
         if ($f['product_id'] !== '') $query->where('product_id', $f['product_id']);
         if ($f['stock'] === 'positive') $query->where('quantity', '>', 0);
         if ($f['stock'] === 'zero') $query->where('quantity', 0);

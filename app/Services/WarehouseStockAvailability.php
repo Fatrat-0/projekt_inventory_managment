@@ -22,9 +22,10 @@ class WarehouseStockAvailability
             self::stagedTasks()->whereColumn('warehouse_transfer_tasks.stock_id', 'stocks.id')
                 ->selectRaw('COALESCE(SUM(staged_quantity), 0)'),
             'staged_quantity',
-        )->get();
+        )->selectSub(self::pendingPutawayQuantityForStock(), 'pending_putaway_quantity')->get();
 
-        return $this->summarize($rows, (int) ($rows->first()->source_reserved_quantity ?? 0), (int) ($rows->first()->staged_quantity ?? 0));
+        return $this->summarize($rows, (int) ($rows->first()->source_reserved_quantity ?? 0),
+            (int) ($rows->first()->staged_quantity ?? 0), (int) ($rows->first()->pending_putaway_quantity ?? 0));
     }
 
     /**
@@ -43,7 +44,32 @@ class WarehouseStockAvailability
         $staged = $stockId === null ? 0 : (int) self::stagedTasks()->where('stock_id', $stockId)
             ->lockForUpdate()->get(['staged_quantity'])->sum('staged_quantity');
 
-        return $this->summarize($rows, $reserved, $staged);
+        $pendingPutaway = $stockId === null ? 0 : (int) self::pendingPutaways()
+            ->where('to_warehouse_id', $warehouseId)->where('product_id', $productId)
+            ->lockForUpdate()->get(['pending_putaway_quantity'])->sum('pending_putaway_quantity');
+
+        return $this->summarize($rows, $reserved, $staged, $pendingPutaway);
+    }
+
+    private static function pendingPutaways(): Builder
+    {
+        return DB::table('shipment_receipt_items')->whereRaw('pending_putaway_quantity > 0');
+    }
+
+    public static function pendingPutawayQuantityForStock(string $stockTable = 'stocks'): Builder
+    {
+        return self::pendingPutaways()
+            ->whereColumn('shipment_receipt_items.to_warehouse_id', $stockTable.'.warehouse_id')
+            ->whereColumn('shipment_receipt_items.product_id', $stockTable.'.product_id')
+            ->selectRaw('COALESCE(SUM(pending_putaway_quantity), 0)');
+    }
+
+    /** Quantity after quarantine and pending putaway, before source reservations and picking restrictions. */
+    public static function usableStockSql(string $stockTable = 'stocks'): string
+    {
+        $pending = self::pendingPutawayQuantityForStock($stockTable)->toSql();
+
+        return "(CAST({$stockTable}.quantity AS SIGNED) - CAST({$stockTable}.quarantined_quantity AS SIGNED) - ({$pending}))";
     }
 
     public static function activeReservations(): Builder
@@ -54,7 +80,7 @@ class WarehouseStockAvailability
     public static function stagedTasks(): Builder
     {
         return DB::table('warehouse_transfer_tasks')->where('type', WarehouseTransferTask::TYPE_PICKING)
-            ->whereIn('status', WarehouseTransferTask::STAGED_STATUSES);
+            ->whereIn('status', WarehouseTransferTask::STAGED_STATUSES)->whereNull('dispatched_at');
     }
 
     private function requireTransaction(): void
@@ -78,7 +104,7 @@ class WarehouseStockAvailability
             ->orderBy('placements.id');
     }
 
-    private function summarize(Collection $rows, int $reserved, int $staged): array
+    private function summarize(Collection $rows, int $reserved, int $staged, int $pendingPutaway): array
     {
         $stock = $rows->first();
         $physical = (int) ($stock->physical_quantity ?? 0);
@@ -109,9 +135,11 @@ class WarehouseStockAvailability
         }
 
         $usable = $physical - $quarantined;
-        $unassignedUsable = $usable - $assigned - $staged;
+        $unassignedBeforePutaway = $usable - $assigned - $staged;
+        $unassignedUsable = $unassignedBeforePutaway - $pendingPutaway;
         if ($assigned > $usable) $issues['assigned_exceeds_usable'] = true;
-        if ($staged > 0 && $unassignedUsable < 0) $issues['staged_exceeds_usable'] = true;
+        if ($staged > 0 && $unassignedBeforePutaway < 0) $issues['staged_exceeds_usable'] = true;
+        if ($pendingPutaway > 0 && $unassignedUsable < 0) $issues['pending_putaway_exceeds_usable'] = true;
 
         $pickable = $unassignedUsable;
         foreach ($locations as $location) {
@@ -131,8 +159,9 @@ class WarehouseStockAvailability
             'physical_quantity' => $physical,
             'quarantined_quantity' => $quarantined,
             'assigned_quantity' => $assigned,
-            'unassigned_quantity' => $physical - $assigned - $staged,
+            'unassigned_quantity' => $physical - $assigned - $staged - $pendingPutaway,
             'staged_quantity' => $staged,
+            'pending_putaway_quantity' => $pendingPutaway,
             'source_reserved_quantity' => $reserved,
             'unassigned_usable_quantity' => $consistent ? $unassignedUsable : null,
             'free_quantity' => $consistent ? $free : null,

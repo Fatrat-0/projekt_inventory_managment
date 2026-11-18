@@ -74,7 +74,7 @@ async function newWarehouse(page, name) {
         headers: await headers(page), data: { warehouse_name: name, location: 'Bemutató telephely' }, maxRedirects: 0,
     });
     expect(response.status(), await response.text()).toBe(302);
-    await page.goto(response.headers().location);
+    await page.goto('/warehouses?search=' + encodeURIComponent(name));
     const href = await page.getByRole('link', { name, exact: true }).first().getAttribute('href');
     return Number(new URL(href, page.url()).pathname.split('/').at(-1));
 }

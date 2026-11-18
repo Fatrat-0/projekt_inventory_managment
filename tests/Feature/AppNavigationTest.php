@@ -53,8 +53,8 @@ class AppNavigationTest extends TestCase
             ['/atmozgatasok', 'transfer-intent-pages.index', 'Átmozgatások'],
             ['/atmozgatasok/uj-igeny', 'transfer-intent-pages.index', 'Új átmozgatási igény'],
             ['/transfers/create', 'transfer-intent-pages.index', 'Új átmozgatás'],
-            ['/shipments', 'transfer-intent-pages.index', 'Szállítmányok'],
-            ['/shipments/create', 'transfer-intent-pages.index', 'Új rakodási terv'],
+            ['/shipments', 'transfer-intent-pages.index', 'Fuvarok és szállítmányok'],
+            ['/shipments/create', 'transfer-intent-pages.index', 'Új fuvar tervezése'],
             ['/users/create', 'users.index', 'Új felhasználó'],
             ['/profile', null, 'Profil'],
         ];

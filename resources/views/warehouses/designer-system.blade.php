@@ -1,7 +1,7 @@
 <template x-if="selected.systemId">
     <div class="space-y-3">
         <p class="text-xs text-gray-600" x-text="`${selected.code} · Zóna: ${selected.zone}`"></p>
-        @unless($pickingSource)
+        @unless($previewLocation)
             <a :href="selected.frontUrl" x-text="selected.kind === 'floor' ? 'Tárolóterület megnyitása' : 'Állvány megnyitása'" class="inline-flex min-h-10 items-center rounded-md bg-indigo-50 px-3 text-sm font-medium text-indigo-700 hover:bg-indigo-100"></a>
         @endunless
         <p x-show="selected.rackHeight !== null" class="text-xs text-gray-600" x-text="selected.rackHeight === null ? '' : `Állványmagasság · ${selected.rackHeight.toLocaleString('hu-HU')} m`"></p>
@@ -27,12 +27,13 @@
             <details :open="focusBin !== null && level.bins.some(bin => bin.id === focusBin)" class="rounded border border-gray-200 p-2">
                 <summary class="cursor-pointer text-sm font-medium" x-text="`${level.name} · ${level.bins.length} hely${focusBin === null ? ' · ' + capacityState(level) : ''}`"></summary>
                 <div class="mt-2 space-y-2">
-                    @unless($pickingSource) @include('warehouses.designer-capacity', ['item' => 'level']) @endunless
+                    @unless($previewLocation) @include('warehouses.designer-capacity', ['item' => 'level']) @endunless
                     <template x-for="bin in level.bins" :key="bin.id">
-                        @if($pickingSource)
-                            <p :data-picking-source="bin.id === focusBin ? bin.code : null"
+                        @if($previewLocation)
+                            <p {{ isset($putawayTarget) ? ':data-putaway-target' : ':data-picking-source' }}="bin.id === focusBin ? bin.code : null"
+                               :aria-current="bin.id === focusBin ? 'true' : null"
                                :class="bin.id === focusBin ? 'bg-indigo-100 font-bold text-indigo-900' : 'text-gray-700'"
-                               class="rounded px-2 py-1 text-xs" x-text="bin.id === focusBin ? 'Forrásrekesz · ' + bin.code : bin.code"></p>
+                               class="rounded px-2 py-1 text-xs" x-text="bin.id === focusBin ? @js(isset($putawayTarget) ? 'Célrekesz · ' : 'Forrásrekesz · ') + bin.code : bin.code"></p>
                         @else
                             <details class="border-t border-gray-100 py-2">
                                 <summary class="cursor-pointer text-xs font-medium" x-text="`${bin.code} · ${capacityState(bin)}`"></summary>

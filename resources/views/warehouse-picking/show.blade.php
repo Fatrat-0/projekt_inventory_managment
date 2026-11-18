@@ -22,6 +22,7 @@
             <a href="{{ route('transfer-intent-pages.show', $intent) }}" class="{{ $secondary }}">Átmozgatási igény megnyitása</a>
         </x-page-toolbar>
         @include('transfers.tabs')
+        @include('transfers.task-tabs')
 
         <p hidden :hidden="!accessError" x-ref="accessNotice" tabindex="-1" role="alert" x-text="accessError"
            class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"></p>
@@ -56,14 +57,15 @@
                     <div><dt class="text-xs text-gray-600">Elvárt</dt><dd class="font-semibold text-gray-900" x-text="quantity(task.expected_quantity)">{{ $task['expected_quantity'] }} db</dd></div>
                     <div><dt class="text-xs text-gray-600">Eddig kitárolva</dt><dd class="font-semibold text-gray-900" x-text="quantity(task.staged_quantity)">{{ $task['staged_quantity'] }} db</dd></div>
                     <div><dt class="text-xs text-gray-600">Hátralévő</dt><dd class="font-semibold text-indigo-800" x-text="quantity(remaining)"></dd></div>
-                    <div><dt class="text-xs text-gray-600">Összekészítve</dt><dd class="font-semibold text-gray-900" x-text="quantity(task.staged_quantity)"></dd></div>
+                    <div><dt class="text-xs text-gray-600">Összekészítve a forrásraktárban</dt><dd class="font-semibold text-gray-900" x-text="quantity(task.active_staged_quantity)"></dd></div>
+                    <div x-show="task.dispatched_quantity > 0"><dt class="text-xs text-gray-600">Feladva</dt><dd class="font-semibold text-gray-900" x-text="quantity(task.dispatched_quantity)"></dd></div>
                 </dl>
                 <progress aria-label="Kitárolási előrehaladás" class="mt-3 h-2 w-full overflow-hidden rounded-full accent-indigo-600" max="100" :value="progress"></progress>
                 <dl class="mt-3 space-y-2 border-t border-gray-200 pt-3 text-sm">
                     <div class="flex flex-wrap justify-between gap-x-2 gap-y-0.5"><dt class="text-gray-600">Lefoglalva, kitárolásra vár</dt><dd class="font-medium text-gray-900" x-text="quantity(snapshot.reservation?.remaining_quantity ?? 0)"></dd></div>
                     <div class="flex flex-wrap justify-between gap-x-2 gap-y-0.5"><dt class="text-gray-600">Más műveletekhez szabad</dt><dd class="font-medium text-gray-900" x-text="quantity(snapshot.free_quantity)"></dd></div>
                 </dl>
-                <p class="mt-3 text-xs text-gray-600" x-show="task.staged_quantity > 0">Az összekészített áru továbbra is a forrásraktárban van.</p>
+                <p class="mt-3 text-xs text-gray-600" x-show="task.active_staged_quantity > 0">Az összekészített áru továbbra is a forrásraktárban van.</p>
             </section>
 
             <div class="min-w-0 space-y-4 lg:col-start-1 lg:row-start-1 lg:row-span-2">

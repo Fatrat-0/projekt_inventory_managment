@@ -2,6 +2,7 @@
 
 namespace App\Queries;
 
+use App\Services\WarehouseStockAvailability;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\Warehouse;
@@ -73,10 +74,11 @@ class ProductListing
     public function query(): Builder
     {
         $f = $this->filters;
-        $query = Product::with(['category.parent', 'stocks.warehouse'])
+        $usableStock = WarehouseStockAvailability::usableStockSql();
+        $query = Product::with(['category.parent', 'stocks' => fn ($stock) => $stock->withPendingPutaway()->with('warehouse')])
             ->withSum('stocks as total_stock', 'quantity')
             ->withSum('stocks as total_quarantined', 'quarantined_quantity')
-            ->withSum('stocks as total_available', DB::raw('quantity - quarantined_quantity'));
+            ->withSum('stocks as total_available', DB::raw($usableStock));
         foreach (preg_split('/\s+/u', $f['search'], -1, PREG_SPLIT_NO_EMPTY) as $token) {
             // Escape LIKE metacharacters consistently for MySQL and SQLite.
             $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $token).'%';
@@ -95,7 +97,7 @@ class ProductListing
                 ->where('warehouse_id', $f['warehouse_id'])->where('quantity', '>', 0));
         }
         $sum = '(SELECT COALESCE(SUM(stocks.quantity), 0) FROM stocks WHERE stocks.product_id = products.product_id)';
-        $available = '(SELECT COALESCE(SUM(stocks.quantity - stocks.quarantined_quantity), 0) FROM stocks WHERE stocks.product_id = products.product_id)';
+        $available = "(SELECT COALESCE(SUM({$usableStock}), 0) FROM stocks WHERE stocks.product_id = products.product_id)";
         $min = 'COALESCE(products.min_stock_override, (SELECT categories.default_item_min_stock FROM categories WHERE categories.category_id = products.category_id), 0)';
         match ($f['stock_status']) {
             'low' => $query->whereRaw("{$available} < {$min}"),

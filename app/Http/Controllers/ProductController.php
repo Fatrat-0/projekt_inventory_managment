@@ -6,6 +6,7 @@ use App\Models\Category;
 use App\Models\Product;
 use App\Models\Warehouse;
 use App\Services\MasterDataEditor;
+use App\Services\WarehouseStockAvailability;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -74,7 +75,9 @@ class ProductController extends Controller
      */
     public function show(string $id)
     {
-        $product = Product::with(['category', 'defaultPackaging'])->withSum('stocks', 'quantity')->withSum('stocks', 'quarantined_quantity')->withCount('stocks')->findOrFail($id);
+        $product = Product::with(['category', 'defaultPackaging'])->withSum('stocks', 'quantity')->withSum('stocks', 'quarantined_quantity')
+            ->withSum('stocks as total_available', DB::raw(WarehouseStockAvailability::usableStockSql()))
+            ->withCount('stocks')->findOrFail($id);
         return response()->view('products.show', compact('product'))->header('Cache-Control', 'no-store, private');
     }
 

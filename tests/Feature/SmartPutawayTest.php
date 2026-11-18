@@ -210,6 +210,29 @@ class SmartPutawayTest extends TestCase
         $this->assertDatabaseHas('stocks', ['warehouse_id' => $this->source->getKey(), 'quantity' => 9]);
     }
 
+    public function test_manual_location_search_keeps_the_shared_capacity_usage_outside_its_filter(): void
+    {
+        [$reserved, $target] = $this->rack('SZURES', 0, 60, 200);
+        $this->reserve($reserved, 45);
+        $target->update(['name' => 'Északi tartalék']);
+        $foreign = $this->source->storageLocations()->create([
+            'code' => 'MASIK', 'name' => 'Északi tartalék', 'kind' => 'shelf', 'max_weight_grams' => 200000,
+        ]);
+        $engine = app(SmartPutaway::class);
+        $cargo = ['quantity' => 2, 'cargo_weight_kg' => 20, 'pallet_slots' => 0];
+
+        $result = $engine->assessLocations($this->warehouse, $this->product, $cargo, search: ' eszaki ');
+
+        $this->assertSame([$target->id], array_column($result, 'location_id'));
+        $this->assertSame('rejected', $result[0]['status']);
+        $this->assertSame(15000, $result[0]['free_weight_grams']);
+        $this->assertArrayHasKey('level_weight', $result[0]['checks']['failed']);
+        $this->assertSame($result, $engine->assessLocations($this->warehouse, $this->product, $cargo, $target->id));
+        $this->assertSame([], $engine->assessLocations($this->warehouse, $this->product, $cargo, $foreign->id));
+        $this->assertDatabaseCount('warehouse_placements', 0);
+        $this->assertDatabaseCount('inventory_transfers', 1);
+    }
+
     private function recommend(array $overrides = []): array
     {
         return app(SmartPutaway::class)->recommend($this->warehouse, $this->product, $overrides + [

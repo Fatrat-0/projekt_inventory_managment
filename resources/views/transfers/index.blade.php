@@ -1,7 +1,9 @@
 <x-app-layout>
     <div class="app-page py-4 space-y-4" data-listing-page="transfers" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('transfers', { filtersOpen: {{ count($labels) ? 'true' : 'false' }} })">
         <x-page-toolbar title="Átmozgatások" :count="$transfers->total()" unit="tétel">
-            <a href="{{ route('shipments.create') }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium">Rakodási terv készítése</a>
+            @can('createAnyPlan', \App\Models\Shipment::class)
+                <a href="{{ route('shipments.create') }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium">Új fuvar tervezése</a>
+            @endcan
             <a href="{{ route('transfers.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">+ Új átmozgatás</a>
             <x-listing-view-toggle />
         </x-page-toolbar>
@@ -25,7 +27,7 @@
         @if($labels)<div class="flex flex-wrap gap-2 text-xs">@foreach($labels as $key => $label)<a class="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-1 text-indigo-800" href="{{ request()->fullUrlWithQuery([$key => null, 'page' => null]) }}" aria-label="{{ $label }} szűrő eltávolítása">{{ $label }} ×</a>@endforeach<a href="{{ route('transfers.index') }}" class="p-1 underline text-gray-600">Összes visszaállítása</a></div>@endif
         <p class="text-sm text-gray-600">A szűrt tételekből úton: <strong class="text-amber-700">{{ number_format($pendingQuantity, 0, ',', ' ') }} db</strong></p>
         <x-listing-card-sort :sorts="\App\Queries\TransferListing::SORTS" :filters="$filters" form="transfer-filters" />
-        <div data-listing-table class="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <div data-listing-table class="relative overflow-x-auto rounded-lg border border-gray-200 bg-white">
             @if($transfers->isEmpty())<p role="status" class="p-10 text-center text-sm text-gray-500">Nincs a feltételeknek megfelelő átmozgatás.</p>@else
             <table class="w-full text-sm text-left text-gray-600"><thead class="bg-gray-50 text-xs uppercase"><tr>
                 @foreach(\App\Queries\TransferListing::SORTS as $key => $label)<th data-listing-column="{{ $key }}" x-show="columnVisible('{{ $key }}')" scope="col" class="px-4 py-3" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}"><a href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => $key, 'sort_dir' => $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc']) }}">{{ $label }} {{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</a></th>@endforeach

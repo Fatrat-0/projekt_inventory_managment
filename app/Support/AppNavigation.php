@@ -18,7 +18,7 @@ class AppNavigation
             $groups[] = ['label' => 'Készletkezelés', 'items' => [
                 ['route' => 'stock.index', 'label' => 'Készlet', 'icon' => 'layers', 'patterns' => $manage ? ['stock.*'] : ['stock.*', 'warehouses.locations.*', 'warehouses.floor-plan.*', 'warehouses.storage-systems.*']],
                 ['route' => 'movements.index', 'label' => 'Készletmozgások', 'icon' => 'activity', 'patterns' => ['movements.*', 'quality-returns.*']],
-                ['route' => 'transfer-intent-pages.index', 'label' => 'Átmozgatások', 'icon' => 'truck', 'patterns' => ['transfer-intent-pages.*', 'warehouse-picking-pages.*', 'transfers.*', 'shipments.*']],
+                ['route' => 'transfer-intent-pages.index', 'label' => 'Átmozgatások', 'icon' => 'truck', 'patterns' => ['transfer-intent-pages.*', 'warehouse-picking-pages.*', 'warehouse-receiving-pages.*', 'warehouse-putaway-pages.*', 'transfers.*', 'shipments.*', 'vehicle-pages.*']],
             ]];
             $groups[] = ['label' => 'Törzsadatok', 'items' => array_values(array_filter([
                 ['route' => 'products.index', 'label' => 'Termékek', 'icon' => 'box', 'patterns' => ['products.*']],
@@ -45,8 +45,11 @@ class AppNavigation
             'movements' => ['Készletmozgások', 'movements.index', 'Új készletmozgás'],
             'transfer-intent-pages' => ['Átmozgatások', 'transfer-intent-pages.index', 'Új átmozgatási igény'],
             'warehouse-picking-pages' => ['Raktári feladatok', 'warehouse-picking-pages.index', null],
+            'warehouse-receiving-pages' => ['Átvétel', 'warehouse-receiving-pages.index', null],
+            'warehouse-putaway-pages' => ['Betárolás', 'warehouse-putaway-pages.index', null],
             'transfers' => ['Átmozgatások', 'transfers.index', 'Új átmozgatás'],
-            'shipments' => ['Szállítmányok', 'shipments.index', 'Új rakodási terv'],
+            'shipments' => ['Fuvarok és szállítmányok', 'shipments.index', 'Új fuvar tervezése'],
+            'vehicle-pages' => ['Járművek', 'vehicle-pages.index', null],
             'quality-returns' => ['Visszáru-minősítés', 'quality-returns.index', null],
             'users' => ['Felhasználók', 'users.index', 'Új felhasználó'],
             'profile' => ['Profil', 'profile.edit', null],
@@ -57,7 +60,7 @@ class AppNavigation
             $request->routeIs('dashboard.customize', 'dashboard.layout.update') => 'Testreszabás',
             $request->routeIs('warehouses.statistics') => 'Statisztika',
             $request->routeIs('warehouses.floor-plan.*') => 'Tervrajz',
-            $request->routeIs('warehouse-picking-pages.plan') => 'Alaprajz',
+            $request->routeIs('warehouse-picking-pages.plan', 'warehouse-putaway-pages.plan') => 'Alaprajz',
             $request->routeIs('warehouses.storage-systems.*') => 'Tárolórendszer',
             $request->routeIs('movements.return.*') => 'Visszáru rögzítése',
             $request->routeIs('*.create') => $create,
@@ -66,7 +69,7 @@ class AppNavigation
             default => null,
         };
         $items = [];
-        if (in_array($section, ['shipments', 'warehouse-picking-pages'], true)) $items[] = ['label' => 'Átmozgatások', 'url' => route('transfer-intent-pages.index')];
+        if (in_array($section, ['shipments', 'warehouse-picking-pages', 'warehouse-receiving-pages', 'warehouse-putaway-pages', 'vehicle-pages'], true)) $items[] = ['label' => 'Átmozgatások', 'url' => route('transfer-intent-pages.index')];
         if ($section === 'quality-returns') $items[] = ['label' => 'Készletmozgások', 'url' => route('movements.index')];
         $items[] = ['label' => $label, 'url' => $detail ? route($route) : null];
         if ($detail) $items[] = ['label' => $detail, 'url' => null];

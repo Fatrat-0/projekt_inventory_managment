@@ -10,7 +10,6 @@ test.beforeEach(async ({ page }) => {
 
 for (const config of [
     { path:'/transfers', label:'Átmozgatások keresése', id:'transfer-search', origin:'from_warehouse_id', originLabel:'Forrásraktár', status:'pending', prefix:'ATM' },
-    { path:'/shipments', label:'Szállítmányok keresése', id:'shipment-search', origin:'origin_warehouse_id', originLabel:'Induló raktár', status:'draft', prefix:'SZALL' },
 ]) {
     test(config.path+' search suggestions select an exact product and keep current filter edits', async ({ page }) => {
         await page.goto(config.path+'?search=old&product_id=2&status='+config.status+'&per_page=25&page=2&sort_by=created_at&sort_dir=asc&date_from=2020-01-01&date_to=2099-12-31');

@@ -99,6 +99,9 @@ class TransferStockReservationService
             }
 
             $this->lockSource($current);
+            if ($current->pickingTasks()->where('active_intent_id', $current->id)->whereNotNull('dispatched_at')->lockForUpdate()->first(['id'])) {
+                throw new ConflictHttpException('Az igény áruját már feladták, ezért a forrásfoglalása nem módosítható.');
+            }
             if (!$reserve) $this->cancelUnstartedPickingTask($current);
             $reservation = $this->activeForUpdate($current);
             $reservation = $reserve

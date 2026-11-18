@@ -47,6 +47,7 @@ class WarehouseTransferTaskService
             $current = TransferIntent::findOrFail($intent->id);
             $tasks = $current->pickingTasks();
             $task = $taskId === null ? $tasks->where('active_intent_id', $current->id)->first() : $tasks->findOrFail($taskId);
+            if ($task?->dispatched_at) throw new ConflictHttpException('Az igény áruját már feladták, ezért a kitárolás nem folytatható.');
             if (!$task || $task->active_intent_id === null) {
                 throw new ConflictHttpException('Az igényhez nincs aktív kitárolási feladat.');
             }
@@ -217,6 +218,9 @@ class WarehouseTransferTaskService
             }
             $reservation = $current->stockReservations()->where('active_intent_id', $current->id)->lockForUpdate()->first();
             $task = $current->pickingTasks()->where('active_intent_id', $current->id)->lockForUpdate()->first();
+            if ($task?->dispatched_at) {
+                throw new ConflictHttpException('Az igény áruját már feladták, ezért a kitárolás nem módosítható.');
+            }
             if (!$reservation || $reservation->stock_id !== $stock['stock_id'] || $reservation->quantity !== $current->quantity) {
                 throw new ConflictHttpException('A kitároláshoz érvényes, az igény teljes mennyiségére szóló forrásfoglalás szükséges.');
             }

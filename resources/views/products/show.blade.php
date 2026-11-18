@@ -10,7 +10,7 @@
             $quarantined = (int)($product->stocks_sum_quarantined_quantity ?? 0);
         @endphp
         <dl class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,12rem),1fr))] gap-3">
-            @foreach(['Fizikai készlet' => $physical, 'Kiadható készlet' => $physical - $quarantined, 'Elkülönített készlet' => $quarantined] as $label => $quantity)
+            @foreach(['Fizikai készlet' => $physical, 'Kiadható készlet' => (int) $product->total_available, 'Elkülönített készlet' => $quarantined] as $label => $quantity)
                 <div class="min-w-0 rounded-lg border border-gray-200 bg-white p-4"><dt class="text-xs text-gray-500">{{ $label }}</dt><dd class="dashboard-text mt-2 text-2xl font-semibold tabular-nums text-gray-900">{{ number_format($quantity, 0, ',', ' ') }} <span class="text-xs font-normal">db</span></dd></div>
             @endforeach
         </dl>

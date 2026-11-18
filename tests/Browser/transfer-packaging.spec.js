@@ -40,7 +40,7 @@ test('a boxed transfer confirms the calculated weight and reserves and receives 
     const warehouseName = 'Dobozos átmozgatás tesztraktára';
     const createdWarehouse = await post('/warehouses', { warehouse_name: warehouseName, location: 'Teszt' });
     expect(createdWarehouse.status(), await createdWarehouse.text()).toBe(302);
-    await page.goto(createdWarehouse.headers().location);
+    await page.goto('/warehouses?search=' + encodeURIComponent(warehouseName));
     const warehouseLink = await page.getByRole('link', { name: warehouseName, exact: true }).first().getAttribute('href');
     const warehousePath = new URL(warehouseLink, page.url()).pathname;
     const targetWarehouse = Number(warehousePath.split('/').at(-1));

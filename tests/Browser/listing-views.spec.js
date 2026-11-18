@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 const listings = [
     ['products', 'product-id'], ['stock', 'stock-row'], ['movements', 'movement-id'],
-    ['transfers', 'transfer-id'], ['shipments', 'shipment-id'], ['partners', 'partner-id'],
+    ['transfers', 'transfer-id'], ['partners', 'partner-id'],
     ['categories', 'category-id'], ['warehouses', 'warehouse-id'], ['quality-returns', 'quality-return-id'], ['users', 'user-id'],
 ];
 async function login(page, admin = true) {
@@ -35,7 +35,6 @@ test.beforeAll(async ({ browser }) => {
         await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 });
         const transferHtml = await (await page.request.get('/transfers?search='+marker)).text();
         fixtureTransfer = transferHtml.match(/data-transfer-id="(\d+)"/)[1];
-        await post(page, '/shipments', { reference: marker, origin_warehouse_id: 1, stops: [{ warehouse_id: 2, items: [{ product_id: product, quantity: 1 }] }] });
         await post(page, '/partners', { name: marker, type: 'both' });
         await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'out', quantity: 1, reference: marker+'-OUT' });
         const issues = await (await page.request.get('/movements?search='+marker+'-OUT')).text();
@@ -49,10 +48,9 @@ for (const [path, attr] of listings) {
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.setViewportSize({ width: 1440, height: 950 }); await login(page);
         await page.goto('/'+path); await expect(page.locator('[data-listing-toggle]')).toBeVisible();
-        await expect(toggle(page, path === 'shipments' ? 'cards' : 'table')).toHaveAttribute('aria-pressed', 'true');
+        await expect(toggle(page, 'table')).toHaveAttribute('aria-pressed', 'true');
         await toggle(page, 'table').click();
         const before = await ids(page, attr); expect(before.length).toBeGreaterThan(0);
-        if (path === 'shipments') await page.screenshot({ path: 'tests/Browser/.runtime/listing-shipments-table.png', fullPage: true });
         const url = page.url(); let navigations = 0;
         page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations++; });
         await toggle(page, 'cards').focus(); await page.keyboard.press('Space');
@@ -91,25 +89,20 @@ test('preferences are independent and the old product preference is migrated wit
     await page.goto('/stock'); await expect(toggle(page, 'cards')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('card sorting on movements, transfers and shipments submits draft search and preserves the selected view', async ({ page }) => {
+test('card sorting on movements and transfers submits draft search and preserves the selected view', async ({ page }) => {
     await login(page);
     for (const [path, sort, label, input] of [
         ['movements', 'quantity', 'Mennyiség', 'Mozgások keresése'],
         ['transfers', 'quantity', 'Mennyiség', 'Átmozgatások keresése'],
-        ['shipments', 'reference', 'Hivatkozás', 'Szállítmányok keresése'],
     ]) {
         await page.goto('/'+path+'?sort_by=created_at&sort_dir=desc&per_page=25'); await toggle(page, 'cards').click();
         const search = page.getByRole('combobox', { name: input, exact: true });
         await search.fill('LIST-VIEW'); await search.press('Escape');
         const sortPanel = page.locator('[data-listing-card-sort]'); await expect(sortPanel).toBeVisible();
-        if (path === 'shipments') await page.getByLabel('Rendezés', { exact: true }).selectOption(sort);
-        else { await sortPanel.locator('summary').click(); await sortPanel.getByRole('link', { name: label, exact: false }).click(); }
+        await sortPanel.locator('summary').click();
+        await sortPanel.getByRole('link', { name: label, exact: false }).click();
         await expect(page).toHaveURL(url => url.searchParams.get('search') === 'LIST-VIEW' && url.searchParams.get('sort_by') === sort && url.searchParams.get('per_page') === '25');
         await expect(toggle(page, 'cards')).toHaveAttribute('aria-pressed', 'true');
-        if (path === 'shipments') {
-            await toggle(page, 'table').click(); await page.getByRole('columnheader', { name: /Állapot/ }).getByRole('link').click();
-            await expect(page).toHaveURL(url => url.searchParams.get('sort_by') === 'status' && url.searchParams.get('search') === 'LIST-VIEW');
-        }
     }
 });
 
@@ -181,7 +174,7 @@ test('all pages retain a usable default and mobile cards without JavaScript', as
         for (const [path, attr] of listings) {
             await page.setViewportSize({ width: 1440, height: 900 }); await page.goto('/'+path);
             await expect(page.locator('[data-listing-toggle]')).toBeHidden();
-            await expect(page.locator(path === 'shipments' ? '[data-listing-cards]' : '[data-listing-table]')).toBeVisible();
+            await expect(page.locator('[data-listing-table]')).toBeVisible();
             const before = await ids(page, attr); expect(before.length).toBeGreaterThan(0);
             await page.setViewportSize({ width: 320, height: 800 });
             await expect(page.locator('[data-listing-cards]')).toBeVisible(); await expect(page.locator('[data-listing-table]')).toBeHidden();

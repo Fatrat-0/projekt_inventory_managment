@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { legacyDraft, shipmentCommand as command } from './shipment-fixtures';
 
 async function choose(page, label, query, option) {
     await page.getByRole('combobox', { name: label, exact: true }).fill(query);
@@ -88,48 +89,24 @@ test('pallet capacity is reserved and received, and shipment drafts retain the s
     await expect(capacity).toContainText('2 használt · 0 lefoglalt');
     await expect(page.getByRole('region', { name: 'Tárhelyen tárolt tételek' })).toContainText('ALPHA-001 · 4 db · 60 kg');
 
-    await page.goto('/shipments/create');
-    await page.getByLabel('Szállítmány hivatkozása').fill('Tárhelyes próbaterv');
-    await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('Teszt raktár');
-    await page.getByRole('listbox', { name: 'Raktártalálatok' }).getByRole('option', { name: 'Teszt raktár', exact: true }).click();
-    const stop = page.getByRole('group', { name: '1. megálló', exact: true });
-    await stop.getByLabel('Célraktár', { exact: true }).selectOption('2');
-    await stop.getByLabel('Termék', { exact: true }).selectOption('1');
-    const stopLocation = stop.getByRole('combobox', { name: 'Cél tárhely', exact: true });
-    await stopLocation.selectOption(location);
-    await stop.getByLabel('Célraktár', { exact: true }).selectOption('3');
-    await expect(stopLocation).toBeHidden();
-    await stop.getByLabel('Célraktár', { exact: true }).selectOption('2');
-    await expect(stopLocation).toHaveValue('');
-    await stopLocation.selectOption(location);
-    await stop.getByLabel('Teljes tömeg (kg)').fill('15');
-    await stop.getByLabel('Raklapok száma').fill('1');
-    await page.getByRole('button', { name: 'Tervezet mentése' }).click();
-    await expect(page).toHaveURL(/\/shipments\/\d+$/);
-    await page.getByRole('link', { name: 'Terv szerkesztése' }).click();
-    await expect(stopLocation).toHaveValue(location);
-    await expect(stop.getByLabel('Teljes tömeg (kg)')).toHaveValue('15');
-    await expect(stop.getByLabel('Raklapok száma')).toHaveValue('1');
+    const shipmentPath = await legacyDraft(page, 'Tárhelyes próbaterv', 1, [{
+        warehouse_id: 2, items: [{ product_id: 1, quantity: 1, to_location_id: Number(location), cargo_weight_kg: 15, pallet_slots: 1 }],
+    }]);
+    await page.goto(shipmentPath);
+    await expect(page.getByRole('list', { name: 'Felrakodási sorrend' })).toContainText('15 kg');
 
-    const csrf = await page.locator('meta[name="csrf-token"]').getAttribute('content');
-    const headers = { 'X-CSRF-TOKEN': csrf };
-    const created = await page.request.post('/warehouses/4/locations', { headers,
-        form: { code: 'CLOSED', name: 'Lezárt polc', kind: 'shelf', max_weight_kg: '50' }, maxRedirects: 0 });
-    const inactiveUrl = created.headers().location;
+    const created = await command(page, 'POST', '/warehouses/4/locations', {
+        code: 'CLOSED', name: 'Lezárt polc', kind: 'shelf', max_weight_kg: 50,
+    }, 302);
+    const inactiveUrl = new URL(created.headers().location, page.url()).pathname;
     expect(inactiveUrl).toMatch(/\/warehouses\/4\/locations\/\d+$/);
-    const disabled = await page.request.patch(inactiveUrl, { headers,
-        form: { code: 'CLOSED', name: 'Lezárt polc', kind: 'shelf', max_weight_kg: '50', active: '0', lock_version: '1' }, maxRedirects: 0 });
-    expect(disabled.status()).toBe(302);
-    await page.reload();
-    await stop.getByLabel('Célraktár', { exact: true }).selectOption('4');
-    await expect(stop.getByText('A célraktárban nincs aktív tárhely.')).toBeVisible();
-    await expect(stopLocation).toBeHidden();
-    const sent = page.waitForRequest(request => request.method() === 'POST' && /\/shipments\/\d+$/.test(new URL(request.url()).pathname));
-    await page.getByRole('button', { name: 'Tervezet mentése' }).click();
-    const submitted = new URLSearchParams((await sent).postData());
-    expect([...submitted.keys()].some(name => name.startsWith('stops['))).toBe(false);
-    expect(JSON.parse(submitted.get('stops_json'))[0]).toMatchObject({ warehouse_id: '4', items: [{ to_location_id: null }] });
-    await expect(page).toHaveURL(/\/shipments\/\d+$/);
-    await page.getByRole('button', { name: 'Szállítmány indítása' }).click();
-    await expect(page.getByRole('alert')).toContainText('A célraktárhoz válassz aktív tárhelyet.');
+    await command(page, 'PATCH', inactiveUrl, {
+        code: 'CLOSED', name: 'Lezárt polc', kind: 'shelf', max_weight_kg: 50, active: 0, lock_version: 1,
+    }, 302);
+    await command(page, 'PUT', shipmentPath, {
+        reference: 'Tárhelyes próbaterv', origin_warehouse_id: 1, version: 1,
+        stops: [{ warehouse_id: 4, items: [{ product_id: 1, quantity: 1 }] }],
+    }, 302);
+    const rejected = await command(page, 'POST', shipmentPath+'/start', { version: 2 }, 422);
+    expect((await rejected.json()).message).toContain('A célraktárhoz válassz aktív tárhelyet.');
 });

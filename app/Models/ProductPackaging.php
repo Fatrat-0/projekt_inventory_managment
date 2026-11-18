@@ -11,6 +11,15 @@ class ProductPackaging extends Model
         'name', 'pieces_per_package', 'gross_weight_kg', 'width_cm', 'depth_cm', 'height_cm', 'barcode',
     ];
 
+    protected static function booted(): void
+    {
+        static::updating(function (self $packaging): void {
+            if ($packaging->isDirty($packaging->getFillable())) {
+                $packaging->revision = (int) $packaging->getOriginal('revision') + 1;
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return [

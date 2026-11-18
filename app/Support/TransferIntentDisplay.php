@@ -44,7 +44,9 @@ class TransferIntentDisplay
 
         $preparation = $intent->status === 'approved' ? self::preparation($intent, $user) : null;
         $actions = $policy->availableActions($user, $intent);
-        if (($preparation['staged_quantity'] ?? 0) > 0) {
+        $blockedCancel = ($preparation['staged_quantity'] ?? 0) > 0
+            || (in_array('cancel', $actions, true) && $intent->shipmentAssignments()->where('active_intent_id', $intent->id)->exists());
+        if ($blockedCancel) {
             $actions = array_values(array_diff($actions, ['cancel']));
         }
 
@@ -68,7 +70,7 @@ class TransferIntentDisplay
     private static function preparation(TransferIntent $intent, User $user): array
     {
         $reservation = $intent->stockReservations()->latest('id')->first(['status', 'quantity', 'remaining_quantity']);
-        $task = $intent->pickingTasks()->where('active_intent_id', $intent->id)->first(['status', 'staged_quantity']);
+        $task = $intent->pickingTasks()->where('active_intent_id', $intent->id)->first(['status', 'staged_quantity', 'dispatched_at']);
         $reservationStatus = $reservation?->status ?? 'unreserved';
         $active = $reservationStatus === TransferStockReservation::ACTIVE;
         $unreserved = in_array($reservationStatus, ['unreserved', TransferStockReservation::RELEASED], true);
@@ -98,6 +100,8 @@ class TransferIntentDisplay
             'task_status' => $task?->status,
             'remaining_quantity' => $unreserved ? $intent->quantity : $reservation->remaining_quantity,
             'staged_quantity' => $staged,
+            'active_staged_quantity' => $task?->activeStagedQuantity() ?? 0,
+            'dispatched_quantity' => $task?->dispatchedQuantity() ?? 0,
             'available_quantity' => $available,
             'actions' => $actions,
         ];

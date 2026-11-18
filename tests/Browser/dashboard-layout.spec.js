@@ -239,11 +239,26 @@ test('large text keeps customization labels clear of reorder buttons on a narrow
             && Array.from(range.getClientRects()).every(rect => rect.bottom <= button.top + 1 || rect.right <= button.left + 1);
     }));
     expect(clear).toBe(true);
-    const headerClear = await page.locator('[data-app-topbar]').evaluate(header => {
-        const range = document.createRange();
-        range.selectNodeContents(header.querySelector('[aria-current="page"]'));
-        const account = header.querySelector('[data-account-menu]').getBoundingClientRect();
-        return Array.from(range.getClientRects()).every(rect => rect.right <= account.left + 1 && rect.bottom <= header.getBoundingClientRect().bottom);
+    const header = page.locator('[data-app-topbar]');
+    const visibleControls = [
+        header.getByRole('button', { name: 'Navigációs menü', exact: true }),
+        header.getByRole('link', { name: 'Globális gyorskereső', exact: true }),
+        header.getByRole('button', { name: /^Nyitott feladatok,/ }),
+        header.getByLabel('Fiókmenü', { exact: true }),
+    ];
+    for (const control of visibleControls) {
+        await expect(control).toBeVisible();
+    }
+    const headerClear = await header.evaluate(header => {
+        const bounds = header.getBoundingClientRect();
+        const controls = [...header.querySelectorAll('[data-navigation-toggle], a[aria-label="Globális gyorskereső"], [popovertarget="app-tasks-menu"], [data-account-menu] summary')]
+            .map(control => control.getBoundingClientRect());
+        return controls.length === 4 && controls.every((rect, index) =>
+            rect.left >= bounds.left && rect.right <= bounds.right && rect.bottom <= bounds.bottom
+            && controls.slice(0, index).every(other =>
+                rect.left >= other.right || rect.right <= other.left || rect.top >= other.bottom || rect.bottom <= other.top
+            )
+        );
     });
     expect(headerClear).toBe(true);
     await page.screenshot({ path: 'tests/Browser/.runtime/dashboard-customization-large-text.png', fullPage: true });

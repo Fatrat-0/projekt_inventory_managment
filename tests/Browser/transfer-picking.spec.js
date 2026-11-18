@@ -25,12 +25,14 @@ test('a transfer picks partial quantities from multiple bins and unassigned stoc
         return result.headers().location;
     };
     const warehouse = async name => {
-        await page.goto(await post('/warehouses', { warehouse_name: name, location: 'Teszt' }));
+        await post('/warehouses', { warehouse_name: name, location: 'Teszt' });
+        await page.goto('/warehouses?search=' + encodeURIComponent(name));
         const link = await page.getByRole('link', { name, exact: true }).first().getAttribute('href');
         return new URL(link, page.url()).pathname;
     };
-    const sourceName = 'Kitárolási próbaraktár';
-    const targetName = 'Átvételi próbaraktár';
+    const fixture = randomUUID().slice(0, 8);
+    const sourceName = 'Rekeszes kitárolási próba ' + fixture;
+    const targetName = 'Rekeszes átvételi próba ' + fixture;
     const sourcePath = await warehouse(sourceName);
     await warehouse(targetName);
     const sourceWarehouse = Number(sourcePath.split('/').at(-1));

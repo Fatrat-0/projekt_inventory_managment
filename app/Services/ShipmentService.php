@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\{Product, Shipment, ShipmentStop};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 /** Shipment lock precedes sorted product locks; every state transition is atomic. */
 class ShipmentService
@@ -18,6 +19,7 @@ class ShipmentService
         return DB::transaction(function () use ($data, $actor, $shipment) {
             if ($shipment) {
                 $shipment = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+                $this->requireLegacy($shipment);
                 if ($shipment->status !== 'draft' || (int)($data['version'] ?? 0) !== $shipment->version) {
                     $this->fail('A tervezet közben megváltozott vagy már elindult. Frissítsd az oldalt.');
                 }
@@ -42,6 +44,7 @@ class ShipmentService
     {
         DB::transaction(function () use ($shipment, $actor, $version) {
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+            $this->requireLegacy($locked);
             if (in_array($locked->status, ['in_transit', 'completed'], true)) return;
             if ($locked->status !== 'draft' || $locked->version !== $version) $this->fail('Csak a megtekintett, aktuális tervezet indítható el. Frissítsd az oldalt.');
             $locked->load('stops.items');
@@ -65,6 +68,7 @@ class ShipmentService
     {
         DB::transaction(function () use ($shipment, $stop, $actor) {
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+            $this->requireLegacy($locked);
             $stop = $locked->stops()->whereKey($stop->id)->firstOrFail();
             if ($stop->received_at) return;
             if ($locked->status !== 'in_transit') $this->fail('Csak úton lévő szállítmány vehető át.');
@@ -83,6 +87,7 @@ class ShipmentService
     {
         DB::transaction(function () use ($shipment) {
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
+            $this->requireLegacy($locked);
             if ($locked->status === 'cancelled') return;
             if ($locked->status === 'completed') $this->fail('Teljesített szállítmány nem vonható vissza.');
             if ($locked->status === 'in_transit') {
@@ -106,4 +111,11 @@ class ShipmentService
     }
 
     private function fail(string $message): never { throw ValidationException::withMessages(['shipment' => $message]); }
+
+    private function requireLegacy(Shipment $shipment): void
+    {
+        if ($shipment->isTransferIntentPlan()) {
+            throw new ConflictHttpException('Az átmozgatási igényekből készült fuvarhoz ezen a végponton nem végezhető művelet.');
+        }
+    }
 }

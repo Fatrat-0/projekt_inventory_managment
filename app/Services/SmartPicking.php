@@ -48,6 +48,7 @@ class SmartPicking
             'available_quantity' => $available,
             'source_reserved_quantity' => $stock['source_reserved_quantity'],
             'staged_quantity' => $stock['staged_quantity'],
+            'pending_putaway_quantity' => $stock['pending_putaway_quantity'],
             'free_quantity' => $stock['free_quantity'],
             'quarantined_quantity' => $stock['quarantined_quantity'],
             'sources' => $sources,
@@ -115,6 +116,9 @@ class SmartPicking
         $this->assertConsistent($stock);
         if (!$stock['stock_id'] || $quantity > $stock['physical_quantity'] - $stock['quarantined_quantity']) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a forrásraktárban.']);
+        }
+        if ($stock['pending_putaway_quantity'] > 0 && $quantity > $stock['pickable_quantity']) {
+            throw ValidationException::withMessages(['quantity' => 'A betárolásra váró készlet védett. Legfeljebb '.$stock['pickable_quantity'].' db tárolható ki.']);
         }
         if ($stock['source_reserved_quantity'] + $stock['staged_quantity'] > 0 && $quantity > $stock['pickable_quantity']) {
             throw ValidationException::withMessages(['quantity' => 'A foglalt és összekészített tételek mellett legfeljebb '.$stock['pickable_quantity'].' db tárolható ki.']);

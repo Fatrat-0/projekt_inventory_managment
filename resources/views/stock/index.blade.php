@@ -37,7 +37,7 @@
         @endif
         <details class="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
             <summary class="cursor-pointer font-medium">Mit jelentenek a készletértékek?</summary>
-            <p class="mt-2">Fizikai készlet = kiadható + elkülönített. Az úton lévő áru még nincs a célraktárban. A lista a nulla mennyiségű készletsorokat is tartalmazza, a készletsor nélküli termékeket nem.</p>
+            <p class="mt-2">A fizikai készletbe a kiadható, az elkülönített és a betárolásra váró mennyiség is beletartozik. Az úton lévő áru még nincs a célraktárban. A lista a nulla mennyiségű készletsorokat is tartalmazza, a készletsor nélküli termékeket nem.</p>
             <p class="mt-2">A helyi minimum raktáranként és termékenként érvényes, alapból 5 db. Az utánpótlási javaslatokat vezérli; a globális termék- és kategóriaminimumoktól független. A 0 kikapcsolja az adott készletsor helyi pótlási igényét.</p>
         </details>
         <div data-stock-card-sort data-listing-card-sort="block">

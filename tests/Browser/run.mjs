@@ -43,7 +43,7 @@ try {
         await pause(100);
     }
     if (!ready) throw new Error('Browser test server did not start. '+log);
-    process.exitCode = await waitExit(spawn(process.execPath, [cli, 'test', ...process.argv.slice(2)], { cwd: root, stdio: 'inherit', windowsHide: true }));
+    process.exitCode = await waitExit(spawn(process.execPath, [cli, 'test', ...process.argv.slice(2)], { cwd: root, env, stdio: 'inherit', windowsHide: true }));
 } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

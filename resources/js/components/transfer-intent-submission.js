@@ -8,12 +8,13 @@ function operationKey() {
     return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
 }
 
-export default () => ({
+export default (isSuccess = result => Boolean(result?.intent?.id)) => ({
     submitting: false,
     submissionError: '',
     submissionStatus: null,
     fieldErrors: {},
     conflict: false,
+    conflictBlockers: [],
     intentAttempt: null,
 
     clearIntentFeedback() {
@@ -21,6 +22,7 @@ export default () => ({
         this.submissionStatus = null;
         this.fieldErrors = {};
         this.conflict = false;
+        this.conflictBlockers = [];
     },
 
     resetIntentSubmission() {
@@ -50,7 +52,7 @@ export default () => ({
                 body: JSON.stringify({ ...payload, operation_key: this.intentAttempt.key }),
             });
             const result = await response.json().catch(() => null);
-            if (response.ok && result?.intent?.id) return result;
+            if (response.ok && isSuccess(result)) return result;
 
             this.submissionStatus = response.redirected ? 401 : response.status;
             if (response.status === 422 && result?.errors) {
@@ -58,6 +60,7 @@ export default () => ({
                 this.submissionError = 'Ellenőrizd a megjelölt adatokat.';
             } else if (response.status === 409) {
                 this.conflict = true;
+                this.conflictBlockers = Array.isArray(result?.blockers) ? result.blockers : [];
                 this.submissionError = result?.message || 'A művelet ütközött egy korábbi módosítással.';
             } else if (response.status === 401 || response.status === 419 || response.redirected) {
                 this.submissionError = 'A munkamenet lejárt. Jelentkezz be újra, majd próbáld meg ismét.';

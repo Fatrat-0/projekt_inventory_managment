@@ -1,7 +1,10 @@
-<x-warehouse-layout :warehouse="$pickingSource ? null : $warehouse" :$context :$detailContext>
+@php($previewLocation = $putawayTarget ?? $pickingSource)
+<x-warehouse-layout :warehouse="$previewLocation ? null : $warehouse" :$context :$detailContext>
     <div class="app-page space-y-4 py-4" x-data="warehouseFloorPlan(@js($plan))" @keydown.escape="escapePlacement($event)">
         <x-page-toolbar title="Raktári tervrajz" :description="$warehouse->warehouse_name">
-            @if($pickingSource)
+            @if(isset($putawayTarget))
+                <a href="{{ $putawayBackUrl }}" class="min-h-10 inline-flex items-center font-medium text-indigo-700 hover:underline">Vissza a betárolási munkalaphoz</a>
+            @elseif($pickingSource)
                 <a href="{{ $pickingBackUrl }}" class="min-h-10 inline-flex items-center font-medium text-indigo-700 hover:underline">Vissza a kitárolási feladathoz</a>
             @endif
             @if($plan['canEdit'])
@@ -14,13 +17,13 @@
             @endif
         </x-page-toolbar>
 
-        @if($pickingSource)
-            <div class="space-y-1 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-950">
-                <p class="break-words font-semibold">Forrásrekesz: {{ $pickingSource->code }} · {{ $pickingSource->name }}</p>
-                @php($positionLabel = implode(' · ', array_filter($pickingSource->pickingPosition())))
+        @if($previewLocation)
+            <div @if(isset($putawayTarget)) data-putaway-plan @endif class="space-y-1 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-950">
+                <p class="break-words font-semibold">{{ isset($putawayTarget) ? 'Célrekesz' : 'Forrásrekesz' }} · {{ $previewLocation->code }} · {{ $previewLocation->name }}</p>
+                @php($positionLabel = implode(' · ', array_filter($previewLocation->pickingPosition())))
                 @if($positionLabel)<p class="break-words">{{ $positionLabel }}</p>@endif
                 <p>Megtekintési mód</p>
-                @if(($pickingSource->system ?? $pickingSource)->floor_x === null)
+                @if(($previewLocation->system ?? $previewLocation)->floor_x === null)
                     <p>A forráshely nincs elhelyezve a tervrajzon.</p>
                 @endif
             </div>
@@ -113,7 +116,7 @@
                     <a x-show="stale" href="{{ request()->fullUrl() }}" class="mt-1 inline-block font-medium underline">Mentett tervrajz betöltése</a>
                 </div>
                 <p x-show="editing && changed" class="border-t border-gray-200 px-4 py-2 text-xs text-gray-600">Új rendszer hozzáadása vagy a teherbírás szerkesztése előtt mentsd az elrendezést.</p>
-                @unless($pickingSource)
+                @unless($previewLocation)
                     <ul class="flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-200 px-4 py-3 text-xs text-gray-700" aria-label="Kapacitás jelmagyarázata">
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-300" aria-hidden="true"></span>Van szabad kapacitás</li>
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-amber-300" aria-hidden="true"></span>Közel telített</li>
@@ -147,11 +150,11 @@
                             <p class="break-words font-semibold text-gray-900" x-text="selected.name"></p>
                             <p class="text-xs text-gray-600" x-text="`${selected.kindLabel}${pickingPreview ? '' : ' · ' + capacityState(selected)}`"></p>
                             <p x-show="selectedPosition" class="text-xs text-gray-600" x-text="selectedPosition ? `${(selectedPosition.width / 2).toLocaleString('hu-HU')} × ${(selectedPosition.height / 2).toLocaleString('hu-HU')} m` : ''"></p>
-                            @unless($pickingSource)
+                            @unless($previewLocation)
                                 @include('warehouses.designer-capacity', ['item' => 'selected'])
                             @endunless
                             @include('warehouses.designer-system')
-                            @unless($pickingSource)
+                            @unless($previewLocation)
                                 <div class="border-t border-gray-100 pt-2 text-xs text-gray-700">
                                     <h3 class="mb-1 font-semibold">Tárolt termékek</h3>
                                     <p x-show="!selected.products.length">Nincs tárolt készlet.</p>
@@ -185,7 +188,7 @@
                     </template>
                 </section>
 
-                @unless($pickingSource)
+                @unless($previewLocation)
                 <section class="min-w-0 space-y-2 rounded-lg border border-gray-200 bg-white p-4">
                     <h2 class="text-sm font-semibold text-gray-900">Tervrajzon kívüli tárhelyek <span class="font-normal text-gray-600" x-text="`(${unplaced.length})`"></span></h2>
                     <p x-show="!unplaced.length && locations.length" class="text-sm text-gray-600">Minden tárhely szerepel a tervrajzon.</p>
@@ -208,7 +211,7 @@
 
         <noscript>
             <p class="rounded-md border border-gray-200 bg-white p-3 text-sm">A tervrajz megjelenítéséhez JavaScript szükséges.
-                @unless($pickingSource)<a href="{{ route('warehouses.locations.index', array_filter(['warehouse' => $warehouse, 'context' => $context, 'detail_context' => $detailContext])) }}" class="font-medium underline">Tárhelylista megnyitása</a>@endunless
+                @unless($previewLocation)<a href="{{ route('warehouses.locations.index', array_filter(['warehouse' => $warehouse, 'context' => $context, 'detail_context' => $detailContext])) }}" class="font-medium underline">Tárhelylista megnyitása</a>@endunless
             </p>
         </noscript>
     </div>

@@ -13,7 +13,7 @@ class ShipmentSeederTest extends TestCase
     public function test_demo_is_an_additive_repeatable_draft_without_stock_changes(): void
     {
         $this->seed(DatabaseSeeder::class);
-        $shipment = Shipment::with('stops.items')->sole();
+        $shipment = Shipment::where('planning_mode', Shipment::MODE_LEGACY)->with('stops.items')->sole();
         $this->assertSame('draft', $shipment->status);
         $this->assertCount(3, $shipment->stops);
         $this->assertCount(6, $shipment->stops->flatMap->items);
@@ -23,7 +23,7 @@ class ShipmentSeederTest extends TestCase
         $this->seed(ShipmentDemoSeeder::class);
         $this->assertSame($before, $shipment->fresh()->load('stops.items')->toArray());
         $this->assertSame($stocks, Stock::orderBy('id')->get()->toArray());
-        $this->assertDatabaseCount('shipments', 1);
+        $this->assertSame($shipment->id, Shipment::where('planning_mode', Shipment::MODE_LEGACY)->sole()->id);
         $this->assertDatabaseCount('inventory_transfers', $transfers);
     }
 }

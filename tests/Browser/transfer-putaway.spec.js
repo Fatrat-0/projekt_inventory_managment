@@ -28,7 +28,7 @@ test('standalone transfer recommends locations and preserves manual selection', 
         warehouse_name: 'Betárolási próbaraktár', location: 'Teszt',
     }, maxRedirects: 0 });
     expect(createdWarehouse.status()).toBe(302);
-    await page.goto(createdWarehouse.headers().location);
+    await page.goto('/warehouses?search=' + encodeURIComponent('Betárolási próbaraktár'));
     const warehouseLink = await page.getByRole('link', { name: 'Betárolási próbaraktár', exact: true }).first().getAttribute('href');
     const warehousePath = new URL(warehouseLink, page.url()).pathname;
     const rack = await page.request.post(warehousePath + '/floor-plan/systems', { headers, data: {

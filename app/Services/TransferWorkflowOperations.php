@@ -109,7 +109,10 @@ class TransferWorkflowOperations
 
     public function taskSnapshot(WarehouseTransferTask $task): array
     {
-        return $this->snapshot($task->attributesToArray(), self::TASK_FIELDS);
+        return $this->snapshot($task->attributesToArray(), self::TASK_FIELDS) + [
+            'dispatched_at' => $task->dispatched_at?->toISOString(),
+            'active_staged_quantity' => $task->activeStagedQuantity(), 'dispatched_quantity' => $task->dispatchedQuantity(),
+        ];
     }
 
     private function response(TransferWorkflowEvent $event): array

@@ -17,7 +17,7 @@ class TransferCargoWeight
         $data = $packaging === null ? null : [
             $packaging->getKey(), $packaging->name, $packaging->pieces_per_package, $packaging->grossWeightGrams(),
             $packaging->width_cm, $packaging->depth_cm, $packaging->height_cm, $packaging->barcode,
-            $packaging->getRawOriginal('updated_at'),
+            (int) $packaging->revision, $packaging->getRawOriginal('updated_at'),
         ];
 
         return hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
@@ -33,6 +33,15 @@ class TransferCargoWeight
     }
 
     public static function assertCalculated(?ProductPackaging $packaging, int $quantity, ?int $weightGrams): void
+    {
+        if (self::calculatedGrams($packaging, $quantity) !== $weightGrams) {
+            throw ValidationException::withMessages([
+                'cargo_weight_kg' => 'A tömeg eltér a csomagolás aktuális adataiból számolt értéktől. Ellenőrizd a teljes tömeget.',
+            ]);
+        }
+    }
+
+    public static function calculatedGrams(?ProductPackaging $packaging, int $quantity): int
     {
         $boxWeightGrams = $packaging?->grossWeightGrams();
         $piecesPerBox = $packaging?->pieces_per_package ?? 0;
@@ -53,10 +62,6 @@ class TransferCargoWeight
                 'cargo_weight_kg' => 'A számított teljes tömeg nem haladhatja meg az 1 000 000 kg-ot.',
             ]);
         }
-        if ($boxCount * $boxWeightGrams !== $weightGrams) {
-            throw ValidationException::withMessages([
-                'cargo_weight_kg' => 'A tömeg eltér a csomagolás aktuális adataiból számolt értéktől. Ellenőrizd a teljes tömeget.',
-            ]);
-        }
+        return $boxCount * $boxWeightGrams;
     }
 }

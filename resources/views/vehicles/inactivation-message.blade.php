@@ -1,0 +1,1 @@
+Biztosan inaktiválod ezt a járművet? Az inaktív jármű új fuvarhoz nem választható ki, és a hozzá rendelt tervezett fuvarokat addig nem lehet feladni, amíg a járművet nem cserélik vagy újra nem aktiválják.

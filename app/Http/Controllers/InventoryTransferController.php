@@ -48,7 +48,7 @@ class InventoryTransferController extends Controller
                 'quantity' => min((int)$proposal->shortage, (int)$proposal->surplus)];
         }
         $sourceProducts = Stock::query()
-            ->select(['stocks.id', 'warehouse_id', 'product_id', 'quantity', 'quarantined_quantity'])
+            ->select(['stocks.id', 'warehouse_id', 'product_id', 'quantity', 'quarantined_quantity'])->withPendingPutaway()
             ->whereColumn('quantity', '>', 'quarantined_quantity')
             ->withSum(['placements as inactive_quantity' => fn ($placements) => $placements
                 ->whereHas('location', fn ($locations) => $locations->where('active', false))], 'quantity')

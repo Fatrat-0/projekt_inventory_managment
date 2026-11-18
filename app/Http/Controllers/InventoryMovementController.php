@@ -87,10 +87,11 @@ class InventoryMovementController extends Controller
             'warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
         ]);
         $stock = $availability->snapshot($data['warehouse_id'], $data['product_id']);
-        $balance = ['quantity' => $stock['physical_quantity'] - $stock['quarantined_quantity'],
+        $balance = ['quantity' => $stock['physical_quantity'] - $stock['quarantined_quantity'] - $stock['pending_putaway_quantity'],
             'physical_quantity' => $stock['physical_quantity'], 'quarantined_quantity' => $stock['quarantined_quantity']];
         if ($stock['assigned_quantity']) $balance['assigned_quantity'] = $stock['assigned_quantity'];
-        if ($stock['source_reserved_quantity'] || $stock['staged_quantity'] || !$stock['consistent']) {
+        if ($stock['pending_putaway_quantity']) $balance['pending_putaway_quantity'] = $stock['pending_putaway_quantity'];
+        if ($stock['source_reserved_quantity'] || $stock['staged_quantity'] || $stock['pending_putaway_quantity'] || !$stock['consistent']) {
             $balance['source_reserved_quantity'] = $stock['source_reserved_quantity'];
             $balance['direct_issue_quantity'] = $stock['direct_issue_quantity'];
             $balance['staged_quantity'] = $stock['staged_quantity'];

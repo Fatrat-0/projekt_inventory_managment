@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InventoryMovement extends Model
 {
@@ -17,12 +18,13 @@ class InventoryMovement extends Model
         'stock_after',
         'partner_id', 'partner_name',
         'return_of_id', 'return_reason',
-        'quarantined_quantity', 'scrap_of_id',
+        'quarantined_quantity', 'scrap_of_id', 'shipment_transit_item_id', 'shipment_receipt_item_id',
     ];
 
     protected function casts(): array
     {
-        return ['quantity' => 'integer', 'stock_before' => 'integer', 'stock_after' => 'integer', 'quarantined_quantity' => 'integer'];
+        return ['quantity' => 'integer', 'stock_before' => 'integer', 'stock_after' => 'integer',
+            'quarantined_quantity' => 'integer', 'shipment_transit_item_id' => 'integer', 'shipment_receipt_item_id' => 'integer'];
     }
 
     public function getMovementNumberAttribute(): string
@@ -39,7 +41,11 @@ class InventoryMovement extends Model
     public function isReturn(): bool { return $this->return_of_id !== null; }
 
     public function isScrap(): bool { return $this->scrap_of_id !== null; }
-    public function isReturnable(): bool { return !$this->isReturn() && !$this->isScrap(); }
+    public function isShipmentDispatch(): bool { return $this->shipment_transit_item_id !== null; }
+    public function isShipmentReceipt(): bool { return $this->shipment_receipt_item_id !== null; }
+    public function isReturnable(): bool { return !$this->isReturn() && !$this->isScrap() && !$this->isShipmentDispatch() && !$this->isShipmentReceipt(); }
+    public function shipmentTransitItem(): BelongsTo { return $this->belongsTo(ShipmentTransitItem::class); }
+    public function shipmentReceiptItem(): BelongsTo { return $this->belongsTo(ShipmentReceiptItem::class); }
     public function scrapOf() { return $this->belongsTo(self::class, 'scrap_of_id'); }
     public function qualityActions() { return $this->hasMany(ReturnQualityAction::class, 'return_movement_id'); }
     public function qualityAction() { return $this->hasOne(ReturnQualityAction::class, 'movement_id'); }

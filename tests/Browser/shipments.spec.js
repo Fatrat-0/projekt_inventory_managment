@@ -1,24 +1,25 @@
 import { test, expect } from '@playwright/test';
+import { legacyDraft, shipmentCommand as command } from './shipment-fixtures';
 
 async function quantity(page, product = 1, warehouse = 1) {
     const response = await page.request.get(`/movements/stock?product_id=${product}&warehouse_id=${warehouse}`);
     expect(response.ok()).toBe(true);
     return (await response.json()).quantity;
 }
+const defaultStops = (quantity = 1) => [[2, 1], [3, 2], [4, 1]].map(([warehouse_id, product_id]) => ({ warehouse_id, items: [{ product_id, quantity }] }));
 async function draft(page, reference, excessive = false) {
-    await page.goto('/shipments/create');
-    await page.getByLabel('Szállítmány hivatkozása', { exact: true }).fill(reference);
-    await page.getByLabel('Jármű / rendszám (opcionális)').fill('E2E-123');
-    await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('Teszt raktár');
-    await page.getByRole('listbox', { name: 'Raktártalálatok', exact: true }).getByRole('option', { name: 'Teszt raktár', exact: true }).click();
-    for (const [index, warehouse, product] of [[0, '2', '1'], [1, '3', '2'], [2, '4', '1']]) {
-        if (index) await page.getByRole('button', { name: '+ Megálló hozzáadása', exact: true }).click();
-        const stop = page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(index);
-        await stop.getByLabel('Célraktár', { exact: true }).selectOption(warehouse);
-        await stop.getByLabel('Termék', { exact: true }).selectOption(product);
-        await stop.getByLabel('Mennyiség (db)', { exact: true }).fill(excessive ? '999' : '1');
-    }
-    return page.getByRole('region', { name: 'Rakodási sorrend előnézete' });
+    const path = await legacyDraft(page, reference, 1, defaultStops(excessive ? 999 : 1), { vehicle_label: 'E2E-123' });
+    await page.goto(path);
+    return path;
+}
+async function start(page, path, expected = 302) {
+    await command(page, 'POST', path+'/start', { version: 1 }, expected);
+    await page.reload();
+}
+async function receive(page, path, position) {
+    const stop = await page.locator('[data-legacy-stop-id]').nth(position).getAttribute('data-legacy-stop-id');
+    await command(page, 'PATCH', path+`/stops/${stop}/receive`, {}, 302);
+    await page.reload();
 }
 test.beforeEach(async ({ page }) => {
     page.on('dialog', dialog => dialog.accept());
@@ -29,19 +30,11 @@ test.beforeEach(async ({ page }) => {
     await expect(page).toHaveURL(/dashboard/);
 });
 
-test('shipment builder reorders stops and produces reverse loading order without touching stock', async ({ page }) => {
+test('saved legacy route retains reverse loading order and an authenticated loading PDF', async ({ page }) => {
     const before = await quantity(page);
-    const preview = await draft(page, 'E2E-Rakodási sorrend');
-    await expect(preview.getByRole('listitem')).toHaveText([
-        /1\. felrakodás: Nyugati tesztraktár.*3\. lerakodási megálló/,
-        /2\. felrakodás: Déli tesztraktár.*2\. lerakodási megálló/,
-        /3\. felrakodás: Északi tesztraktár.*1\. lerakodási megálló/,
-    ]);
-    await page.getByRole('button', { name: '1. megálló hátrébb', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Célraktár', { exact: true })).toHaveValue('3');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Termék', { exact: true })).toHaveValue('2');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await expect(page).toHaveURL(/\/shipments\/\d+$/);
+    const route = defaultStops();
+    [route[0], route[1]] = [route[1], route[0]];
+    await page.goto(await legacyDraft(page, 'E2E-Rakodási sorrend', 1, route));
     const loading = page.getByRole('list', { name: 'Felrakodási sorrend' });
     await expect(loading.getByRole('listitem').filter({ has: page.locator('strong') })).toHaveCount(3);
     await expect(loading.locator(':scope > li').nth(2)).toContainText('Déli tesztraktár');
@@ -75,26 +68,20 @@ test('shipment builder reorders stops and produces reverse loading order without
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Előnézet bezárása', exact: true }).click();
     await expect(dialog).not.toBeVisible();
-    await page.getByRole('link', { name: 'Terv szerkesztése', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Célraktár', { exact: true })).toHaveValue('3');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Termék', { exact: true })).toHaveValue('2');
+    await expect(page.getByRole('link', { name: 'Terv szerkesztése', exact: true })).toHaveCount(0);
 });
 
 test('shipment can start once and be received stop by stop', async ({ page }) => {
     const before = await quantity(page);
     const targetBefore = await quantity(page, 1, 2);
-    await draft(page, 'E2E-Teljesített útvonal');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    const path = new URL(page.url()).pathname;
-    const csrf = await page.getByRole('main').locator('input[name="_token"]').first().inputValue();
-    await page.getByRole('button', { name: 'Szállítmány indítása', exact: true }).click();
+    const path = await draft(page, 'E2E-Teljesített útvonal');
+    await start(page, path);
     await expect(page.getByText('Úton', { exact: true })).toBeVisible();
     expect(await quantity(page)).toBe(before - 2);
-    const replay = await page.request.post(path+'/start', { form: { _token: csrf, version: '1' } });
-    expect(replay.ok()).toBe(true);
+    await command(page, 'POST', path+'/start', { version: 1 }, 302);
     expect(await quantity(page)).toBe(before - 2);
     await expect(page.getByRole('link', { name: 'Terv szerkesztése', exact: true })).toHaveCount(0);
-    for (let i = 0; i < 3; i++) await page.getByRole('button', { name: 'Megálló átvétele', exact: true }).click();
+    for (let position = 0; position < 3; position++) await receive(page, path, position);
     await expect(page.getByText('Teljesítve', { exact: true })).toBeVisible();
     expect(await quantity(page, 1, 2)).toBe(targetBefore + 1);
     await expect(page.getByRole('button', { name: 'Megálló átvétele', exact: true })).toHaveCount(0);
@@ -102,112 +89,40 @@ test('shipment can start once and be received stop by stop', async ({ page }) =>
 
 test('insufficient shipment stock keeps the entire shipment as a draft', async ({ page }) => {
     const before = await quantity(page);
-    await draft(page, 'E2E-Nincs elegendő készlet', true);
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await page.getByRole('button', { name: 'Szállítmány indítása', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('Nincs elegendő készlet');
+    const path = await draft(page, 'E2E-Nincs elegendő készlet', true);
+    const rejected = await command(page, 'POST', path+'/start', { version: 1 }, 422);
+    expect((await rejected.json()).message).toContain('Nincs elegendő készlet');
+    await page.reload();
     await expect(page.getByText('Tervezet', { exact: true })).toBeVisible();
     expect(await quantity(page)).toBe(before);
-    await expect(page.getByRole('link', { name: 'Terv szerkesztése', exact: true })).toBeVisible();
 });
 
 test('partial cancellation returns the remaining cargo and leaves received stock at the destination', async ({ page }) => {
     const before = await quantity(page);
     const targetBefore = await quantity(page, 1, 2);
     const zetaBefore = await quantity(page, 2, 1);
-    await draft(page, 'E2E-Részleges visszavonás');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await page.getByRole('button', { name: 'Szállítmány indítása', exact: true }).click();
-    await page.getByRole('button', { name: 'Megálló átvétele', exact: true }).click();
-    await page.getByText('Szállítmány visszavonása', { exact: true }).click();
-    await page.getByRole('button', { name: 'Visszavonás rögzítése', exact: true }).click();
+    const path = await draft(page, 'E2E-Részleges visszavonás');
+    await start(page, path);
+    await receive(page, path, 0);
+    await command(page, 'PATCH', path+'/cancel', {}, 302);
+    await page.reload();
     await expect(page.getByText('Visszavonva', { exact: true })).toBeVisible();
     expect(await quantity(page)).toBe(before - 1);
     expect(await quantity(page, 1, 2)).toBe(targetBefore + 1);
     expect(await quantity(page, 2, 1)).toBe(zetaBefore);
 });
 
-test('shipment form preserves rows on duplicate destination validation and fits mobile', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await draft(page, 'E2E-Hibás útvonal');
-    // A forged request must still be rejected even though the UI now disables duplicates.
-    const submission = await page.getByRole('main').locator('form').evaluate(form => ({ action: form.action, data: Object.fromEntries(new FormData(form)) }));
-    const stops = JSON.parse(submission.data.stops_json);
-    stops[1].warehouse_id = '2';
-    submission.data.stops_json = JSON.stringify(stops);
-    const response = await page.request.post(submission.action, { form: submission.data, maxRedirects: 0 });
-    expect(response.status()).toBe(302);
-    await page.goto('/shipments/create');
-    await expect(page.getByRole('alert')).toBeVisible();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ })).toHaveCount(3);
-    await expect(page.getByLabel('Szállítmány hivatkozása', { exact: true })).toHaveValue('E2E-Hibás útvonal');
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: 'tests/Browser/.runtime/shipment-builder-mobile.png', fullPage: true });
-});
-
-test('destinations already used at another stop stay disabled until changed or removed', async ({ page }) => {
-    await draft(page, 'E2E-Egyedi célraktárak');
-    const first = page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Célraktár', { exact: true });
-    const second = page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(1).getByLabel('Célraktár', { exact: true });
-    await expect(first.locator('option[value="1"]')).toBeDisabled();
-    await expect(first.locator('option[value="2"]')).toBeEnabled();
-    await expect(second.locator('option[value="2"]')).toBeDisabled();
-    await expect(first.locator('option[value="3"]')).toBeDisabled();
-    const add = page.getByRole('button', { name: '+ Megálló hozzáadása', exact: true });
-    // Other specs may have created warehouses. Exhaust the actual destination set (or the 20-stop limit).
-    const extraIds = await first.locator('option').evaluateAll(options => options.map(option => option.value).filter(value => value && !['1', '2', '3', '4'].includes(value)).slice(0, 17));
-    for (const id of extraIds) {
-        await add.click();
-        await page.getByRole('group', { name: /^\d+\. megálló$/ }).last().getByLabel('Célraktár', { exact: true }).selectOption(id);
-    }
-    await expect(add).toBeDisabled();
-    for (let remaining = extraIds.length; remaining > 0; remaining--) {
-        await page.getByRole('button', { name: `${3 + remaining}. megálló törlése`, exact: true }).click();
-    }
-    await page.getByRole('button', { name: '2. megálló törlése', exact: true }).click();
-    await expect(add).toBeEnabled();
-    await expect(first.locator('option[value="3"]')).toBeEnabled();
-    await first.selectOption('3');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(1).getByLabel('Célraktár', { exact: true }).locator('option[value="2"]')).toBeEnabled();
-    await page.getByRole('button', { name: '1. megálló hátrébb', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Célraktár', { exact: true }).locator('option[value="3"]')).toBeDisabled();
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await expect(page).toHaveURL(/\/shipments\/\d+$/);
-    await page.getByRole('link', { name: 'Terv szerkesztése', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Célraktár', { exact: true })).toHaveValue('4');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(1).getByLabel('Célraktár', { exact: true }).locator('option[value="4"]')).toBeDisabled();
-});
-
-test('editing product rows and changing origin keep the remaining route and quantities consistent', async ({ page }) => {
-    await draft(page, 'E2E-Terméksorok és forrásváltás');
-    const first = page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0);
-    await first.getByRole('button', { name: '+ Termék hozzáadása', exact: true }).click();
-    await first.getByLabel('Termék', { exact: true }).nth(1).selectOption('2');
-    await first.getByLabel('Mennyiség (db)', { exact: true }).nth(1).fill('7');
-    await first.getByRole('button', { name: '1. termék törlése a(z) 1. megállóból', exact: true }).click();
-    await expect(first.getByLabel('Termék', { exact: true })).toHaveValue('2');
-    await expect(first.getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('7');
-
-    await page.getByRole('combobox', { name: 'Induló raktár', exact: true }).fill('Északi');
-    await page.getByRole('listbox', { name: 'Raktártalálatok', exact: true }).getByRole('option', { name: 'Északi tesztraktár', exact: true }).click();
-    await expect(first.getByLabel('Célraktár', { exact: true })).toHaveValue('');
-    await expect(first.getByLabel('Célraktár', { exact: true }).locator('option[value="2"]')).toBeDisabled();
-    await first.getByLabel('Célraktár', { exact: true }).selectOption('1');
-    await page.getByRole('button', { name: '2. megálló törlése', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ })).toHaveCount(2);
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(1).getByLabel('Célraktár', { exact: true })).toHaveValue('4');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
-    await expect(page).toHaveURL(/\/shipments\/\d+$/);
-    await page.getByRole('link', { name: 'Terv szerkesztése', exact: true }).click();
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ })).toHaveCount(2);
-    await expect(page.getByRole('combobox', { name: 'Induló raktár', exact: true })).toHaveValue('Északi tesztraktár');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Termék', { exact: true })).toHaveValue('2');
-    await expect(page.getByRole('group', { name: /^\d+\. megálló$/ }).nth(0).getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('7');
+test('legacy shipment HTTP validation still rejects duplicate destinations', async ({ page }) => {
+    const stops = defaultStops();
+    stops[1].warehouse_id = stops[0].warehouse_id;
+    const response = await command(page, 'POST', '/shipments', {
+        reference: 'E2E-Hibás útvonal', origin_warehouse_id: 1, stops,
+    }, 422);
+    expect(await response.text()).toContain('stops');
 });
 
 test('loading PDF preview fits mobile and its close button restores the details page', async ({ page }) => {
     await draft(page, 'E2E-Mobil PDF-előnézet');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('button', { name: 'Rakodólista (PDF)', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Rakodólista előnézete', exact: true });
@@ -235,7 +150,6 @@ test('loading PDF preview fits mobile and its close button restores the details 
 
 test('hiding PDF settings gives the frame the sidebar width and preserves options on reopening', async ({ page }) => {
     await draft(page, 'E2E-PDF-Szélesség');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
     await page.getByRole('button', { name: 'Rakodólista (PDF)', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Rakodólista előnézete', exact: true });
     await dialog.getByRole('button', { name: 'Fekvő (A4)', exact: true }).click();
@@ -268,7 +182,6 @@ test('hiding PDF settings gives the frame the sidebar width and preserves option
 
 test('closing a native PDF removes the frame and cancels pending option updates', async ({ page }) => {
     await draft(page, 'E2E-PDF-Bezárás');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
     const trigger = page.getByRole('button', { name: 'Rakodólista (PDF)', exact: true });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Rakodólista előnézete', exact: true });
@@ -284,7 +197,6 @@ test('closing a native PDF removes the frame and cancels pending option updates'
 
 test('loading PDF settings update preview and download together and can be reset', async ({ page }) => {
     await draft(page, 'E2E-PDF-Beállítások');
-    await page.getByRole('button', { name: 'Tervezet mentése', exact: true }).click();
     await page.getByRole('button', { name: 'Rakodólista (PDF)', exact: true }).click();
     const dialog=page.getByRole('dialog',{name:'Rakodólista előnézete',exact:true});
     const frame=dialog.locator('iframe');

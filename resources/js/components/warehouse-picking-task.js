@@ -256,6 +256,7 @@ export default ({ snapshot, urls, product, statuses }) => ({
         this.resetIntentSubmission();
         this.$refs.confirmation.close();
         this.$nextTick(() => this.$refs.progressHeading.focus());
+        window.dispatchEvent(new CustomEvent('warehouse-tasks:changed'));
         await this.refreshTask();
     },
 

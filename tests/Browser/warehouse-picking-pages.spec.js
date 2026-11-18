@@ -53,8 +53,8 @@ async function createProduct(page, name, stock, warehouse = 1) {
 }
 
 async function createWarehouse(page, name) {
-    const response = await command(page, 'POST', '/warehouses', { warehouse_name: name, location: 'Átvétel a 2. kapunál' }, 302);
-    await page.goto(response.headers().location);
+    await command(page, 'POST', '/warehouses', { warehouse_name: name, location: 'Átvétel a 2. kapunál' }, 302);
+    await page.goto(`/warehouses?search=${encodeURIComponent(name)}`);
     return warehouseId(page, name);
 }
 
@@ -229,7 +229,7 @@ test('the supervisor secures stock and opens a task, then a dispatcher uses advi
         await dispatcher.goto(moduleUrl + '?search=' + product.sku);
         await expect(dispatcher.getByRole('heading', { name: /^Raktári feladatok\b/, level: 1 })).toBeVisible();
         await expect(dispatcher.getByText(product.sku, { exact: true })).toBeVisible();
-        await dispatcher.getByRole('link', { name: /megnyitás/i }).first().click();
+        await dispatcher.getByRole('link', { name: intent.reference, exact: true }).click();
         await expect(dispatcher).toHaveURL(new RegExp(taskPage(intent.id) + '(?:\\?task=\\d+)?$'));
         await expect(byName(dispatcher, 'Ajánlott forráshelyek')).toBeVisible();
         await expect(visibleSource(dispatcher, rackCode)).toBeVisible();
@@ -532,7 +532,7 @@ test('task list, long names, partial work, confirmation and completed work fit a
         await expect(row.getByText(longSource)).toBeVisible();
         await expect(row.getByText(longTarget)).toBeVisible();
         await captureWidth('01-feladatlista', width);
-        await row.getByRole('link', { name: /megnyitás/i }).click();
+        await row.getByRole('link', { name: intent.reference, exact: true }).click();
         await expect(page.getByText(product.name, { exact: true })).toBeVisible();
         await expect(visibleSource(page, rackCode)).toBeVisible();
         await expect(visibleSource(page, standaloneCode)).toBeVisible();

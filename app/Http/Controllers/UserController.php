@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
@@ -49,7 +50,13 @@ class UserController extends Controller
             return back()->withErrors(['Nem törölheted a saját fiókodat!']);
         }
 
-        $user->delete();
+        try {
+            $user->delete();
+        } catch (QueryException $exception) {
+            if (!in_array($exception->errorInfo[0] ?? null, ['23000', '23503'], true)) throw $exception;
+
+            return back()->withErrors(['user' => 'A felhasználóhoz megőrzendő művelet vagy bizonylat tartozik, ezért a fiók nem törölhető.']);
+        }
         return redirect()->route('users.index')->with('success', 'Felhasználó törölve.');
     }
 }

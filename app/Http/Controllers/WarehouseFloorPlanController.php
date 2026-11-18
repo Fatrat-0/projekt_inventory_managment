@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\{TransferIntent, Warehouse, WarehouseLocation, WarehouseStorageSystem};
+use App\Models\{Shipment, ShipmentReceiptItem, TransferIntent, Warehouse, WarehouseLocation, WarehouseStorageSystem};
 use App\Services\WarehouseFloorPlan;
 use App\Services\{WarehouseCapacity, WarehouseStorageDesigner};
 use App\Support\{WarehouseListContext, WarehouseStockContext, WarehouseStorageOverview};
@@ -29,7 +29,7 @@ class WarehouseFloorPlanController extends Controller
             && ($warehouseLocation->placements()->where('stock_id', $task->stock_id)->exists()
                 || $task->allocations()->where('warehouse_location_id', $warehouseLocation->id)->exists()),
             404, 'A forrásrekesz nem található ehhez a kitárolási feladathoz.');
-        [$warehouse, $pickingSource, $plan] = DB::transaction(fn () => $this->pickingPlan($warehouse, $warehouseLocation));
+        [$warehouse, $pickingSource, $plan] = DB::transaction(fn () => $this->locationPreview($warehouse, $warehouseLocation));
         $pickingBackUrl = route('warehouse-picking-pages.show', ['transferIntent' => $transferIntent, 'task' => $task->id]);
 
         return response()->view('warehouses.floor-plan', compact('warehouse', 'plan', 'pickingSource', 'pickingBackUrl') + [
@@ -37,7 +37,26 @@ class WarehouseFloorPlanController extends Controller
         ])->header('Cache-Control', 'private, no-store');
     }
 
-    private function pickingPlan(Warehouse $warehouse, WarehouseLocation $source): array
+    public function putaway(ShipmentReceiptItem $item, WarehouseLocation $warehouseLocation)
+    {
+        [$warehouse, $putawayTarget, $plan] = DB::transaction(function () use ($item, $warehouseLocation) {
+            Gate::authorize('putawayReceiptItem', [Shipment::class, $item]);
+            abort_unless((int) $warehouseLocation->warehouse_id === (int) $item->to_warehouse_id, 404,
+                'A célrekesz nem ehhez az átvételi raktárhoz tartozik.');
+            $preview = $this->locationPreview($item->warehouse, $warehouseLocation);
+            $object = $preview[1]->system ?? $preview[1];
+            abort_if($object->floor_x === null || $object->floor_y === null, 404, 'A rekesz nincs elhelyezve az alaprajzon.');
+
+            return $preview;
+        });
+        $putawayBackUrl = route('warehouse-putaway-pages.show', $item);
+
+        return response()->view('warehouses.floor-plan', compact('warehouse', 'plan', 'putawayTarget', 'putawayBackUrl') + [
+            'pickingSource' => null, 'context' => null, 'detailContext' => null,
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
+    private function locationPreview(Warehouse $warehouse, WarehouseLocation $source): array
     {
         $warehouse = Warehouse::whereKey($warehouse->getKey())->sharedLock()->firstOrFail();
         $source = $warehouse->storageLocations()->with(['system.zone', 'level'])->findOrFail($source->id);

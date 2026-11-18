@@ -30,7 +30,7 @@ class WarehouseLocationController extends Controller
         $sharedFreeWeight = WarehouseStorageOverview::locationFreeWeights($location->newCollection([$location]));
         $placements = $location->placements()->with('stock.product')->latest('id')->paginate(20)->withQueryString();
         $allowed = $location->system_id === null ? collect() : $location->allowedCategories()->pluck('categories.category_id');
-        $stocks = $warehouse->stocks()->with('product')->withSum('placements as assigned_quantity', 'quantity')
+        $stocks = $warehouse->stocks()->with('product')->withPendingPutaway()->withSum('placements as assigned_quantity', 'quantity')
             ->selectSub(\App\Services\WarehouseStockAvailability::stagedTasks()
                 ->whereColumn('warehouse_transfer_tasks.stock_id', 'stocks.id')
                 ->selectRaw('COALESCE(SUM(staged_quantity), 0)'), 'staged_quantity')

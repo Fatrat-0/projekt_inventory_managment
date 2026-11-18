@@ -181,6 +181,13 @@ class TransferIntentService
                 throw new ConflictHttpException('Az igény elérte a megengedett legnagyobb verziószámot.');
             }
 
+            if ($ability === 'cancel' && $current->shipmentAssignments()->where('active_intent_id', $current->id)->sharedLock()->first(['id'])) {
+                if ($current->transitItem()->sharedLock()->first(['id'])) {
+                    throw new ConflictHttpException('Az igény áruját már feladták, ezért az igény nem vonható vissza.');
+                }
+                throw new ConflictHttpException('Az igény fuvartervhez tartozik. Visszavonás előtt válaszd le a fuvartervről.');
+            }
+
             $reservation = $ability === 'cancel' && $from === 'approved'
                 ? $this->reservations->releaseForCancellation($current, $actor) : null;
             $current->forceFill(['status' => $target, 'version' => $version + 1])->save();

@@ -37,9 +37,13 @@
         </div>
         <div x-cloak x-show="preparation?.task_status" class="min-w-0">
             <dt class="text-gray-500">Összekészített mennyiség</dt>
-            <dd class="mt-0.5 font-medium tabular-nums text-gray-900" x-text="pieceCount(preparation?.staged_quantity ?? 0)">
-                {{ $pieceCount($preparation['staged_quantity'] ?? 0) }}
+            <dd class="mt-0.5 font-medium tabular-nums text-gray-900" x-text="pieceCount(preparation?.active_staged_quantity ?? 0)">
+                {{ $pieceCount($preparation['active_staged_quantity'] ?? 0) }}
             </dd>
+        </div>
+        <div x-cloak x-show="preparation?.dispatched_quantity > 0" class="min-w-0">
+            <dt class="text-gray-500">Feladott mennyiség</dt>
+            <dd class="mt-0.5 font-medium tabular-nums text-gray-900" x-text="pieceCount(preparation?.dispatched_quantity ?? 0)"></dd>
         </div>
         <div x-cloak x-show="canAct('reserveStock') && preparation?.available_quantity != null && !fieldErrors.quantity" class="min-w-0">
             <dt class="text-gray-500">Jelenleg foglalható</dt>
@@ -52,7 +56,7 @@
     <p x-cloak x-show="canAct('reserveStock')" class="mt-3 text-sm text-gray-600">
         A foglalás az igényhez rendeli a kért mennyiséget, így más kiadásokhoz nem használható fel.
     </p>
-    <p x-cloak x-show="preparation?.staged_quantity > 0" class="mt-3 rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+    <p x-cloak x-show="preparation?.active_staged_quantity > 0" class="mt-3 rounded-md bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
         Az összekészített áru a forrásraktárban van. A foglalás feloldása vagy az igény visszavonása előtt rögzíteni kell az áru visszahelyezését.
     </p>
     <p x-cloak x-show="preparationError" x-text="preparationError" role="alert"

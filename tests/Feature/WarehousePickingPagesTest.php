@@ -38,6 +38,9 @@ class WarehousePickingPagesTest extends TestCase
 
     public function test_work_list_and_direct_detail_use_source_warehouse_permissions(): void
     {
+        $this->get(route('warehouse-picking-pages.index', ['sort_by' => 'product_name', 'sort_dir' => 'asc']))
+            ->assertOk()->assertSee('Nincs nyitott kitárolási feladat a raktáraidban.')
+            ->assertDontSee('Szűrők törlése');
         $visible = $this->task($this->source);
         $hidden = $this->task($this->other);
         $notYetTask = $this->approvedIntent($this->source);
@@ -86,13 +89,17 @@ class WarehousePickingPagesTest extends TestCase
         $intent = $this->task($this->source);
         $oldTask = $intent->pickingTasks()->sole();
         $this->patchJson(route('transfer-intents.stock-reservation.release', $intent), $this->command($intent))->assertOk();
+        $this->getJson(route('warehouse-task-counts'))->assertOk()->assertJsonPath('counts.picking', 0);
         $this->postJson(route('transfer-intents.stock-reservation.store', $intent), $this->command($intent->refresh()))->assertCreated();
         $this->postJson(route('transfer-intents.picking-task.store', $intent), $this->command($intent->refresh()))->assertCreated();
         $newTask = $intent->pickingTasks()->latest('id')->firstOrFail();
+        $this->getJson(route('warehouse-task-counts'))->assertOk()->assertJsonPath('counts.picking', 1);
 
         $old = ['transferIntent' => $intent, 'task' => $oldTask->id];
         $new = ['transferIntent' => $intent, 'task' => $newTask->id];
         $this->get(route('warehouse-picking-pages.index'))->assertOk()
+            ->assertDontSee(route('warehouse-picking-pages.show', $old))->assertSee(route('warehouse-picking-pages.show', $new));
+        $this->get(route('warehouse-picking-pages.index', ['status' => 'all']))->assertOk()
             ->assertSee(route('warehouse-picking-pages.show', $old))->assertSee(route('warehouse-picking-pages.show', $new));
         $this->get(route('warehouse-picking-pages.show', $old))->assertOk()->assertSee('Feladat #'.$oldTask->id);
         $this->getJson(route('transfer-intents.picking-task.show', $old))->assertOk()->assertJsonPath('task.id', $oldTask->id)

@@ -32,13 +32,14 @@ class ReplenishmentSuggestions
             ->whereRaw("{$candidateSurplus} > 0")
             ->orderByRaw("{$candidateSurplus} DESC")->orderBy('candidate.id')->limit(1);
         // MySQL stock columns are unsigned: a surplus must be allowed to produce a negative deficit.
-        $need = 'CAST(target.min_quantity AS SIGNED) - (CAST(target.quantity AS SIGNED) - CAST(target.quarantined_quantity AS SIGNED)) - COALESCE(incoming.incoming_quantity, 0)';
+        $targetUsable = WarehouseStockAvailability::usableStockSql('target');
+        $need = "CAST(target.min_quantity AS SIGNED) - {$targetUsable} - COALESCE(incoming.incoming_quantity, 0)";
         $targets = DB::table('stocks as target')->join('products', 'products.product_id', '=', 'target.product_id')
             ->join('warehouses as destination', 'destination.warehouse_id', '=', 'target.warehouse_id')
             ->leftJoinSub($incoming, 'incoming', fn ($join) => $join->on('incoming.product_id', '=', 'target.product_id')->on('incoming.to_warehouse_id', '=', 'target.warehouse_id'))
             ->whereRaw("{$need} > 0")
             ->select('target.id', 'target.product_id', 'target.warehouse_id', 'target.min_quantity', 'products.product_name', 'products.sku', 'destination.warehouse_name')
-            ->selectRaw("target.quantity - target.quarantined_quantity AS available, COALESCE(incoming.incoming_quantity, 0) AS incoming, {$need} AS shortage")
+            ->selectRaw("{$targetUsable} AS available, COALESCE(incoming.incoming_quantity, 0) AS incoming, {$need} AS shortage")
             ->selectSub($donor, 'source_stock_id');
 
         return DB::query()->fromSub($targets, 'needs')->leftJoin('stocks as source', 'source.id', '=', 'needs.source_stock_id')
@@ -55,7 +56,7 @@ class ReplenishmentSuggestions
     {
         // Limit the proposal both to the surplus and to stock already off the storage locations.
         $staged = "CAST(COALESCE({$stock}_staged.quantity, 0) AS SIGNED)";
-        $available = "CAST({$stock}.quantity AS SIGNED) - CAST({$stock}.quarantined_quantity AS SIGNED) - {$staged}";
+        $available = WarehouseStockAvailability::usableStockSql($stock)." - {$staged}";
         $assigned = "CAST(COALESCE({$placements}.quantity, 0) AS SIGNED)";
         $inactive = "CAST(COALESCE({$placements}.inactive_quantity, 0) AS SIGNED)";
         $reserved = "CAST(COALESCE({$stock}_reservations.quantity, 0) AS SIGNED)";

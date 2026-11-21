@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { legacyDraft, shipmentCommand as command } from './shipment-fixtures';
 
 async function post(page, path, data) {
@@ -14,6 +15,7 @@ async function warehouse(page, name) {
     return (await page.locator('tr[data-warehouse-id]').first().getAttribute('data-warehouse-id'));
 }
 async function movement(page, warehouseId, product, quantity, type = 'in') {
+    if (type === 'in') return seedUsableStock({ product_id: product, warehouse_id: warehouseId, quantity, reference: 'DETAILS-BROWSER' });
     await post(page, '/movements', { request_key: crypto.randomUUID(), product_id: product, warehouse_id: warehouseId, type, quantity, reference: 'DETAILS-BROWSER' });
 }
 async function transfer(page, from, to, product, quantity) {
@@ -89,6 +91,7 @@ test('local suggestions, automatic stock filters and editing preserve detail and
     await stocks.getByLabel('Készlet', { exact: true }).selectOption('all');
     await expect(page.locator('tr[data-stock-product-id]')).toHaveCount(2);
     const search = page.getByRole('combobox', { name: 'Helyi termékek keresése', exact: true });
+    await expect(search).toHaveAttribute('aria-expanded', 'false');
     await search.fill('zeta');
     await page.getByRole('listbox', { name: 'Helyi termékjavaslatok', exact: true }).getByRole('option', { name: 'Zeta teszttermék ZETA-002', exact: true }).click();
     await expect(page).toHaveURL(url => url.searchParams.get('product_id') === '2');

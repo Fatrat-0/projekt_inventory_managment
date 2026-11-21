@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { shipmentCommand } from './shipment-fixtures';
+import { seedUsableStock } from './movement-fixtures';
 
 async function login(page, email = 'browser@example.test') {
     await page.goto('/login');
@@ -25,6 +26,7 @@ async function product(page, minimum = 10, productName = null) {
 }
 async function movement(page, id, type, quantity) {
     const reference = 'DASH-'+randomUUID();
+    if (type === 'in') return '/movements/'+seedUsableStock({ product_id: id, warehouse_id: 1, quantity, reference });
     const response = await post(page, '/movements', { request_key: randomUUID(), product_id: id, warehouse_id: 1, type, quantity, reference });
     expect(response.status()).toBe(302);
     const listing = await page.request.get('/movements?search='+reference);
@@ -525,7 +527,7 @@ test('pending transfers and recent movements share the compact scrolling lists a
     const existingTransfers = Number((await page.locator('[data-dashboard-card="transfers"]').textContent()).replace(/\s/g, ''));
     const item = await product(page, 0);
     for (let index = 0; index < 28; index++) {
-        expect((await post(page, '/movements', { request_key: randomUUID(), product_id: item.id, warehouse_id: 1, type: 'in', quantity: 1 })).status()).toBe(302);
+        seedUsableStock({ product_id: item.id, warehouse_id: 1, quantity: 1 });
         expect((await post(page, '/transfers', { request_key: randomUUID(), product_id: item.id, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 })).status()).toBe(302);
     }
     await page.goto('/dashboard?days=30&chart=line&product_alert_page=1&category_alert_page=1');

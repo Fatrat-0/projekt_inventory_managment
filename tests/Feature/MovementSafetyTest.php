@@ -31,7 +31,7 @@ class MovementSafetyTest extends TestCase
     private function payload(array $data = []): array
     {
         return array_merge(['product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id,
-            'type' => 'out', 'quantity' => 4, 'reference' => 'BIZ-001', 'request_key' => (string) Str::uuid()], $data);
+            'type' => 'out', 'quantity' => 4, 'reference' => 'BIZ-001', 'request_key' => (string) Str::uuid(), 'confirmed' => true], $data);
     }
 
     public function test_identical_replay_reuses_original_movement_without_touching_stock(): void

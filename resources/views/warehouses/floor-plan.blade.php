@@ -1,9 +1,14 @@
 @php($previewLocation = $putawayTarget ?? $pickingSource)
 <x-warehouse-layout :warehouse="$previewLocation ? null : $warehouse" :$context :$detailContext>
+    @if($previewLocation)
+        <x-slot:pageActions>
+            <x-warehouse-task-tabs />
+        </x-slot:pageActions>
+    @endif
     <div class="app-page space-y-4 py-4" x-data="warehouseFloorPlan(@js($plan))" @keydown.escape="escapePlacement($event)">
         <x-page-toolbar title="Raktári tervrajz" :description="$warehouse->warehouse_name">
             @if(isset($putawayTarget))
-                <a href="{{ $putawayBackUrl }}" class="min-h-10 inline-flex items-center font-medium text-indigo-700 hover:underline">Vissza a betárolási munkalaphoz</a>
+                <a href="{{ $putawayBackUrl }}" class="min-h-10 inline-flex items-center font-medium text-indigo-700 hover:underline">{{ $previewBackLabel }}</a>
             @elseif($pickingSource)
                 <a href="{{ $pickingBackUrl }}" class="min-h-10 inline-flex items-center font-medium text-indigo-700 hover:underline">Vissza a kitárolási feladathoz</a>
             @endif

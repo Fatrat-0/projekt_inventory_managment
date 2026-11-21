@@ -7,16 +7,16 @@ use App\Models\{Category, Product, Stock, Warehouse};
 use App\Support\CategoryTree;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /** One result represents one product in one warehouse, including zero-quantity rows. */
 class StockListing
 {
     public const SORTS = ['product_name' => 'Termék', 'sku' => 'Cikkszám', 'warehouse_name' => 'Raktár',
-        'quantity' => 'Fizikai készlet', 'available' => 'Kiadható', 'quarantined_quantity' => 'Elkülönített', 'min_quantity' => 'Helyi minimum'];
-    public const STATUSES = ['all' => 'Minden készletsor', 'low' => 'Helyi minimum alatt', 'out' => 'Nincs kiadható készlet',
-        'positive' => 'Van kiadható készlet', 'quarantined' => 'Elkülönített készlettel', 'zero' => 'Nulla fizikai készlet', 'ok' => 'Minimumot elérő, kiadható'];
+        'quantity' => 'Fizikai készlet', 'available' => 'Közvetlenül kiadható', 'quarantined_quantity' => 'Elkülönített', 'min_quantity' => 'Helyi minimum'];
+    public const STATUSES = ['all' => 'Minden készletsor', 'low' => 'Helyi minimum alatt', 'out' => 'Nincs közvetlenül kiadható készlet',
+        'positive' => 'Van közvetlenül kiadható készlet', 'quarantined' => 'Elkülönített készlettel', 'zero' => 'Nulla fizikai készlet',
+        'ok' => 'Minimumot elérő, kitárolható', 'unknown' => 'Nem számítható elérhetőség'];
     public array $filters;
 
     public function __construct(Request $request)
@@ -38,21 +38,22 @@ class StockListing
     public function query(bool $suggestions = false): Builder
     {
         $f = $this->filters;
-        $available = WarehouseStockAvailability::usableStockSql();
-        $query = Stock::query()->join('products as stock_products', 'stock_products.product_id', '=', 'stocks.product_id')
+        $query = Stock::query()->fromSub(WarehouseStockAvailability::listingRows(), 'stocks')
+            ->join('products as stock_products', 'stock_products.product_id', '=', 'stocks.product_id')
             ->join('warehouses as stock_warehouses', 'stock_warehouses.warehouse_id', '=', 'stocks.warehouse_id')
             ->leftJoin('categories as stock_categories', 'stock_categories.category_id', '=', 'stock_products.category_id')
-            ->select('stocks.*')->withPendingPutaway()->with(['product.category', 'warehouse']);
+            ->select('stocks.*')->with(['product.category', 'warehouse']);
         if (!$suggestions && $f['product_id'] !== null) $query->where('stocks.product_id', $f['product_id']);
         if ($f['warehouse_id'] !== null) $query->where('stocks.warehouse_id', $f['warehouse_id']);
         if ($f['category_id'] !== null) $query->whereIn('stock_products.category_id', (new CategoryTree(Category::get(['category_id', 'category_name', 'parent_id'])))->branchIds((int)$f['category_id']));
         match ($f['stock_status']) {
-            'low' => $query->whereRaw($available.' < stocks.min_quantity'),
-            'out' => $query->whereRaw($available.' = 0'),
-            'positive' => $query->whereRaw($available.' > 0'),
+            'low' => $query->whereColumn('stocks.pickable_quantity', '<', 'stocks.min_quantity'),
+            'out' => $query->where('stocks.direct_issue_quantity', 0),
+            'positive' => $query->where('stocks.direct_issue_quantity', '>', 0),
             'quarantined' => $query->where('stocks.quarantined_quantity', '>', 0),
             'zero' => $query->where('stocks.quantity', 0),
-            'ok' => $query->whereRaw($available.' >= stocks.min_quantity AND '.$available.' > 0'),
+            'ok' => $query->whereColumn('stocks.pickable_quantity', '>=', 'stocks.min_quantity')->where('stocks.pickable_quantity', '>', 0),
+            'unknown' => $query->whereNull('stocks.direct_issue_quantity'),
             default => null,
         };
         if (!$suggestions) foreach (preg_split('/\s+/u', $f['search'], -1, PREG_SPLIT_NO_EMPTY) as $word) {
@@ -66,19 +67,20 @@ class StockListing
         $sort = match ($f['sort_by']) {
             'product_name', 'sku' => 'stock_products.'.$f['sort_by'],
             'warehouse_name' => 'stock_warehouses.warehouse_name',
-            'available' => DB::raw($available),
+            'available' => 'stocks.direct_issue_quantity',
             default => 'stocks.'.$f['sort_by'],
         };
+        if ($f['sort_by'] === 'available') $query->orderByRaw('stocks.direct_issue_quantity IS NULL');
+
         return $query->orderBy($sort, $f['sort_dir'])->orderBy('stocks.id', $f['sort_dir']);
     }
 
     public function summary(): object
     {
-        $available = WarehouseStockAvailability::usableStockSql();
-
         return $this->query()->reorder()->toBase()->select([])->selectRaw('COUNT(*) AS rows_count, COUNT(DISTINCT stocks.product_id) AS products_count, COUNT(DISTINCT stocks.warehouse_id) AS warehouses_count')
-            ->selectRaw('COALESCE(SUM(stocks.quantity), 0) AS physical, COALESCE(SUM(stocks.quarantined_quantity), 0) AS quarantined, COALESCE(SUM('.$available.'), 0) AS available')
-            ->selectRaw('COALESCE(SUM(CASE WHEN '.$available.' < stocks.min_quantity THEN 1 ELSE 0 END), 0) AS low_count')->first();
+            ->selectRaw('COALESCE(SUM(stocks.quantity), 0) AS physical, COALESCE(SUM(stocks.quarantined_quantity), 0) AS quarantined')
+            ->selectRaw('COALESCE(SUM(stocks.direct_issue_quantity), 0) AS available, COUNT(*) - COUNT(stocks.direct_issue_quantity) AS unknown_count')
+            ->selectRaw('COALESCE(SUM(CASE WHEN stocks.pickable_quantity < stocks.min_quantity THEN 1 ELSE 0 END), 0) AS low_count')->first();
     }
 
     public function suggestions()

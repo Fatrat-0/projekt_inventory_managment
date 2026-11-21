@@ -380,7 +380,7 @@ class ReturnQualityQueueTest extends TestCase
         $html = $this->get(route('movements.index', ['search' => $movement->movement_number]))->assertOk()->getContent();
         $document = new \DOMDocument();
         $document->loadHTML($html, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
-        $referenceCell = (new \DOMXPath($document))->query('//tbody/tr[1]/td[last()]')->item(0);
+        $referenceCell = (new \DOMXPath($document))->query("//tbody/tr[1]/td[@data-listing-column='reference']")->item(0);
         $this->assertNotNull($referenceCell);
         $this->assertSame('0', trim($referenceCell->textContent));
     }

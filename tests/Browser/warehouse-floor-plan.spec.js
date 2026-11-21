@@ -22,6 +22,8 @@ test('warehouse floor plan supports dragging, keyboard placement, collision feed
 
     const tab = page.getByRole('link', { name: 'Raktári tervrajz', exact: true });
     await tab.click();
+    await expect(page.locator('[data-app-topbar]').getByRole('navigation', { name: 'Raktári nézetek', exact: true })).toBeVisible();
+    await expect(page.locator('[data-warehouse-task-tabs]')).toHaveCount(0);
     await expect(tab).toHaveAttribute('aria-current', 'page');
     await page.getByRole('button', { name: 'Tervrajz szerkesztése', exact: true }).click();
     await page.getByRole('button', { name: 'FLOOR-A elhelyezése', exact: true }).click();

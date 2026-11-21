@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 
 async function choose(page, label, query, option) {
@@ -35,8 +36,7 @@ test('a boxed transfer confirms the calculated weight and reserves and receives 
     });
     expect(unknownWeightProduct.status(), await unknownWeightProduct.text()).toBe(302);
 
-    const sourceStock = await post('/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, quantity: 325, type: 'in' });
-    expect(sourceStock.status(), await sourceStock.text()).toBe(302);
+    seedUsableStock({ product_id: product, warehouse_id: 1, quantity: 325 });
     const warehouseName = 'Dobozos átmozgatás tesztraktára';
     const createdWarehouse = await post('/warehouses', { warehouse_name: warehouseName, location: 'Teszt' });
     expect(createdWarehouse.status(), await createdWarehouse.text()).toBe(302);

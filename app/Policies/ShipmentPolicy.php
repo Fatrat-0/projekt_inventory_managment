@@ -91,7 +91,12 @@ class ShipmentPolicy
 
     public function putawayReceiptItem(User $user, ShipmentReceiptItem $item): Response
     {
-        return $this->hasAccess($user, (int) $item->to_warehouse_id, self::RECEIVING_ROLES)
+        return $this->putawayInWarehouse($user, (int) $item->to_warehouse_id);
+    }
+
+    public function putawayInWarehouse(User $user, int $warehouseId): Response
+    {
+        return $this->hasAccess($user, $warehouseId, self::RECEIVING_ROLES)
             ? Response::allow() : Response::deny('A betároláshoz az átvétel célraktárában kell átvételi jogosultsággal rendelkezned.');
     }
 

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 test.beforeEach(async ({ page }) => {
     await page.goto('/login');
@@ -12,7 +13,7 @@ test.beforeEach(async ({ page }) => {
 const csrf = page => page.locator('meta[name="csrf-token"]').getAttribute('content');
 const quality = page => page.getByRole('region', { name: 'Visszáru minősítése', exact: true });
 async function stock(page) {
-    const response = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
+    const response = await page.request.get('/movements/stock?product_id=1&warehouse_id=1&details=1');
     expect(response.ok()).toBe(true);
     return response.json();
 }
@@ -31,7 +32,7 @@ async function quarantinedReturn(page, quantity = 6, product = 1, warehouse = 1)
     const before = await stock(page);
     // Fund this test's original issue so each test is independent of other stock consumers.
     const common = { product_id: String(product), warehouse_id: String(warehouse), quantity: String(quantity) };
-    expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'in' })).status()).toBe(302);
+    seedUsableStock(common);
     const reference = 'QUALITY-BROWSER-'+randomUUID();
     expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'out', reference })).status()).toBe(302);
     await page.goto('/movements?search='+reference);
@@ -63,11 +64,17 @@ async function submitQuality(page) {
 function expectStock(actual, before, physicalDelta, quarantinedDelta) {
     expect(actual.physical_quantity).toBe(before.physical_quantity + physicalDelta);
     expect(actual.quarantined_quantity).toBe(before.quarantined_quantity + quarantinedDelta);
-    expect(actual.quantity).toBe(actual.physical_quantity - actual.quarantined_quantity);
+    expect(actual.pending_putaway_quantity).toBe(before.pending_putaway_quantity);
+    expect(actual.quantity).toBe(actual.physical_quantity - actual.quarantined_quantity - actual.pending_putaway_quantity);
 }
 
 test('customer return is unavailable until inspection, then partial release and scrap keep separate balances', async ({ page }) => {
+    const pendingBefore = (await stock(page)).pending_putaway_quantity;
+    expect((await post(page, '/movements', {
+        request_key: randomUUID(), product_id: '1', warehouse_id: '1', type: 'in', quantity: '2',
+    })).status()).toBe(302);
     const source = await quarantinedReturn(page);
+    expect(source.before.pending_putaway_quantity).toBe(pendingBefore + 2);
     expectStock(await stock(page), source.before, 6, 6);
     expect((await stock(page)).quantity).toBe(source.before.quantity);
     await expect(quality(page).getByLabel('Mennyiség', { exact: true })).toHaveAttribute('max', '6');

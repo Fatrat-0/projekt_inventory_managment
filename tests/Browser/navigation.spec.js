@@ -8,12 +8,59 @@ async function login(page, email = 'warehouse-admin@example.test') {
     await expect(page).toHaveURL(/dashboard/);
 }
 
+test('warehouse tasks have their own active navigation and accessible tabs at each breakpoint', async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await login(page);
+    const desktopMenu = page.getByRole('navigation', { name: 'Főmenü', exact: true });
+    const work = '/raktari-feladatok';
+    const stockGroup = /^(Készlet|Készletmozgások|Raktári feladatok|Átmozgatások)$/;
+    const labels = ['Készlet', 'Készletmozgások', 'Raktári feladatok', 'Átmozgatások'];
+    await expect(desktopMenu.getByRole('link', { name: stockGroup })).toHaveText(labels);
+    await desktopMenu.getByRole('link', { name: 'Raktári feladatok', exact: true }).click();
+    await expect(page).toHaveURL(work + '/kitarolas');
+    const tabs = page.locator('[data-app-topbar]').getByRole('navigation', { name: 'Raktári feladatok munkatípusai' });
+    const transfers = page.getByRole('navigation', { name: 'Átmozgatások modul' });
+    await expect(tabs.getByRole('link', { name: 'Áthelyezés', exact: true })).toHaveCount(0);
+    for (const width of [1440, 1024, 768, 375, 320]) {
+        await page.setViewportSize({ width, height: 800 });
+        let menu = desktopMenu;
+        const mobile = width < 1280;
+        if (mobile) {
+            await page.getByRole('button', { name: 'Navigációs menü', exact: true }).click();
+            menu = page.getByRole('navigation', { name: 'Mobil főmenü', exact: true });
+        }
+        await expect(menu.getByRole('link', { name: stockGroup })).toHaveText(labels);
+        await expect(menu.locator('[aria-current="page"]')).toHaveText('Raktári feladatok');
+        if (mobile) await page.keyboard.press('Escape');
+        for (const [label, path] of [['Kitárolás', 'kitarolas'], ['Átvétel', 'atvetel'], ['Betárolás', 'betarolas']]) {
+            const tab = tabs.getByRole('link', { name: label, exact: true });
+            await tab.click();
+            await expect(page).toHaveURL(work + '/' + path);
+            await expect(tab).toHaveAttribute('aria-current', 'page');
+            await expect(tab.locator('[data-task-count]')).toHaveText(/^\d+$/);
+            const icon = tab.locator('svg[aria-hidden="true"]');
+            if (width >= 1024) await expect(icon).toBeVisible();
+            else await expect(icon).toBeHidden();
+            await expect(transfers).toHaveCount(0);
+            await expect(page.locator('main [data-warehouse-task-tabs]')).toHaveCount(0);
+            expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        }
+    }
+    await page.goto('/atmozgatasok/raktari-feladatok/betarolas?origin=manual&sort_by=received_at&sort_dir=asc');
+    await expect(page).toHaveURL(url => url.pathname === work + '/betarolas'
+        && url.searchParams.get('origin') === 'manual' && url.searchParams.get('sort_by') === 'received_at');
+    await page.goto('/shipments');
+    await expect(transfers.getByRole('link')).toHaveText(['Igények', 'Fuvarok és szállítmányok', 'Járművek']);
+    await expect(tabs).toHaveCount(0);
+});
+
 test('desktop sidebar groups links, marks the current section and remembers hiding across pages', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await login(page);
     const nav = page.getByRole('navigation', { name: 'Főmenü', exact: true });
     await expect(nav).toBeVisible();
-    await expect(nav.getByRole('link')).toHaveCount(9);
+    await expect(nav.getByRole('link')).toHaveCount(10);
     await expect(nav.locator('[aria-current="page"]')).toHaveText('Vezérlőpult');
     await nav.getByRole('link', { name: 'Termékek', exact: true }).click();
     await expect(page).toHaveURL(/\/products$/);
@@ -141,7 +188,7 @@ test('related pages highlight their section, show one page heading and retain co
     ]) {
         await page.goto(path);
         await expect(page.getByRole('navigation', { name: 'Főmenü', exact: true }).locator('[aria-current="page"]')).toHaveText(section);
-        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(path.startsWith('/warehouses/') ? 1 : 0);
+        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(path.startsWith('/warehouses/') || path === '/quality-returns' ? 1 : 0);
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page).toHaveTitle(new RegExp(label));
         if (back) {
             const href = await page.locator('main').getByRole('link', { name: back, exact: true }).first().getAttribute('href');

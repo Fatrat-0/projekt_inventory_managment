@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{TransferStockReservation, WarehousePlacement, WarehouseTransferTask};
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
@@ -22,6 +23,54 @@ class SmartPicking
         $available = $stock['pickable_quantity'] ?? 0;
 
         return $this->buildOptions($stock, $available, $quantity);
+    }
+
+    /** With a source selection, suggest only additional quantities from bins. */
+    public function issueOptions(int $warehouseId, int $productId, ?int $quantity, ?array $selected = null): array
+    {
+        $stock = $this->availability->snapshot($warehouseId, $productId);
+        $options = $this->buildOptions($stock, $stock['pickable_quantity'] ?? 0, $selected === null ? $quantity : null);
+        $available = $options['available_quantity'];
+        foreach ($options['sources'] as &$source) {
+            $source['source_type'] = $source['location_id'] === null ? 'unassigned' : 'location';
+            $source['available_quantity'] = min($source['available_quantity'], $options['available_quantity']);
+            // A warehouse-level hold has no per-bin breakdown.
+            unset($source['reserved_quantity']);
+        }
+        unset($source);
+        $typed = fn (array $source) => $source + [
+            'source_type' => $source['location_id'] === null ? 'unassigned' : 'location',
+        ];
+        $options['suggestion'] = array_map($typed, $options['suggestion']);
+        $options['partial_suggestion'] = $selected === null && $quantity !== null && $quantity > $available && $available > 0
+            ? array_map($typed, $this->suggestions($options['sources'], $available)) : [];
+        if ($selected !== null && $quantity !== null && $options['consistent']) {
+            $selected = $selected === [] ? [] : $this->parseAllocations($this->typedIssueAllocations($selected));
+            $this->checkedSources($stock, $selected, $available);
+            $pickedBySource = collect($selected)->mapWithKeys(fn ($row) => [($row['location_id'] ?? 0) => $row['quantity']]);
+            $picked = $pickedBySource->sum();
+            $remaining = $quantity - $picked;
+            if ($remaining < 0) {
+                throw ValidationException::withMessages(['source_allocations' => 'A kijelölt források összege meghaladja a kiadandó mennyiséget.']);
+            }
+            $bins = [];
+            foreach ($options['sources'] as $source) {
+                if ($source['location_id'] === null || !$source['active']) continue;
+                $source['available_quantity'] = max(0, $source['available_quantity'] - $pickedBySource->get($source['location_id'], 0));
+                $bins[] = $source;
+            }
+            $additional = array_map($typed, $this->suggestions($bins, min($remaining, $available - $picked)));
+            $key = array_sum(array_column($additional, 'quantity')) === $remaining ? 'suggestion' : 'partial_suggestion';
+            $options[$key] = $additional;
+        }
+
+        return $options + [
+            'physical_quantity' => $stock['physical_quantity'],
+            'direct_issue_quantity' => $stock['direct_issue_quantity'],
+            'pickable_quantity' => $stock['pickable_quantity'],
+            'assigned_quantity' => $stock['assigned_quantity'],
+            'inactive_bin_quantity' => collect($stock['locations'])->where('active', false)->sum('stored_quantity'),
+        ];
     }
 
     /** A valid task can use its own hold up to its remaining quantity. */
@@ -74,7 +123,18 @@ class SmartPicking
     }
 
     /** @return list<array{location_id: ?int, quantity: int}> */
-    public function normalizeAllocations(mixed $input, int $quantity): array
+    public function normalizeAllocations(mixed $input, int $quantity, string $sumError = 'A kitárolandó darabszám egyezzen meg az átmozgatás mennyiségével.'): array
+    {
+        $allocations = $this->parseAllocations($input);
+        if (array_sum(array_column($allocations, 'quantity')) !== $quantity) {
+            throw ValidationException::withMessages(['source_allocations' => $sumError]);
+        }
+
+        return $allocations;
+    }
+
+    /** @return list<array{location_id: ?int, quantity: int}> */
+    private function parseAllocations(mixed $input): array
     {
         $data = Validator::make(['source_allocations' => $input], [
             'source_allocations' => 'required|array|list',
@@ -96,13 +156,57 @@ class SmartPicking
             }
             $allocations[$key] = ['location_id' => $locationId, 'quantity' => (int) $row['quantity']];
         }
-        if (array_sum(array_column($allocations, 'quantity')) !== $quantity) {
-            throw ValidationException::withMessages(['source_allocations' => 'A kitárolandó darabszám egyezzen meg az átmozgatás mennyiségével.']);
-        }
-
         ksort($allocations, SORT_NUMERIC);
 
         return array_values($allocations);
+    }
+
+    /** Normalize typed manual-issue sources to the common picker contract. */
+    public function normalizeIssueAllocations(mixed $input, int $quantity): array
+    {
+        return $this->normalizeAllocations($this->typedIssueAllocations($input), $quantity,
+            'A források darabszámának összege egyezzen meg a kiadandó mennyiséggel.');
+    }
+
+    private function typedIssueAllocations(mixed $input): array
+    {
+        $data = Validator::make(['source_allocations' => $input], [
+            'source_allocations' => 'required|array|list',
+            'source_allocations.*' => 'required|array:source_type,location_id,quantity',
+            'source_allocations.*.source_type' => 'required|in:location,unassigned',
+            'source_allocations.*.location_id' => 'nullable|integer|min:1',
+            'source_allocations.*.quantity' => 'required|integer|min:1|max:2147483647',
+        ], [
+            'source_allocations.*' => 'Adj meg érvényes forrástípust és pozitív egész darabszámot.',
+        ])->validate();
+
+        $allocations = [];
+        foreach ($data['source_allocations'] as $source) {
+            $id = $source['location_id'] ?? null;
+            if (($source['source_type'] === 'location') !== ($id !== null) || is_bool($id) || is_bool($source['quantity'])) {
+                throw ValidationException::withMessages(['source_allocations' => 'Rekeszes forráshoz válassz érvényes rekeszt, és egész darabszámot adj meg.']);
+            }
+            $allocations[] = ['location_id' => $id, 'quantity' => $source['quantity']];
+        }
+
+        return $allocations;
+    }
+
+    public function validateIssue(int $warehouseId, int $productId, int $quantity, mixed $input): void
+    {
+        $allocations = $this->normalizeIssueAllocations($input, $quantity);
+        $stock = $this->availability->snapshot($warehouseId, $productId);
+        $this->assertUnreservedQuantity($stock, $quantity);
+        $this->checkedSources($stock, $allocations, $stock['pickable_quantity']);
+    }
+
+    /** The manual issue transaction already holds the product and warehouse locks. */
+    public function withdrawForIssue(int $warehouseId, int $productId, int $quantity, array $allocations): array
+    {
+        $stock = $this->availability->snapshotForUpdate($warehouseId, $productId);
+        $this->assertUnreservedQuantity($stock, $quantity);
+
+        return $this->takeFromSources($stock, $allocations, $stock['pickable_quantity'], true);
     }
 
     /**
@@ -113,6 +217,13 @@ class SmartPicking
     {
         $allocations = $this->normalizeAllocations($allocations, $quantity);
         $stock = $this->availability->snapshotForUpdate($warehouseId, $productId);
+        $this->assertUnreservedQuantity($stock, $quantity);
+
+        return $this->takeFromSources($stock, $allocations, $stock['pickable_quantity'], false);
+    }
+
+    private function assertUnreservedQuantity(array $stock, int $quantity): void
+    {
         $this->assertConsistent($stock);
         if (!$stock['stock_id'] || $quantity > $stock['physical_quantity'] - $stock['quarantined_quantity']) {
             throw ValidationException::withMessages(['quantity' => 'Nincs elegendő kiadható készlet a forrásraktárban.']);
@@ -123,8 +234,6 @@ class SmartPicking
         if ($stock['source_reserved_quantity'] + $stock['staged_quantity'] > 0 && $quantity > $stock['pickable_quantity']) {
             throw ValidationException::withMessages(['quantity' => 'A foglalt és összekészített tételek mellett legfeljebb '.$stock['pickable_quantity'].' db tárolható ki.']);
         }
-
-        return $this->takeFromSources($stock, $allocations, $stock['pickable_quantity'], false);
     }
 
     /** Move out of bins while a picking command holds the task and stock locks. */
@@ -160,8 +269,11 @@ class SmartPicking
         return max(0, min($reservation->remaining_quantity, $task->expected_quantity - $task->staged_quantity));
     }
 
-    private function takeFromSources(array $stock, array $allocations, int $limit, bool $retainUnverifiedLoad): array
+    private function checkedSources(array $stock, array $allocations, int $limit): Collection
     {
+        if (array_sum(array_column($allocations, 'quantity')) > $limit) {
+            throw ValidationException::withMessages(['source_allocations' => 'A kiválasztott források összege meghaladja a szabadon kitárolható készletet.']);
+        }
         $sources = collect($this->sourceRows($stock, $limit))->keyBy(fn (array $source) => $source['location_id'] ?? 0);
         foreach ($allocations as $allocation) {
             $source = $sources->get($allocation['location_id'] ?? 0);
@@ -170,6 +282,13 @@ class SmartPicking
                 throw ValidationException::withMessages(['source_allocations' => 'A(z) '.$name.' nem rendelkezik a megadott kiadható mennyiséggel. Ellenőrizd a friss készletet.']);
             }
         }
+
+        return $sources;
+    }
+
+    private function takeFromSources(array $stock, array $allocations, int $limit, bool $retainUnverifiedLoad): array
+    {
+        $sources = $this->checkedSources($stock, $allocations, $limit);
 
         $locationIds = array_filter(array_column($allocations, 'location_id'));
         $placementsByLocation = WarehousePlacement::where('stock_id', $stock['stock_id'])
@@ -182,11 +301,14 @@ class SmartPicking
                 $picked[] = ['stock_id' => $stock['stock_id'], 'quantity' => $remaining];
                 continue;
             }
-            foreach ($placementsByLocation[$locationId] as $placement) {
+            foreach ($placementsByLocation->get($locationId, []) as $placement) {
                 $taken = min($remaining, $placement->quantity);
                 $picked[] = $this->takeFromPlacement($placement, $taken, $sources[$locationId], $retainUnverifiedLoad);
                 $remaining -= $taken;
                 if ($remaining === 0) break;
+            }
+            if ($remaining !== 0) {
+                throw ValidationException::withMessages(['source_allocations' => 'A zárolt tárhelykészlet eltér a várt mennyiségtől. Ellenőrizd a készletet.']);
             }
         }
 

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 const listings = [
     ['products', 'product-id'], ['stock', 'stock-row'], ['movements', 'movement-id'],
@@ -31,7 +32,7 @@ test.beforeAll(async ({ browser }) => {
         await post(page, '/products', { product_name: marker, sku: marker, price: 1, category_id: 1 });
         const html = await (await page.request.get('/products?search='+marker)).text();
         const product = Number(html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
-        await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'in', quantity: 10, reference: marker });
+        seedUsableStock({ product_id: product, warehouse_id: 1, quantity: 10, reference: marker, actor_email: 'warehouse-admin@example.test' });
         await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 });
         const transferHtml = await (await page.request.get('/transfers?search='+marker)).text();
         fixtureTransfer = transferHtml.match(/data-transfer-id="(\d+)"/)[1];

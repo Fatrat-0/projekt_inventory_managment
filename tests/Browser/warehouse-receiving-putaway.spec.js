@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { shipmentCommand as command } from './shipment-fixtures';
 
-const workUrl = '/atmozgatasok/raktari-feladatok';
+const workUrl = '/raktari-feladatok';
 const receivingUrl = workUrl + '/atvetel';
 const putawayUrl = workUrl + '/betarolas';
 const receiptPage = (shipment, stop) => receivingUrl + '/' + shipment.id + '/' + stop.id;
@@ -169,11 +169,15 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
         await expect(rows).toHaveCount(1);
         await expect(rows).toContainText('Pécs');
         expect((await desk.request.get(receiptPage(shipment, gyor))).status()).toBe(403);
-        await desk.getByRole('combobox', { name: 'Keresés', exact: true }).fill(products.part.sku);
+        const search = desk.getByRole('combobox', { name: 'Keresés', exact: true });
+        await search.fill(products.part.sku);
         await button(desk, 'Szűrés').click();
+        await expect(desk).toHaveURL(url => url.searchParams.get('search') === products.part.sku);
         await expect(rows).toHaveCount(0);
-        await desk.getByRole('combobox', { name: 'Keresés', exact: true }).fill(products.screw.sku);
+        await expect(search).toHaveAttribute('aria-expanded', 'false');
+        await search.fill(products.screw.sku);
         await button(desk, 'Szűrés').click();
+        await expect(desk).toHaveURL(url => url.searchParams.get('search') === products.screw.sku);
         await expect(rows).toHaveCount(1);
         await expect(rows).toContainText('2 tétel');
         await link(rows, shipment.number).click();
@@ -215,6 +219,7 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
         await putawayCargo(desk, { quantity: 120, weight: 12 });
         await button(desk, 'Ajánlások keresése').click();
         await expect(location(desk, 'A-01')).toContainText('Feltételes');
+        await expect(location(desk, 'A-01').locator('[data-putaway-stock="bin"]')).toHaveText('Rekeszkészlet: 0 → 120 db');
         expect(state(shipment).placements).toEqual([]);
         await putawayCargo(desk, { quantity: 120, weight: 12, size: 20 });
         await expect(location(desk, 'A-01')).toHaveCount(0);
@@ -224,10 +229,13 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
         await capture(desk, '07-smart-putaway-ajanlasok-1440');
         await selectLocation(desk, 'A-01');
 
+        await location(desk, 'A-01').getByText('Részletek', { exact: true }).click();
         const mapLink = location(desk, 'A-01').getByRole('link', { name: /^Megtekintés az alaprajzon/ });
         const ownUrl = desk.url();
         const [map] = await Promise.all([desk.waitForEvent('popup'), mapLink.click()]);
         await expect(map).toHaveURL(putawayUrl + '/' + screwItem.id + '/alaprajz/' + shipment.slots['A-01']);
+        await expect(map.locator('[data-app-topbar]').getByRole('link', { name: 'Betárolás', exact: true }))
+            .toHaveAttribute('aria-current', 'page');
         await expect(map.locator('[data-putaway-plan]')).toContainText('A-01');
         await expect(map.locator('[data-putaway-target="A-01"][aria-current="true"]')).toBeVisible();
         expect((await desk.request.get(putawayUrl + '/' + screwItem.id + '/alaprajz/' + shipment.slots['GY-01'])).status()).toBe(404);
@@ -623,7 +631,7 @@ test('élő feladatszámok, tételenkénti átvétel és a legutóbbi sikeres re
     await expectTaskCounts(page, 1, 1, 0);
     await link(taskTabs(page), 'Kitárolás').click();
     await expectTaskCounts(page, 1, 1, 0);
-    await page.goto(workUrl + '/' + shipment.pickingIntent);
+    await page.goto(workUrl + '/kitarolas/' + shipment.pickingIntent);
     await expectTaskCounts(page, 1, 1, 0);
     const navigationMarker = randomUUID();
     await page.evaluate(value => { window.receivingTestNavigationMarker = value; }, navigationMarker);

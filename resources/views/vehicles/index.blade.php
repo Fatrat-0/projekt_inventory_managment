@@ -36,13 +36,13 @@
         <div class="grid min-w-0 items-end gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_auto] sm:p-4">
             <div class="min-w-0">
                 <label for="vehicle-search" class="mb-1 block text-sm font-medium text-gray-800">Jármű keresése</label>
-                <input id="vehicle-search" type="search" x-ref="searchInput" x-model="search" autocomplete="off"
+                <input id="vehicle-search" type="search" x-ref="searchInput" x-model.fill="search" autocomplete="off"
                        placeholder="Megnevezés vagy rendszám" class="{{ $field }}">
             </div>
             @if ($canManageVehicles)
                 <div class="min-w-0">
                     <label for="vehicle-filter-status" class="mb-1 block text-sm font-medium text-gray-800">Állapot</label>
-                    <select id="vehicle-filter-status" x-model="status" class="{{ $field }}">
+                    <select id="vehicle-filter-status" x-model.fill="status" class="{{ $field }}">
                         <option value="all">Összes</option>
                         <option value="active" selected>Aktív</option>
                         <option value="inactive">Inaktív</option>

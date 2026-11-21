@@ -1,16 +1,22 @@
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 
 async function create(page, name, { type = 'customer', email = '', phone = '' } = {}) {
     await page.goto('/partners/create');
+    const checkedDuplicates = page.waitForResponse(response => {
+        const url = new URL(response.url());
+        return url.pathname === '/partners/duplicates' && url.searchParams.get('name') === name
+            && url.searchParams.get('email') === email;
+    });
     await page.getByLabel('Név / Cégnév', { exact: true }).fill(name);
     await page.getByLabel('Partner típusa', { exact: true }).selectOption(type);
     await page.getByLabel('E-mail', { exact: true }).fill(email);
     await page.getByLabel('Telefon', { exact: true }).fill(phone);
-    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
-    if (new URL(page.url()).pathname === '/partners/create') {
+    // Fixture setup waits for the check instead of racing a server redirect or native validation.
+    if ((await (await checkedDuplicates).json()).total > 0) {
         await page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true }).check();
-        await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
     }
+    await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/partners');
     await page.goto('/partners?search='+encodeURIComponent(name));
     let rows = page.locator('tr[data-partner-id]').filter({ has: page.getByRole('link', { name, exact: true }) });
@@ -348,14 +354,16 @@ test('failed duplicate lookup allows a retry and leaves server-side confirmation
 });
 
 test('saving during a pending duplicate lookup warns without losing entered fields or list context', async ({ page }) => {
-    const name = 'P-PENDING Partner';
+    const name = 'P-PENDING-' + randomUUID() + ' Partner';
     await create(page, name);
-    await page.goto('/partners?search=P-PENDING&status=all&type=supplier&per_page=25');
+    await page.goto('/partners?' + new URLSearchParams({ search: name, status: 'all', type: 'supplier', per_page: '25' }));
     await page.getByRole('link', { name: '+ Új partner', exact: true }).click();
-    let started;
-    const pending = new Promise(resolve => { started = resolve; });
+    await page.waitForFunction(() => {
+        const form = document.querySelector('form[x-data^="partnerForm"]');
+        return form && typeof window.Alpine?.$data(form).changed === 'function';
+    });
+    const pending = page.waitForRequest('**/partners/duplicates?**');
     await page.route('**/partners/duplicates?**', async route => {
-        started();
         await new Promise(resolve => setTimeout(resolve, 700));
         await route.abort();
     });
@@ -367,7 +375,14 @@ test('saving during a pending duplicate lookup warns without losing entered fiel
     await expect(region).toContainText('A folytatáshoz erősítsd meg');
     await expect(page.getByLabel('Telefon', { exact: true })).toHaveValue('765432');
     await expect(page.getByLabel('Partner típusa', { exact: true })).toHaveValue('supplier');
-    await page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true }).check();
+    // The duplicate warning is server-rendered before Alpine attaches the checkbox model.
+    await page.waitForFunction(() => {
+        const form = document.querySelector('form[x-data^="partnerForm"]');
+        return form && typeof window.Alpine?.$data(form).changed === 'function';
+    });
+    const acknowledged = page.getByLabel('Átnéztem az egyezéseket, külön partnerként mentem.', { exact: true });
+    await acknowledged.check();
+    await expect(acknowledged).toBeChecked();
     await page.getByRole('button', { name: 'Partner mentése', exact: true }).click();
     await expect(page).toHaveURL(url => url.pathname === '/partners' && url.searchParams.get('status') === 'all' && url.searchParams.get('type') === 'supplier' && url.searchParams.get('per_page') === '25');
     await expect(page.locator('tr[data-partner-id]')).toHaveCount(1);

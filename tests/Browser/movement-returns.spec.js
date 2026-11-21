@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 test.beforeEach(async ({ page }) => {
     await page.goto('/login');
@@ -15,16 +16,17 @@ async function original(page, type = 'out', quantity = 5, partner = '') {
     // Incoming returns are quarantined: fund this fixture if previous cases spent the available part.
     const available = (await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json()).quantity;
     if (type === 'out' && available < quantity) {
-        const funded = await page.request.post('/movements', { headers: { 'X-CSRF-TOKEN': await csrf(page) }, form: {
-            request_key: randomUUID(), product_id: '1', warehouse_id: '1', type: 'in', quantity: String(quantity - available),
-        }, maxRedirects: 0 });
-        expect(funded.status()).toBe(302);
+        seedUsableStock({ product_id: 1, warehouse_id: 1, quantity: quantity - available });
     }
     const before = await stock(page);
     const reference = 'RETURN-BROWSER-'+randomUUID();
-    const response = await page.request.post('/movements', { headers: { 'X-CSRF-TOKEN': await csrf(page) },
-        form: { request_key: randomUUID(), product_id: '1', warehouse_id: '1', type, quantity: String(quantity), reference, partner_id: partner }, maxRedirects: 0 });
-    expect(response.status()).toBe(302);
+    if (type === 'in') {
+        seedUsableStock({ product_id: 1, warehouse_id: 1, quantity, reference, partner_id: partner || null });
+    } else {
+        const response = await page.request.post('/movements', { headers: { 'X-CSRF-TOKEN': await csrf(page) },
+            form: { request_key: randomUUID(), product_id: '1', warehouse_id: '1', type, quantity: String(quantity), reference, partner_id: partner }, maxRedirects: 0 });
+        expect(response.status()).toBe(302);
+    }
     await page.goto('/movements?search='+reference);
     await page.locator('tbody').getByRole('link', { name: /^MOZ-/ }).click();
     return { id: new URL(page.url()).pathname.split('/').pop(), before };

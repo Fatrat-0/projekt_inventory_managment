@@ -3,9 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { shipmentCommand as command } from './shipment-fixtures';
 
-const workUrl = '/atmozgatasok/raktari-feladatok';
-const receivingUrl = workUrl + '/atvetel';
-const putawayUrl = workUrl + '/betarolas';
+const moduleUrl = '/raktari-feladatok';
+const workUrl = moduleUrl + '/kitarolas';
+const receivingUrl = moduleUrl + '/atvetel';
+const putawayUrl = moduleUrl + '/betarolas';
 
 function fixture() {
     return JSON.parse(execFileSync('php', ['tests/Browser/prepare-shipment-receiving.php', '--open-picking'], { encoding: 'utf8' }));

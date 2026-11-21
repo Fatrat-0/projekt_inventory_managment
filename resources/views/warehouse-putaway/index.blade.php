@@ -1,6 +1,6 @@
-<x-app-layout>
+<x-warehouse-task-layout>
     @php
-        $sorts = \App\Services\ShipmentReceivingReader::PUTAWAY_SORTS;
+        $sorts = \App\Services\PutawayTaskListing::SORTS;
 
         $columns = 'xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,0.8fr)]';
         $state = $filters['status'] ?? 'open';
@@ -11,11 +11,9 @@
     @endphp
     <div class="app-page space-y-4 py-4" data-putaway-list>
         <x-page-toolbar title="Betárolási feladatok" />
-        @include('transfers.tabs')
-        @include('transfers.task-tabs')
 
         <form id="putaway-filters" x-data method="GET" action="{{ route('warehouse-putaway-pages.index') }}"
-              class="relative grid min-w-0 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]" aria-label="Betárolási feladatok szűrése">
+              class="relative grid min-w-0 gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto]" aria-label="Betárolási feladatok szűrése">
 
             @if (isset($filters['per_page']))<input type="hidden" name="per_page" value="{{ $filters['per_page'] }}">@endif
             @foreach ($receiptFilter as $key => $value)
@@ -24,7 +22,7 @@
             <div class="min-w-0">
                 <label for="putaway-task-search" class="mb-1 block text-sm font-medium text-gray-800">Termék, cikkszám, igény vagy fuvar</label>
                 <x-listing-search :endpoint="route('warehouse-putaway-pages.index')" :query="$filters['search'] ?? ''"
-                    id="putaway-task-search" label="Termék, cikkszám, igény vagy fuvar" placeholder="Termék, cikkszám, igény vagy fuvar…"
+                    id="putaway-task-search" label="Termék, cikkszám, igény vagy fuvar" placeholder="Terméknév, cikkszám vagy MOZ-azonosító…"
                     selection-hint="Enter: a kijelölt javaslatra keresés" input-class="min-h-11" :max-length="100" />
             </div>
             <div class="min-w-0">
@@ -44,15 +42,23 @@
                     @endforeach
                 </select>
             </div>
+            <div class="min-w-0">
+                <label for="putaway-task-origin" class="mb-1 block text-sm font-medium text-gray-800">Eredet</label>
+                <select id="putaway-task-origin" name="origin" class="{{ $field }}">
+                    <option value="">Minden eredet</option>
+                    <option value="shipment" @selected(($filters['origin'] ?? '') === 'shipment')>Fuvarátvétel</option>
+                    <option value="manual" @selected(($filters['origin'] ?? '') === 'manual')>Kézi bevételezés</option>
+                </select>
+            </div>
             <div class="flex flex-wrap items-end gap-2">
                 <button class="{{ $link }} bg-indigo-600 text-white hover:bg-indigo-700">Szűrés</button>
                     <x-listing-sort :sorts="$sorts" :filters="$filters" form="putaway-filters" />
-                @if ($receiptFilter || $state !== 'open' || !empty($filters['warehouse_id']) || !empty($filters['search']))
+                @if ($receiptFilter || $state !== 'open' || !empty($filters['warehouse_id']) || !empty($filters['search']) || !empty($filters['origin']))
                     <a href="{{ route('warehouse-putaway-pages.index') }}" class="{{ $link }} border border-gray-300 text-gray-800 hover:bg-gray-50">Alaphelyzet</a>
                 @endif
             </div>
             @if ($filterErrors->any())
-                <p role="alert" class="text-sm text-red-800 sm:col-span-2 xl:col-span-4">{{ $filterErrors->first() }}</p>
+                <p role="alert" class="text-sm text-red-800 sm:col-span-2 xl:col-span-5">{{ $filterErrors->first() }}</p>
             @endif
         </form>
 
@@ -79,23 +85,27 @@
 
                 <div role="table" aria-label="Betárolási feladatok" class="min-w-0 rounded-lg border border-gray-200 bg-white">
                     <div role="row" class="hidden {{ $columns }} gap-4 rounded-t-lg border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-700 xl:grid">
-                    <span role="columnheader" class="min-w-0 py-1">Termék és átvétel</span>
+                    <span role="columnheader" class="min-w-0 py-1">Termék és eredet</span>
                     <span role="columnheader" class="min-w-0 py-1">Célraktár és időpont</span>
                     <span role="columnheader" class="min-w-0 py-1">Mennyiségek</span>
                     <span role="columnheader" class="min-w-0 py-1">Állapot</span>
                 </div>
                 <ul role="rowgroup" class="divide-y divide-gray-100">
                         @foreach ($items as $row)
-                            <li role="row" data-putaway-task-row class="grid min-w-0 gap-3 p-3 text-sm sm:grid-cols-2 sm:p-4 {{ $columns }} xl:items-start [overflow-wrap:anywhere]">
+                            <li role="row" data-putaway-task-row data-origin="{{ $row['origin'] }}" class="grid min-w-0 gap-3 p-3 text-sm sm:grid-cols-2 sm:p-4 {{ $columns }} xl:items-start [overflow-wrap:anywhere]">
                                 <div role="cell" class="min-w-0">
-                                    <a href="{{ route('warehouse-putaway-pages.show', $row['id']) }}"
+                                    <a href="{{ $row['url'] }}"
                                        class="inline-flex min-h-10 max-w-full items-center rounded font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600">{{ $row['product_name'] }}</a>
-                                    <p class="mt-0.5 text-xs text-gray-600">{{ $row['sku'] }} · {{ $row['intent_reference'] }}</p>
-                                    <p class="mt-0.5 text-xs text-gray-600" title="Átvételi bizonylat és tétel">Átvétel #{{ $row['receipt_id'] }} · Tétel #{{ $row['id'] }}</p>
+                                    <p class="mt-0.5 text-xs text-gray-600">{{ $row['sku'] }}@if($row['intent_reference']) · {{ $row['intent_reference'] }}@endif</p>
+                                    <p class="mt-0.5 text-xs text-gray-600">{{ $row['origin_label'] }} ·
+                                        @if($row['origin'] === 'manual')
+                                            <a href="{{ $row['reference_url'] }}" class="font-medium text-indigo-700 underline">{{ $row['reference_number'] }}</a>
+                                        @else {{ $row['reference_number'] }} @endif
+                                    </p>
                                 </div>
                                 <div role="cell" class="min-w-0">
                                     <p class="font-medium text-gray-900">{{ $row['warehouse_name'] }}</p>
-                                    <p class="mt-0.5 text-xs text-gray-600">{{ $row['shipment_number'] }}</p>
+                                    @if($row['receipt_id'])<p class="mt-0.5 text-xs text-gray-600">Átvétel #{{ $row['receipt_id'] }} · Tétel #{{ $row['id'] }}</p>@endif
                                     <p class="mt-0.5 text-xs text-gray-600"><span class="xl:sr-only">Átvétel ideje </span>{{ \Illuminate\Support\Carbon::parse($row['received_at'])->timezone('Europe/Budapest')->format('Y. m. d. H:i') }}</p>
                                 </div>
                                 <dl role="cell" class="grid min-w-0 grid-cols-3 gap-x-2 text-sm">
@@ -116,4 +126,4 @@
             @endif
         </section>
     </div>
-</x-app-layout>
+</x-warehouse-task-layout>

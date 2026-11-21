@@ -1,10 +1,16 @@
+@inject('relocationPolicy', \App\Policies\WarehouseRelocationPolicy::class)
 @php($baseParams = ['warehouse' => $warehouse] + ($context !== '' ? ['context' => $context] : []))
 <x-warehouse-layout :$warehouse :$context :$detailContext>
     <div class="app-page space-y-4 py-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Raktárak</a>
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0"><h1 class="break-words text-xl font-bold text-gray-900">{{ $warehouse->warehouse_name }}</h1><p class="mt-1 whitespace-pre-line break-words text-sm text-gray-500">{{ $warehouse->location ?: 'Cím nincs megadva' }}</p></div>
-            <a href="{{ route('warehouses.edit', $baseParams + ['from' => 'details', 'detail_context' => $detailContext]) }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Raktár szerkesztése</a>
+            <div class="flex flex-wrap gap-2">
+                @if($relocationPolicy->canAccessWarehouse(auth()->user(), (int) $warehouse->getKey()))
+                    <a href="{{ route('warehouses.relocations.create', $baseParams + ['detail_context' => $detailContext]) }}" class="inline-flex min-h-11 items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">+ Új áthelyezés</a>
+                @endif
+                <a href="{{ route('warehouses.edit', $baseParams + ['from' => 'details', 'detail_context' => $detailContext]) }}" class="inline-flex min-h-11 items-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50">Raktár szerkesztése</a>
+            </div>
         </div>
         <x-operation-feedback />
         <section aria-label="Raktári összesítők" class="grid grid-cols-2 gap-3 lg:grid-cols-4">

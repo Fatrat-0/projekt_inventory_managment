@@ -20,7 +20,18 @@ class InventoryService
         private WarehouseStockAvailability $availability,
     ) {}
 
+    /** Book an ordinary issue or import opening stock that has already been accepted for use. */
     public function recordMovement(array $data, ?string $requestKey = null): InventoryMovement
+    {
+        return $this->bookMovement($data, $requestKey, false);
+    }
+
+    public function receiveManual(array $data, string $requestKey): InventoryMovement
+    {
+        return $this->bookMovement(array_replace($data, ['type' => 'in']), $requestKey, true);
+    }
+
+    private function bookMovement(array $data, ?string $requestKey, bool $protectReceipt): InventoryMovement
     {
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
         $payload = [
@@ -30,9 +41,16 @@ class InventoryService
         ];
         // Omit an empty partner from the hash so requests created before this feature still replay.
         if (isset($data['partner_id']) && $data['partner_id'] !== '') $payload['partner_id'] = (int) $data['partner_id'];
-        $hash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
+        $sources = null;
+        if (array_key_exists('source_allocations', $data)) {
+            if ($payload['type'] !== 'out') {
+                throw ValidationException::withMessages(['source_allocations' => 'Forráshelyeket csak kézi készletkiadáshoz adhatsz meg.']);
+            }
+            $sources = $this->picking->normalizeIssueAllocations($data['source_allocations'], $payload['quantity']);
+        }
+        $hash = hash('sha256', json_encode($payload + ($sources === null ? [] : ['source_allocations' => $sources]), JSON_THROW_ON_ERROR));
         try {
-            return DB::transaction(function () use ($payload, $requestKey, $hash) {
+            return DB::transaction(function () use ($payload, $requestKey, $hash, $sources, $protectReceipt) {
                 $requestId = null;
                 if ($requestKey !== null) {
                     // The unique insert serializes the SAME request even across different products.
@@ -52,10 +70,20 @@ class InventoryService
                     }
                     $partnerName = $partner->name;
                 }
-                if ($payload['type'] === 'out') $this->capacity->lockWarehouses([$payload['warehouse_id']]);
+                if ($payload['type'] === 'out' || $protectReceipt) $this->capacity->lockWarehouses([$payload['warehouse_id']]);
+                $picked = $sources === null ? [['quantity' => $payload['quantity']]] : $this->picking->withdrawForIssue(
+                    $payload['warehouse_id'], $payload['product_id'], $payload['quantity'], $sources);
+                // Withdrawing placements frees their pieces for this direct deduction under the same locks.
                 $balances = $this->changeStock($payload['product_id'], $payload['warehouse_id'],
                     $payload['type'] === 'in' ? $payload['quantity'] : -$payload['quantity']);
                 $movement = InventoryMovement::create(array_merge($payload, $balances, ['partner_name' => $partnerName]));
+                if ($payload['type'] === 'out') $this->recordIssueSources($movement, $picked);
+                if ($protectReceipt) {
+                    $movement->manualReceiptBatch()->create([
+                        'product_id' => $payload['product_id'], 'warehouse_id' => $payload['warehouse_id'],
+                        'received_quantity' => $payload['quantity'], 'pending_putaway_quantity' => $payload['quantity'],
+                    ]);
+                }
                 if ($requestId !== null) {
                     DB::table('inventory_movement_requests')->where('id', $requestId)
                         ->update(['movement_id' => $movement->id, 'updated_at' => now()]);
@@ -65,6 +93,26 @@ class InventoryService
         } catch (UniqueConstraintViolationException $e) {
             return $this->replayMovement($e, $requestKey, $payload['user_id'], $hash);
         }
+    }
+
+    private function recordIssueSources(InventoryMovement $movement, array $picked): void
+    {
+        $breakdown = collect($picked)->groupBy(fn (array $row) => $row['warehouse_location_id'] ?? 0)->map(function (Collection $source) {
+            $first = $source->first();
+            $locationId = $first['warehouse_location_id'] ?? null;
+
+            return [
+                'source_type' => $locationId === null ? 'unassigned' : 'location',
+                'warehouse_location_id' => $locationId,
+                'location_code' => $first['location_code'] ?? null,
+                'location_name' => $first['location_name'] ?? null,
+                'quantity' => $source->sum('quantity'),
+            ];
+        });
+        if ($breakdown->sum('quantity') !== $movement->quantity) {
+            throw new LogicException('A készletmozgás mennyisége eltér a kiadási források összegétől.');
+        }
+        $movement->issueSources()->createMany($breakdown->values()->all());
     }
 
     public function recordReturn(InventoryMovement $original, array $data, ?string $requestKey = null): InventoryMovement

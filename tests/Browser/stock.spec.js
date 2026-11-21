@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 
 async function login(page, admin = false) {
@@ -56,12 +57,15 @@ test('row actions open a keyboard accessible menu and prefill a movement without
     await expect(menu.getByRole('menuitem', { name: /minimum|Törlés/ })).toHaveCount(0);
     await page.keyboard.press('Escape'); await expect(menu).toBeHidden(); await expect(trigger).toBeFocused();
     await trigger.click();
-    const before = await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json();
+    const stockUrl = '/movements/stock?product_id=1&warehouse_id=1&details=1';
+    const before = await (await page.request.get(stockUrl)).json();
     await menu.getByRole('menuitem', { name: 'Új készletmozgás', exact: true }).click();
     await expect(page.getByRole('combobox', { name: 'Termék', exact: true })).toHaveValue('Alpha teszttermék (ALPHA-001)');
     await expect(page.getByRole('combobox', { name: 'Raktár', exact: true })).toHaveValue('Teszt raktár · Test');
-    await expect(page.getByRole('status')).toContainText(before.quantity+' db');
-    const after = await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json();
+    const summary = page.getByRole('complementary', { name: 'Bevételezés összegzése' });
+    const physical = summary.locator('dl > div').filter({ hasText: 'Jelenlegi fizikai készlet' });
+    await expect(physical.locator('dd')).toHaveText(before.physical_quantity + ' db');
+    const after = await (await page.request.get(stockUrl)).json();
     expect(after).toEqual(before);
 });
 
@@ -77,6 +81,7 @@ async function product(page, prefix = 'Készlet teszt', long = false) {
 }
 async function movement(page, id, quantity, type = 'in', warehouse = 1) {
     const reference = 'STOCK-'+randomUUID();
+    if (type === 'in') return seedUsableStock({ product_id: id, warehouse_id: warehouse, quantity, reference });
     expect((await post(page, '/movements', { request_key: randomUUID(), product_id: id, warehouse_id: warehouse, quantity, type, reference })).status()).toBe(302);
     const html = await (await page.request.get('/movements?search='+reference)).text();
     return Number(html.match(/href="[^"]*\/movements\/(\d+)(?:\?|\")/)[1]);

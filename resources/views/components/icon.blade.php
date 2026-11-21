@@ -2,6 +2,8 @@
 @php
 $paths = [
     'tasks' => 'M9 4H5v18h14V4h-4 M9 2h6v4H9z M8 12l2 2 5-5 M8 18h8',
+    'tray-out' => 'M12 13V3 M8 7l4-4 4 4 M4 14v6h16v-6',
+    'tray-in' => 'M12 3v10 M8 9l4 4 4-4 M4 14v6h16v-6',
     'box' => 'M21 8l-9-5-9 5v9l9 5 9-5V8z M3 8l9 5 9-5 M12 13v9 M7.5 5.5l9 5',
     'search' => 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
     'filter' => 'M4 6h16 M7 12h10 M10 18h4',

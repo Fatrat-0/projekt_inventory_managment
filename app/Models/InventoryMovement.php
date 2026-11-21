@@ -4,9 +4,34 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class InventoryMovement extends Model
 {
+    public const ORIGIN_LABELS = [
+        'manual_in' => 'Kézi bevételezés',
+        'manual_out' => 'Kézi kiadás',
+        'shipment_dispatch' => 'Fuvarfeladás',
+        'shipment_receipt' => 'Fuvarátvétel',
+        'return' => 'Visszáru',
+        'scrap' => 'Selejtezés',
+    ];
+
+    public function originLabel(): string
+    {
+        $origin = match (true) {
+            $this->isShipmentDispatch() => 'shipment_dispatch',
+            $this->isShipmentReceipt() => 'shipment_receipt',
+            $this->isScrap() => 'scrap',
+            $this->isReturn() => 'return',
+            $this->type === 'in' => 'manual_in',
+            default => 'manual_out',
+        };
+
+        return self::ORIGIN_LABELS[$origin];
+    }
+
     protected $fillable = [
         'product_id',
         'warehouse_id',
@@ -29,8 +54,10 @@ class InventoryMovement extends Model
 
     public function getMovementNumberAttribute(): string
     {
-        return 'MOZ-'.str_pad((string) $this->id, 6, '0', STR_PAD_LEFT);
+        return self::formatNumber((int) $this->id);
     }
+
+    public static function formatNumber(int $id): string { return 'MOZ-'.str_pad((string) $id, 6, '0', STR_PAD_LEFT); }
 
     public function partner() { return $this->belongsTo(Partner::class); }
 
@@ -46,6 +73,8 @@ class InventoryMovement extends Model
     public function isReturnable(): bool { return !$this->isReturn() && !$this->isScrap() && !$this->isShipmentDispatch() && !$this->isShipmentReceipt(); }
     public function shipmentTransitItem(): BelongsTo { return $this->belongsTo(ShipmentTransitItem::class); }
     public function shipmentReceiptItem(): BelongsTo { return $this->belongsTo(ShipmentReceiptItem::class); }
+    public function manualReceiptBatch(): HasOne { return $this->hasOne(ManualReceiptBatch::class, 'movement_id'); }
+    public function issueSources(): HasMany { return $this->hasMany(InventoryMovementSource::class, 'movement_id')->orderBy('id'); }
     public function scrapOf() { return $this->belongsTo(self::class, 'scrap_of_id'); }
     public function qualityActions() { return $this->hasMany(ReturnQualityAction::class, 'return_movement_id'); }
     public function qualityAction() { return $this->hasOne(ReturnQualityAction::class, 'movement_id'); }

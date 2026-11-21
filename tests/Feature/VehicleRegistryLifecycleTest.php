@@ -168,7 +168,7 @@ class VehicleRegistryLifecycleTest extends TestCase
         $this->assertMatchesRegularExpression('~href="'.preg_quote($url, '~').'"\s+aria-current="page"~', $operatorPage->getContent());
 
         $this->actingAs($admin)->get($url)->assertOk()->assertViewHas('canManageVehicles', true)
-            ->assertSeeInOrder(['Igények', 'Fuvarok és szállítmányok', 'Raktári feladatok', 'Járművek'])
+            ->assertSeeInOrder(['Igények', 'Fuvarok és szállítmányok', 'Járművek'])
             ->assertSee('Új jármű');
     }
 

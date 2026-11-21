@@ -126,17 +126,17 @@ class WarehouseCapacity
     }
 
     /**
-     * Add an ordinary placement for stock already received. The caller holds the
-     * product, warehouse, stock and location locks and moves the receipt hold.
+     * Assign stock that is already included in the warehouse balance. The caller holds
+     * the product, warehouse, stock and destination locks and accounts for the source.
      *
      * @return array{placement: WarehousePlacement, geometry_status: 'verified'|'site_verified'}
      */
-    public function placeReceiptStock(
+    public function placeAssignedStock(
         WarehouseLocation $location, Product $product, int $stockId, int $quantity, int $weight, int $slots,
         array $dimensions, bool $siteVerified,
     ): array {
         if (DB::transactionLevel() === 0) {
-            throw new LogicException('Az átvett készlet elhelyezéséhez aktív tranzakció szükséges.');
+            throw new LogicException('A meglévő készlet elhelyezéséhez aktív tranzakció szükséges.');
         }
 
         $occupied = $this->assertFits($location, $weight, $slots, (int) $product->category_id);

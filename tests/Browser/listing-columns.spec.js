@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 const pages = ['products', 'stock', 'movements', 'transfers', 'partners', 'categories', 'warehouses', 'quality-returns', 'users'];
 const table = page => page.locator('[data-listing-table]');
@@ -23,7 +24,7 @@ test.beforeAll(async ({ browser }) => {
         await post(page, '/products', { product_name: marker, sku: marker, price: 1, category_id: 1 });
         const productHtml = await (await page.request.get('/products?search='+marker)).text();
         const product = Number(productHtml.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
-        await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'in', quantity: 10 });
+        seedUsableStock({ product_id: product, warehouse_id: 1, quantity: 10, actor_email: 'warehouse-admin@example.test' });
         await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: 2, quantity: 1 });
         await post(page, '/partners', { name: marker, type: 'both' });
         await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, type: 'out', quantity: 1, reference: marker });
@@ -38,17 +39,18 @@ for (const path of pages) {
         const errors = []; page.on('pageerror', error => errors.push(error.message));
         await page.setViewportSize({ width: 1440, height: 1000 }); await login(page); await page.goto('/'+path);
         await page.getByRole('button', { name: 'Táblázatos nézet', exact: true }).click();
-        const headingKey = path === 'movements' ? 'product_name' : 'actions';
-        await expect(table(page).locator('thead [data-listing-column="'+headingKey+'"]').getByRole('button', { name: 'Táblázat oszlopai', exact: true })).toBeVisible();
+        await expect(table(page).locator('thead th').last().getByRole('button', { name: 'Táblázat oszlopai', exact: true })).toBeVisible();
         await expect(page.locator('[data-page-toolbar]').getByRole('button', { name: 'Táblázat oszlopai', exact: true })).toHaveCount(0);
         await picker(page).focus(); await page.keyboard.press('Enter'); await expect(panel(page)).toBeVisible();
         await expect(picker(page)).toHaveAttribute('aria-expanded', 'true');
         const choices = await panel(page).locator('input').evaluateAll(inputs => inputs.map(input => ({ key: input.dataset.columnKey, required: input.disabled })));
         const keys = choices.map(choice => choice.key);
-        expect(await table(page).locator('thead th').evaluateAll(headers => headers.map(header => header.dataset.listingColumn))).toEqual(keys);
+        const dataHeaders = table(page).locator('thead th[data-listing-column]');
+        const dataCells = 'td[data-listing-column]';
+        expect(await dataHeaders.evaluateAll(headers => headers.map(header => header.dataset.listingColumn))).toEqual(keys);
         const body = table(page).locator('tbody tr').filter({ has: page.locator('[data-listing-column]') });
         expect(await body.count()).toBeGreaterThan(0);
-        for (const row of await body.all()) expect(await row.locator('td').evaluateAll(cells => cells.map(cell => cell.dataset.listingColumn))).toEqual(keys);
+        for (const row of await body.all()) expect(await row.locator(dataCells).evaluateAll(cells => cells.map(cell => cell.dataset.listingColumn))).toEqual(keys);
         const optional = choices.filter(choice => !choice.required); const required = choices.filter(choice => choice.required);
         await expect(panel(page).locator('input[data-column-key="'+optional[0].key+'"]')).toBeFocused();
         const url = page.url(); let requests = 0; page.on('request', request => { if (request.method() !== 'GET') requests++; });
@@ -56,15 +58,16 @@ for (const path of pages) {
             await panel(page).locator('input[data-column-key="'+key+'"]').uncheck();
             await expect(cells(page, key)).toHaveCount(0);
         }
-        await expect(table(page).locator('thead th:visible')).toHaveCount(required.length);
+        await expect(dataHeaders.filter({ visible: true })).toHaveCount(required.length);
+        await expect(picker(page)).toBeVisible();
         if (path === 'products') await expect(table(page).locator('tfoot')).toContainText('Oldalösszesítő');
-        for (const row of await body.all()) await expect(row.locator('td:visible')).toHaveCount(required.length);
+        for (const row of await body.all()) await expect(row.locator(dataCells).filter({ visible: true })).toHaveCount(required.length);
         for (const { key } of required) await expect(panel(page).locator('input[data-column-key="'+key+'"]')).toBeChecked();
         await page.keyboard.press('Escape'); await expect(panel(page)).toBeHidden(); await expect(picker(page)).toBeFocused();
-        await page.reload(); await expect(table(page).locator('thead th:visible')).toHaveCount(required.length); await expect(page).toHaveURL(url);
+        await page.reload(); await expect(dataHeaders.filter({ visible: true })).toHaveCount(required.length); await expect(page).toHaveURL(url);
         await picker(page).click(); await panel(page).getByRole('button', { name: 'Alapbeállítások visszaállítása', exact: true }).click();
-        await expect(table(page).locator('thead th:visible')).toHaveCount(keys.length);
-        for (const row of await body.all()) await expect(row.locator('td:visible')).toHaveCount(keys.length);
+        await expect(dataHeaders.filter({ visible: true })).toHaveCount(keys.length);
+        for (const row of await body.all()) await expect(row.locator(dataCells).filter({ visible: true })).toHaveCount(keys.length);
         await expect.poll(async () => {
             const anchor = await picker(page).boundingBox(); const region = await table(page).boundingBox();
             return anchor.x >= Math.max(region.x, 0) && anchor.x + anchor.width <= Math.min(region.x + region.width, 1440);
@@ -82,6 +85,13 @@ for (const path of pages) {
         await page.setViewportSize({ width: 390, height: 800 }); await expect(picker(page)).toBeHidden();
         await page.setViewportSize({ width: 1440, height: 1000 }); await expect(picker(page)).toBeVisible();
         await expect(cells(page, optional[0].key)).toHaveCount(0);
+        if (path === 'movements') {
+            await page.setViewportSize({ width: 820, height: 900 });
+            await page.evaluate(() => { document.documentElement.style.fontSize = '24px'; });
+            expect(await table(page).evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+            await expect(picker(page)).toBeInViewport();
+            await picker(page).click(); await expect(panel(page)).toBeVisible();
+        }
         expect(requests).toBe(0); expect(errors).toEqual([]);
     });
 }
@@ -151,8 +161,8 @@ test('column changes work with blocked storage and default columns remain availa
         const fallback = await context.newPage(); await login(fallback);
         for (const path of pages) {
             await fallback.goto('/'+path); await expect(picker(fallback)).toBeHidden();
-            const headers = await table(fallback).locator('thead th').count();
-            await expect(table(fallback).locator('thead th:visible')).toHaveCount(headers);
+            const headers = table(fallback).locator('thead th[data-listing-column]');
+            await expect(table(fallback).locator('thead th:visible')).toHaveCount(await headers.count());
         }
     } finally { await context.close(); }
 });
@@ -190,10 +200,12 @@ test('empty result rows span exactly the selected columns', async ({ page }) => 
     await login(page);
     for (const path of ['products', 'partners', 'categories', 'warehouses', 'quality-returns']) {
         await page.goto('/'+path); await page.getByRole('button', { name: 'Táblázatos nézet', exact: true }).click(); await picker(page).click();
+        const expected = await panel(page).locator('input:disabled').count();
         for (const input of await panel(page).locator('input:not(:disabled)').all()) await input.uncheck();
         await page.keyboard.press('Escape');
-        const expected = await table(page).locator('thead th:visible').count();
+        await expect(table(page).locator('thead th:visible')).toHaveCount(expected);
         await page.goto('/'+path+'?search=NO-COLS-'+randomUUID());
+        await expect(table(page).locator('thead th:visible')).toHaveCount(expected);
         await expect(table(page).getByRole('status')).toHaveAttribute('colspan', String(expected));
         if (path === 'products') await expect(table(page).locator('tfoot')).toHaveCount(0);
     }

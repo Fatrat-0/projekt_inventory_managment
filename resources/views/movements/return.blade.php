@@ -26,11 +26,7 @@
                 @csrf
                 <input type="hidden" name="request_key" value="{{ $requestKey }}"><input type="hidden" name="context" value="{{ $context }}">
                 @error('request_key')<a href="{{ route('movements.return.create', ['movement' => $movement, 'context' => $context]) }}" class="block text-sm text-indigo-600 underline">Új visszáru-űrlap indítása</a>@enderror
-                <div class="rounded-md bg-gray-50 p-3 text-sm text-gray-600">
-                    <span x-text="stockText">Kiadható készlet a raktárban: {{ $stock }} db</span>
-                    <button type="button" x-show="true" style="display:none" @click="loadStock()" class="ml-2 text-indigo-600 underline">Frissítés</button>
-                    <p class="mt-1 text-xs">Mentéskor újra ellenőrizzük a készletet és a még visszaküldhető mennyiséget.</p>
-                </div>
+                @include('movements.availability')
                 <div>
                     <label for="return-quantity" class="mb-1 block text-sm font-medium text-gray-700">Visszáru mennyisége (db)</label>
                     <input id="return-quantity" name="quantity" type="number" min="1" max="{{ $remaining }}" step="1" required x-model="quantity"

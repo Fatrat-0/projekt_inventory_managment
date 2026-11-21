@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\{Product, ShipmentDispatch, Shipment, ShipmentReceipt, ShipmentReceiptItem, ShipmentStop, ShipmentTransitItem, User, Warehouse};
+use App\Models\{ManualReceiptBatch, Product, ShipmentDispatch, Shipment, ShipmentReceipt, ShipmentReceiptItem, ShipmentStop, ShipmentTransitItem, User, Warehouse};
 use App\Support\{ListingNumber, ListingSort};
 use App\Policies\ShipmentPolicy;
 use Illuminate\Database\Eloquent\Builder;
@@ -27,7 +27,7 @@ class ShipmentReceivingReader
 
     public function __construct(private ShipmentPolicy $policy) {}
 
-    public static function listFilters(array $query, bool $putaway = false): Validation
+    public static function listFilters(array $query, bool $putaway = false, bool $combined = false): Validation
     {
         $statuses = $putaway ? 'open,pending,partial,completed,all' : 'open,pending,partial,received,all';
         $rules = [
@@ -36,8 +36,9 @@ class ShipmentReceivingReader
             'status' => 'nullable|in:'.$statuses,
             'page' => 'sometimes|integer|min:1|max:2147483647',
             'per_page' => 'sometimes|integer|min:1|max:100',
-        ] + ListingSort::rules($putaway ? self::PUTAWAY_SORTS : self::RECEIVING_SORTS);
+        ] + ListingSort::rules($combined ? PutawayTaskListing::SORTS : ($putaway ? self::PUTAWAY_SORTS : self::RECEIVING_SORTS));
         if ($putaway) $rules += ['receipt_id' => 'nullable|integer|min:1', 'shipment_id' => 'nullable|integer|min:1'];
+        if ($combined) $rules += ['origin' => 'nullable|in:shipment,manual'];
 
         return Validator::make($query, $rules, [
             'warehouse_id.*' => 'Válassz érvényes célraktárat.',
@@ -45,6 +46,7 @@ class ShipmentReceivingReader
             'sort_by.*' => 'Válassz érvényes rendezési oszlopot.',
             'sort_dir.*' => 'Válassz érvényes rendezési irányt.',
             'status.*' => 'Válassz érvényes állapotot.',
+            'origin.*' => 'Válassz érvényes betárolási eredetet.',
             'receipt_id.*' => 'Adj meg érvényes átvételi azonosítót.',
             'shipment_id.*' => 'Adj meg érvényes fuvarazonosítót.',
             'page.*' => 'Adj meg érvényes oldalszámot.',
@@ -95,10 +97,12 @@ class ShipmentReceivingReader
         $this->scopeWarehouses($stops, 'warehouse_id', $actor, []);
         $items = ShipmentReceiptItem::query();
         $this->scopeWarehouses($items, 'to_warehouse_id', $actor, []);
+        $manual = ManualReceiptBatch::query();
+        $this->scopeWarehouses($manual, 'warehouse_id', $actor, []);
 
         return [
             'receiving' => $this->withPendingReceipt($stops)->count(),
-            'putaway' => $this->withPendingPutaway($items)->count(),
+            'putaway' => $this->withPendingPutaway($items)->count() + $this->withPendingPutaway($manual)->count(),
         ];
     }
 

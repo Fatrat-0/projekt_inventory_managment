@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { plan, shipmentCommand as command } from './shipment-fixtures';
@@ -36,9 +37,7 @@ async function product(page, origin, quantity) {
     await command(page, 'POST', '/products', { sku, product_name: 'Acél szerelőkészlet', category_id: 1, price: 1 }, 302);
     const html = await (await page.request.get(`/products?search=${sku}`)).text();
     const id = Number(html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
-    await command(page, 'POST', '/movements', {
-        request_key: randomUUID(), product_id: id, warehouse_id: origin, quantity, type: 'in',
-    }, 302);
+    seedUsableStock({ product_id: id, warehouse_id: origin, quantity });
     return { id, sku };
 }
 

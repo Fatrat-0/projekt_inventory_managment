@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 async function login(page) {
     await page.goto('/login');
@@ -17,7 +18,7 @@ async function scenario(page) {
     const html = await (await page.request.get('/products?search='+sku)).text();
     const product = Number(html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
     for (const [warehouse_id, quantity] of [[1, 20], [2, 1]]) {
-        expect((await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id, quantity, type: 'in' })).status()).toBe(302);
+        seedUsableStock({ product_id: product, warehouse_id, quantity });
     }
     await page.goto('/stock?warehouse_id=2');
     const row = page.locator('[data-stock-row]:visible').filter({ hasText: sku });

@@ -9,7 +9,7 @@
 
     <div x-show="mode === 'suggestions'" class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <button type="button" @click="loadLocations()" :disabled="!canLookUp || loading" class="{{ $secondary }}">Ajánlások keresése</button>
-        <p class="text-xs text-gray-600">A keresés után válassz rekeszt az elhelyezéshez.</p>
+        <p class="text-xs text-gray-600">{{ $locationPrompt ?? 'A keresés után válassz rekeszt az elhelyezéshez.' }}</p>
     </div>
     <form x-show="mode === 'manual'" @submit.prevent="loadLocations()" class="grid min-w-0 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div class="min-w-0">
@@ -21,8 +21,16 @@
     </form>
 
     <div x-show="selected" x-ref="selection" tabindex="-1" class="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
-        <p>Kiválasztott rekesz <strong x-text="selected?.code"></strong></p>
-        <a x-show="selected?.putaway_floor_plan_url" :href="selected?.putaway_floor_plan_url" target="_blank" rel="noopener"
+        <div>
+            <p>Kiválasztott rekesz <strong x-text="selected?.code"></strong></p>
+            <p x-show="selected && selectedSignature !== signature" class="text-xs">A módosított részlethez ellenőrizd újra a rekeszt.</p>
+            @unless($showStockInSideSummary ?? false)
+                <div x-show="selectedSignature === signature && !loading && !refreshing">
+                    @include('warehouse-putaway.stock', ['stockRow' => 'selected', 'stockScopes' => ['bin']])
+                </div>
+            @endunless
+        </div>
+        <a x-show="selected?.[@js($floorPlanField ?? 'putaway_floor_plan_url')]" :href="selected?.[@js($floorPlanField ?? 'putaway_floor_plan_url')]" target="_blank" rel="noopener"
            class="{{ $link }}">Megtekintés az alaprajzon<span class="sr-only"> (új lapon)</span></a>
     </div>
     <p x-show="loading" role="status" class="text-sm text-gray-600">Rekeszek ellenőrzése…</p>
@@ -36,39 +44,7 @@
 
     <ul x-show="resultRows.length" aria-label="Rekesztalálatok" class="min-w-0 space-y-2">
         <template x-for="location in resultRows" :key="location.location_id">
-            <li :data-putaway-location="location.code" class="min-w-0 space-y-2 rounded-md border p-3"
-                :class="selected?.location_id === location.location_id ? 'border-indigo-400' : 'border-gray-200'">
-                <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                    <div class="min-w-0">
-                        <p class="font-semibold text-gray-900" x-text="location.code"></p>
-                        <p x-show="location.name !== location.code" class="text-sm text-gray-700" x-text="location.name"></p>
-                        <p x-show="position(location)" class="text-xs text-gray-600" x-text="position(location)"></p>
-                    </div>
-                    <span class="rounded-md px-2 py-1 text-xs font-semibold"
-                          :class="{ 'bg-emerald-50 text-emerald-900': location.status === 'verified', 'bg-amber-50 text-amber-900': location.status === 'conditional', 'bg-red-50 text-red-900': location.status === 'rejected' }"
-                          x-text="locationStatus(location.status)"></span>
-                </div>
-                <p x-show="reason(location)" class="text-xs text-gray-700" x-text="reason(location)"></p>
-                <dl x-show="location.status !== 'rejected'" class="grid min-w-0 gap-2 text-xs sm:grid-cols-2">
-                    <div x-show="location.score?.remaining_weight_grams != null"><dt class="text-gray-600">Elhelyezés után szabad teherbírás</dt><dd class="font-semibold" x-text="mass(location.score?.remaining_weight_grams)"></dd></div>
-                    <div x-show="location.score?.remaining_pallet_slots != null"><dt class="text-gray-600">Elhelyezés után szabad raklaphely</dt><dd class="font-semibold" x-text="numberValue(location.score?.remaining_pallet_slots)"></dd></div>
-                    <div x-show="location.score?.remaining_weight_grams == null"><dt class="text-gray-600">Jelenlegi szabad teherbírás</dt><dd class="font-semibold" x-text="mass(location.free_weight_grams)"></dd></div>
-                    <div x-show="location.score?.remaining_pallet_slots == null && location.free_pallet_slots != null"><dt class="text-gray-600">Jelenlegi szabad raklaphely</dt><dd class="font-semibold" x-text="numberValue(location.free_pallet_slots)"></dd></div>
-                </dl>
-                <ul x-show="location.status === 'rejected' || location.status === 'conditional'" class="list-disc space-y-0.5 ps-4 text-xs"
-                    :class="location.status === 'rejected' ? 'text-red-900' : 'text-amber-900'">
-                    <template x-for="(reason, index) in checks(location.status === 'rejected' ? location.checks?.failed : location.checks?.missing)" :key="index">
-                        <li x-text="reason"></li>
-                    </template>
-                </ul>
-                <div class="flex flex-wrap gap-x-3 gap-y-1">
-                    <button x-show="location.status !== 'rejected'" type="button" @click="selectLocation(location)" :disabled="!canLookUp || loading"
-                            :aria-pressed="selected?.location_id === location.location_id" class="{{ $secondary }}"
-                            x-text="selected?.location_id === location.location_id ? 'Kiválasztva' : 'Kiválasztás'"></button>
-                    <a x-show="location.putaway_floor_plan_url" :href="location.putaway_floor_plan_url" target="_blank" rel="noopener"
-                       class="{{ $link }}">Megtekintés az alaprajzon<span class="sr-only"> (új lapon)</span></a>
-                </div>
-            </li>
+            @include('warehouse-putaway.compact-location')
         </template>
     </ul>
     <button x-show="canSeeMore" type="button" @click="showMore = !showMore" :aria-expanded="showMore" class="{{ $secondary }}"

@@ -88,8 +88,7 @@
                         @else
                             <span class="badge-out">▼ KIADÁS</span>
                         @endif
-                        @if($movement->isReturn())<br><small>Visszáru</small>@endif
-                        @if($movement->isScrap())<br><small>Selejtezés</small>@endif
+                        <br><small>{{ $movement->originLabel() }}</small>
                     </td>
                     <td>
                         <strong>{{ optional($movement->product)->product_name ?? 'Törölt termék' }}</strong><br>

@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-task-layout>
     @php
         $statuses = ['pending' => 'Átvételre vár', 'partial' => 'Részben átvéve', 'received' => 'Teljesen átvéve'];
         $badge = ['pending' => 'bg-indigo-50 text-indigo-800', 'partial' => 'bg-amber-50 text-amber-900', 'received' => 'bg-emerald-50 text-emerald-800'];
@@ -12,9 +12,7 @@
         $link = 'inline-flex min-h-11 items-center rounded-md px-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600';
     @endphp
     <div class="app-page min-w-0 space-y-4 py-4" data-testid="receiving-queue">
-        <x-page-toolbar title="Raktári feladatok" />
-        @include('transfers.tabs')
-        @include('transfers.task-tabs')
+        <x-page-toolbar title="Átvételi feladatok" />
 
         <section aria-labelledby="receiving-queue-heading" class="space-y-3">
             <h2 id="receiving-queue-heading" class="text-base font-semibold text-gray-900">Érkező szállítmányok
@@ -122,4 +120,4 @@
             @endif
         </section>
     </div>
-</x-app-layout>
+</x-warehouse-task-layout>

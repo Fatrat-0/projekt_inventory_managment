@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, { tags }) => {
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill('browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill(tags.includes('@manual-out') ? 'warehouse-admin@example.test' : 'browser@example.test');
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await expect(page).toHaveURL(/dashboard/);
@@ -32,6 +32,11 @@ async function choosePartner(page, text) {
     const list = page.getByRole('listbox', { name: 'Partnertalálatok', exact: true });
     await expect(list.getByRole('option')).toHaveCount(1);
     await list.getByRole('option').click();
+}
+
+async function receive(page) {
+    await page.getByRole('button', { name: 'Bevételezés ellenőrzése', exact: true }).click();
+    await page.getByRole('button', { name: 'Bevételezés véglegesítése', exact: true }).click();
 }
 
 test('new partner details survive editing and dual roles appear in both filters on mobile', async ({ page }) => {
@@ -94,8 +99,8 @@ test('movement links and partner counters lead to the filtered history and PDF r
     await choosePartner(page, name);
     await page.getByLabel('Mennyiség (db)', { exact: true }).fill('3');
     await page.getByLabel('Bizonylatszám vagy megjegyzés (opcionális)').fill('PM-HISTORY-REF');
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page).toHaveURL(url => url.pathname === '/movements');
+    await receive(page);
+    await expect(page.getByRole('link', { name: 'Később tárolom be', exact: true })).toBeVisible();
     await page.goto('/partners/'+id+'/edit');
     await expect(page.getByRole('link', { name: 'Bevételezések (1)', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Kiadások (0)', exact: true })).toBeVisible();
@@ -126,14 +131,13 @@ test('archiving a selected partner before saving rejects the movement and preser
     await page.getByLabel('Mennyiség (db)', { exact: true }).fill('4');
     const csrf = await page.locator('meta[name="csrf-token"]').getAttribute('content');
     await page.request.patch('/partners/'+id+'/archive', { headers: { 'X-CSRF-TOKEN': csrf }, maxRedirects: 0 });
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page.locator('#movement-partner-error')).toContainText('Válassz aktív');
+    await receive(page);
+    await expect(page.locator('#receipt-partner-error')).toContainText('Válassz aktív');
     await expect(page.getByLabel('Mennyiség (db)', { exact: true })).toHaveValue('4');
     await expect(page.locator('input[name="product_id"]')).toHaveValue('1');
     await expect(page.locator('input[name="partner_id"]')).toHaveValue('');
-    await page.getByRole('button', { name: 'Partner törlése a mezőből', exact: true }).click();
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page).toHaveURL(url => url.pathname === '/movements');
+    await receive(page);
+    await expect(page.getByRole('link', { name: 'Később tárolom be', exact: true })).toBeVisible();
     await page.goto('/partners/'+id+'/edit');
     await expect(page.getByRole('link', { name: 'Készletmozgások (0)', exact: true })).toBeVisible();
 });
@@ -143,8 +147,8 @@ test('linked partner deletion gives an explanation and archival preserves moveme
     const id = await partner(page, name);
     await movement(page);
     await choosePartner(page, name);
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page).toHaveURL(url => url.pathname === '/movements');
+    await receive(page);
+    await expect(page.getByRole('link', { name: 'Később tárolom be', exact: true })).toBeVisible();
     await page.goto('/partners?partner_id='+id+'&status=all');
     await page.getByRole('button', { name: 'Műveletek: '+name, exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
@@ -160,7 +164,7 @@ test('linked partner deletion gives an explanation and archival preserves moveme
     await expect(page.locator('tbody tr')).toHaveCount(1);
 });
 
-test('changing a selected partner role in another tab is checked again at save', async ({ page }) => {
+test('changing a selected partner role in another tab is checked again at save', { tag: '@manual-out' }, async ({ page }) => {
     const name = 'PM-ROLE-CHANGE Partner';
     const id = await partner(page, name, 'supplier');
     await movement(page);
@@ -170,14 +174,16 @@ test('changing a selected partner role in another tab is checked again at save',
     const version = (await edit.text()).match(/name="lock_version" value="(\d+)"/)[1];
     const changed = await page.request.put('/partners/'+id, { headers: { 'X-CSRF-TOKEN': csrf }, form: { name, type: 'customer', lock_version: version }, maxRedirects: 0 });
     expect(changed.status()).toBe(302);
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page.locator('#movement-partner-error')).toContainText('Válassz aktív');
+    await receive(page);
+    await expect(page.locator('#receipt-partner-error')).toContainText('Válassz aktív');
     await expect(page.locator('input[name="partner_id"]')).toHaveValue('');
-    await page.getByRole('button', { name: 'Partner törlése a mezőből', exact: true }).click();
     await page.getByLabel('Mozgás típusa', { exact: true }).selectOption('out');
     await choosePartner(page, name);
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page).toHaveURL(url => url.pathname === '/movements');
+    await page.getByRole('button', { name: 'Kiadás ellenőrzése', exact: true }).click();
+    const review = page.getByRole('dialog', { name: 'Kiadás megerősítése' });
+    await expect(review).toContainText(name);
+    await review.getByRole('button', { name: 'Kiadás véglegesítése', exact: true }).click();
+    await expect(page).toHaveURL(/\/movements\/\d+/);
     await page.goto('/partners/'+id+'/edit');
     await expect(page.getByRole('link', { name: 'Bevételezések (0)', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Kiadások (1)', exact: true })).toBeVisible();
@@ -193,7 +199,7 @@ for (const path of ['/movements/create', '/transfers/create']) {
                 available_quantity: quantity, quarantined_quantity: 0, source_reserved_quantity: 0,
                 sources: [{ location_id: null, name: 'Tárhely nélküli készlet', stored_quantity: quantity,
                     available_quantity: quantity, reserved_quantity: 0, active: true }],
-            } : { quantity } });
+            } : { physical_quantity: quantity, direct_issue_quantity: quantity, pickable_quantity: quantity, consistent: true } });
         });
         await page.goto(path);
         await page.getByRole('combobox', { name: 'Termék', exact: true }).fill('ALPHA');
@@ -204,12 +210,12 @@ for (const path of ['/movements/create', '/transfers/create']) {
             await page.getByRole('combobox', { name: 'Célraktár', exact: true }).fill('Északi');
             await page.getByRole('option', { name: 'Északi tesztraktár · Bemutató célállomás', exact: true }).click();
         }
-        const stock = page.getByRole('status').filter({ hasText: transfer ? 'Tárhely nélküli készlet' : 'Jelenlegi készlet' });
+        const stock = page.getByRole('status').filter({ hasText: transfer ? 'Tárhely nélküli készlet' : 'Fizikai készlet' });
         await expect(stock).toContainText('20 db');
         await page.getByLabel('Mennyiség (db)', { exact: true }).fill('3');
         const key = await page.locator('input[name="request_key"]').inputValue();
-        const form = page.locator(transfer ? 'form[x-data^="transferPutaway"]' : 'form[x-data^="movementForm"]');
-        const submit = form.locator('button[type="submit"]');
+        const form = page.locator(transfer ? 'form[x-data^="transferPutaway"]' : 'form[action$="/movements"]');
+        const submit = form.locator('button[type="submit"]').filter({ visible: true });
         await form.evaluate(el => { window.Alpine.$data(el).submitting = true; });
         await expect(submit).toBeDisabled();
         await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));

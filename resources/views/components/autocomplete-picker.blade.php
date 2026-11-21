@@ -1,11 +1,11 @@
-@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null, 'movementPartner' => false, 'availableValues' => null, 'itemsSource' => null, 'modelValue' => null, 'maxResults' => null, 'errorActive' => null])
+@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null, 'movementPartner' => false, 'availableValues' => null, 'itemsSource' => null, 'modelValue' => null, 'maxResults' => null, 'errorActive' => null, 'validateSelection' => true, 'detailsSource' => null, 'emptyMessage' => null, 'searchEvent' => null])
 @php
     $hasError = $name && $errors->has($name);
     $description = trim(($describedBy ?? '').' '.($hasError ? $id.'-error' : ''));
     $selectedValue = is_scalar($value) ? (string)$value : '';
     $selected = collect($items)->first(fn($item) => (string)$item['value'] === $selectedValue);
 @endphp
-<div class="relative" x-data="{{ $movementPartner ? 'movementPartnerPicker' : 'autocompletePicker' }}({{ Illuminate\Support\Js::from(['items' => $items, 'value' => $selectedValue, 'required' => (bool)$required, 'eventName' => $eventName, 'invalidValueLabel' => $invalidValueLabel, 'maxResults' => $maxResults]) }})"
+<div class="relative" x-data="{{ $movementPartner ? 'movementPartnerPicker' : 'autocompletePicker' }}({{ Illuminate\Support\Js::from(['items' => $items, 'value' => $selectedValue, 'required' => (bool)$required, 'eventName' => $eventName, 'invalidValueLabel' => $invalidValueLabel, 'maxResults' => $maxResults, 'validateSelection' => $validateSelection, 'searchEvent' => $searchEvent]) }})"
     @if($itemsSource || $modelValue)
         x-init="
             @if($itemsSource) items = {{ $itemsSource }}; $watch('{{ $itemsSource }}', next => { items = next; active = -1; }); @endif
@@ -13,6 +13,7 @@
         "
     @endif
     @if($availableValues) x-effect="setAvailable({{ $availableValues }})" @endif
+    @if($movementPartner) @movement-partners-updated.window="replaceItems($event.detail)" @endif
     @click.outside="open = false" @focusout="if (!$el.contains($event.relatedTarget)) open = false">
     @if($name)<input type="hidden" name="{{ $name }}" :value="value" value="{{ $selectedValue }}" @if($form) form="{{ $form }}" @endif>@endif
     <div class="relative">
@@ -34,11 +35,16 @@
         <ul id="{{ $id }}-results" x-ref="list" role="listbox" aria-label="{{ $resultsLabel ?? ($name === 'product_id' ? 'Terméktalálatok' : 'Raktártalálatok') }}" class="max-h-60 overflow-y-auto py-1">
             <template x-for="(item, index) in results" :key="item.value">
                 <li :id="'{{ $id }}-option-' + index" role="option" :aria-selected="index === active" @mouseenter="active = index" @mousedown.prevent @click="choose(item)"
-                    :class="index === active ? 'bg-indigo-50 text-indigo-800' : 'text-gray-700'" class="cursor-pointer px-3 py-2.5 text-sm break-words" x-text="item.label"></li>
+                    :class="index === active ? 'bg-indigo-50 text-indigo-800' : 'text-gray-700'" class="cursor-pointer px-3 py-2.5 text-sm break-words">
+                    <span x-text="item.label"></span>
+                    @if($detailsSource)
+                        <small x-show="{{ $detailsSource }}[item.value]" x-text="{{ $detailsSource }}[item.value]" class="block text-xs text-gray-600"></small>
+                    @endif
+                </li>
             </template>
         </ul>
-        <p x-show="results.length === 0" class="px-3 py-3 text-sm text-gray-500">Nincs egyező találat.</p>
-        @if($maxResults)<p x-show="results.length === maxResults" class="px-3 py-2 text-xs text-gray-600">Az első {{ $maxResults }} találat. Szűkítsd a keresést a további helyekhez.</p>@endif
+        <p x-show="results.length === 0" @if($emptyMessage) x-text="{{ $emptyMessage }}" @endif class="px-3 py-3 text-sm text-gray-500">Nincs egyező találat.</p>
+        @if($maxResults && !$searchEvent)<p x-show="results.length === maxResults" class="px-3 py-2 text-xs text-gray-600">Az első {{ $maxResults }} találat. Szűkítsd a keresést a további helyekhez.</p>@endif
         <p role="status" aria-live="polite" class="sr-only" x-text="results.length + ' találat'"></p>
     </div>
     @if($hasError)<p id="{{ $id }}-error" @if($errorActive) x-show="{{ $errorActive }}" @endif class="mt-1 text-sm text-red-700">{{ $errors->first($name) }}</p>@endif

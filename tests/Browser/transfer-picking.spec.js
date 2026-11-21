@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 
 async function choose(page, label, query, option) {
@@ -42,7 +43,7 @@ test('a transfer picks partial quantities from multiple bins and unassigned stoc
     await post('/products', { product_name: productName, sku, category_id: 1, price: 1 });
     const products = await (await page.request.get('/products?search=' + sku)).text();
     const productId = Number(products.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
-    await post('/movements', { request_key: randomUUID(), product_id: productId, warehouse_id: sourceWarehouse, quantity: 40, type: 'in' });
+    seedUsableStock({ product_id: productId, warehouse_id: sourceWarehouse, quantity: 40 });
 
     for (const [code, quantity] of [['PICK-A', 20], ['PICK-B', 15]]) {
         const location = await post(sourcePath + '/locations', { code, name: code + ' rekesz', kind: 'shelf', max_weight_kg: 100 });

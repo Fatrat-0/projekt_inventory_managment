@@ -1,6 +1,5 @@
 export default function listingSort(applied, formId) {
     return {
-        params: { ...applied },
         primary: applied.sort_by,
         direction: applied.sort_dir,
         secondary: applied.then_by || '',
@@ -9,16 +8,15 @@ export default function listingSort(applied, formId) {
         isOpen: false,
         previousOverflow: null,
         resetDraft() {
-            this.primary = this.params.sort_by;
-            this.direction = this.params.sort_dir;
-            this.secondary = this.params.then_by || '';
-            this.secondaryDirection = this.params.then_dir || 'asc';
-            this.secondaryEnabled = Boolean(this.params.then_by);
+            this.primary = applied.sort_by;
+            this.direction = applied.sort_dir;
+            this.secondary = applied.then_by || '';
+            this.secondaryDirection = applied.then_dir || 'asc';
+            this.secondaryEnabled = Boolean(applied.then_by);
         },
         restorePage(event) {
             if (!event.persisted) return;
             this.close();
-            this.params = { ...applied };
             this.resetDraft();
         },
         openDialog() {
@@ -89,15 +87,27 @@ export default function listingSort(applied, formId) {
         apply() {
             const form = document.getElementById(formId);
             if (!form) return;
-            this.params = { sort_by: this.primary, sort_dir: this.direction };
+            const sort = { sort_by: this.primary, sort_dir: this.direction };
             if (this.secondaryEnabled && this.secondary && this.secondary !== this.primary) {
-                this.params.then_by = this.secondary;
-                this.params.then_dir = this.secondaryDirection;
+                sort.then_by = this.secondary;
+                sort.then_dir = this.secondaryDirection;
             }
-            // Commit only on Apply; wait for the hidden GET fields to update.
+            this.close();
+            // Keep this document's controls on its applied sort, including in BFCache.
+            // Only the next GET should receive the draft.
             this.$nextTick(() => {
-                this.close();
-                form.requestSubmit();
+                const submitSort = ({ formData }) => {
+                    for (const key of ['sort_by', 'sort_dir', 'then_by', 'then_dir']) {
+                        if (sort[key]) formData.set(key, sort[key]);
+                        else formData.delete(key);
+                    }
+                };
+                form.addEventListener('formdata', submitSort);
+                try {
+                    form.requestSubmit();
+                } finally {
+                    form.removeEventListener('formdata', submitSort);
+                }
             });
         },
         destroy() { this.close(); },

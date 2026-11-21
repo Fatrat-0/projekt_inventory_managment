@@ -138,6 +138,13 @@ if (($argv[1] ?? '') === '--worker') {
         $service = app(InventoryService::class);
         match ($job['action']) {
             'movement' => $service->recordMovement($job['data'], $job['requestKey'] ?? null),
+            'manual_receipt' => $service->receiveManual($job['data'], $job['requestKey']),
+            'relocate' => app(\App\Services\WarehouseRelocationService::class)->relocate(
+                User::findOrFail($job['actor']), $job['data'],
+            ),
+            'manual_putaway' => app(\App\Services\ManualReceiptPutawayService::class)->putaway(
+                User::findOrFail($job['actor']), \App\Models\ManualReceiptBatch::findOrFail($job['id']), $job['data'],
+            ),
             'return' => $service->recordReturn(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'quality' => $service->processReturnQuality(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'user_delete' => User::findOrFail($job['id'])->delete(),
@@ -256,6 +263,8 @@ try {
     connectTestDatabase($database);
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
     $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations', 'transfer_intents', 'transfer_workflow_events', 'warehouse_memberships', 'transfer_stock_reservations', 'warehouse_transfer_tasks', 'warehouse_transfer_allocations', 'vehicles', 'vehicle_operations', 'shipment_assignment_cargos', 'shipment_cargo_confirmations', 'shipment_plan_operations', 'shipment_intent_assignments', 'shipment_dispatches', 'shipment_transit_items', 'shipment_receipts', 'shipment_receipt_items', 'shipment_receipt_putaways'];
+    $tables[] = 'inventory_movement_sources';
+    array_push($tables, 'manual_receipt_batches', 'manual_receipt_putaways', 'warehouse_relocations');
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
     $user = User::factory()->create(['role' => 'worker']);
@@ -818,28 +827,39 @@ try {
     $literalStock = Stock::create(['product_id' => $literalProduct->product_id, 'warehouse_id' => $dashboardWarehouse->warehouse_id, 'quantity' => 3, 'min_quantity' => 0]);
     $beforeStockReads = $queueSnapshot();
     $allStocks = Stock::with(['product.category', 'warehouse'])->get();
+    $stockAvailability = app(WarehouseStockAvailability::class);
+    $stockStates = $allStocks->mapWithKeys(fn ($row) => [$row->id => $stockAvailability->snapshot($row->warehouse_id, $row->product_id)]);
     foreach (array_keys(\App\Queries\StockListing::STATUSES) as $status) {
-        $wanted = $allStocks->filter(fn ($row) => match ($status) {
-            'low' => $row->available_quantity < $row->min_quantity,
-            'out' => $row->available_quantity === 0,
-            'positive' => $row->available_quantity > 0,
-            'quarantined' => $row->quarantined_quantity > 0,
-            'zero' => $row->quantity === 0,
-            'ok' => $row->available_quantity >= $row->min_quantity && $row->available_quantity > 0,
-            default => true,
+        $wanted = $allStocks->filter(function ($row) use ($stockStates, $status) {
+            $direct = $stockStates[$row->id]['direct_issue_quantity'];
+            $pickable = $stockStates[$row->id]['pickable_quantity'];
+            return match ($status) {
+                'low' => $pickable !== null && $pickable < $row->min_quantity,
+                'out' => $direct === 0,
+                'positive' => $direct > 0,
+                'quarantined' => $row->quarantined_quantity > 0,
+                'zero' => $row->quantity === 0,
+                'ok' => $pickable >= $row->min_quantity && $pickable > 0,
+                'unknown' => $direct === null,
+                default => true,
+            };
         });
         $listing = new \App\Queries\StockListing(Request::create('/stock', 'GET', ['stock_status' => $status]));
         $actualIds = $listing->query()->pluck('stocks.id')->all(); $expectedIds = $wanted->pluck('id')->all();
         sort($actualIds); sort($expectedIds);
         check($actualIds === $expectedIds, 'Stock listing MySQL '.$status.' returned incorrect rows.');
         $summary = $listing->summary();
-        check((int)$summary->physical === (int)$wanted->sum('quantity') && (int)$summary->available === (int)$wanted->sum('available_quantity')
+        check((int)$summary->physical === (int)$wanted->sum('quantity')
+            && (int)$summary->available === (int)$wanted->sum(fn ($row) => $stockStates[$row->id]['direct_issue_quantity'])
+            && (int)$summary->unknown_count === $wanted->filter(fn ($row) => !$stockStates[$row->id]['consistent'])->count()
             && (int)$summary->quarantined === (int)$wanted->sum('quarantined_quantity')
             && (int)$summary->products_count === $wanted->pluck('product_id')->unique()->count(), 'Stock listing MySQL '.$status.' totals are incorrect.');
     }
     foreach (['quantity', 'available', 'quarantined_quantity', 'min_quantity'] as $field) foreach (['asc', 'desc'] as $direction) {
-        $value = fn ($row) => $field === 'available' ? $row->available_quantity : $row->$field;
+        $value = fn ($row) => $field === 'available' ? $stockStates[$row->id]['direct_issue_quantity'] : $row->$field;
         $expected = $allStocks->sort(function ($a, $b) use ($value, $direction) {
+            $missing = ($value($a) === null) <=> ($value($b) === null);
+            if ($missing !== 0) return $missing;
             $compared = ($value($a) <=> $value($b)) ?: ($a->id <=> $b->id);
             return $direction === 'asc' ? $compared : -$compared;
         })->pluck('id')->all();
@@ -1176,6 +1196,69 @@ try {
             }
             $pickingRaceCount++;
             echo 'PASS: picking '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
+    $manualIssueRaceCount = 0;
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['two issues', 'duplicate request', 'issue versus reservation', 'issue versus pick'] as $index => $scenario) {
+            $sku = 'MANUAL-ISSUE-RACE-'.$index.'-'.(int) $outerSnapshot;
+            $product = Product::create(['category_id' => $category->getKey(), 'product_name' => $scenario, 'sku' => $sku, 'price' => 1]);
+            $stock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 200]);
+            $bin = $intentSource->storageLocations()->create(['code' => $sku, 'name' => 'Polc', 'kind' => 'shelf', 'max_weight_grams' => 100000]);
+            $bin->placements()->create(['stock_id' => $stock->id, 'quantity' => 100, 'cargo_weight_grams' => 10000]);
+            $quantity = $scenario === 'issue versus pick' ? 40 : 60;
+            $allocation = fn (int $quantity) => ['source_type' => 'location', 'location_id' => $bin->id, 'quantity' => $quantity];
+            $issue = ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(), 'data' => [
+                'product_id' => $product->getKey(), 'warehouse_id' => $intentSource->getKey(), 'user_id' => $user->id,
+                'type' => 'out', 'quantity' => $quantity, 'source_allocations' => [$allocation($quantity)],
+            ]];
+            $other = $issue;
+            if ($scenario === 'two issues') $other['requestKey'] = (string) Str::uuid();
+            if (in_array($scenario, ['issue versus reservation', 'issue versus pick'], true)) {
+                $result = $intentService->create($requester, array_replace($intentData, [
+                    'product_id' => $product->getKey(), 'quantity' => 150, 'operation_key' => (string) Str::uuid(),
+                ]));
+                $intent = TransferIntent::findOrFail($result['intent']['id']);
+                $command = fn () => ['version' => $intent->refresh()->version, 'operation_key' => (string) Str::uuid()];
+                $intentService->approve($supervisor, $intent, $command());
+                $other = ['action' => 'stock_reservation', 'operation' => 'reserve', 'id' => $intent->id,
+                    'actor' => $supervisor->id, 'outerSnapshot' => $outerSnapshot, 'data' => $command()];
+                if ($scenario === 'issue versus pick') {
+                    $reservationService->reserve($supervisor, $intent, $command());
+                    $tasks->create($supervisor, $intent, $command());
+                    $other['action'] = 'pick_task';
+                    $other['data'] = $command() + ['quantity' => 100, 'source_allocations' => [$allocation(100)]];
+                }
+            }
+            $expected = $scenario === 'duplicate request' ? ['OK', 'OK'] : ['OK', 'REJECTED'];
+            check(race($database, $product->getKey(), [$issue, $other]) === $expected, $scenario.': unexpected issue outcomes.');
+
+            $movements = InventoryMovement::where('product_id', $product->getKey())->with('issueSources')->get();
+            $issued = (int) $movements->sum('quantity');
+            check($movements->count() <= 1 && ($issued === 0 || $issued === $quantity), $scenario.': duplicate or partial movement.');
+            $snapshot = $availability->snapshot($intentSource->getKey(), $product->getKey());
+            $reserved = $snapshot['source_reserved_quantity'];
+            $staged = $snapshot['staged_quantity'];
+            $balances = [$issued, $reserved, $staged];
+            $allowed = match ($scenario) {
+                'issue versus pick' => [[40, 150, 0], [0, 50, 100]],
+                'issue versus reservation' => [[60, 0, 0], [0, 150, 0]],
+                default => [[60, 0, 0]],
+            };
+            check(in_array($balances, $allowed, true) && $snapshot['consistent'] && $stock->refresh()->quantity === 200 - $issued
+                && (int) $bin->placements()->sum('quantity') === 100 - $issued - $staged, $scenario.': stock, holds and bin do not reconcile.');
+            if ($issued > 0) {
+                $movement = $movements->sole();
+                $source = $movement->issueSources->sole();
+                check($movement->stock_before === 200 && $movement->stock_after === 200 - $issued
+                    && $source->warehouse_location_id === $bin->id && $source->quantity === $issued,
+                    $scenario.': inconsistent or missing issue audit.');
+            }
+            $requestKeys = array_unique(array_filter([$issue['requestKey'], $other['requestKey'] ?? null]));
+            check(DB::table('inventory_movement_requests')->whereIn('request_key', $requestKeys)->count() === $movements->count(),
+                $scenario.': rejected or replayed issue left another claim.');
+            $manualIssueRaceCount++;
+            echo 'PASS: manual bin issue '.$scenario.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
         }
     }
     $planningRaceCount = 0;
@@ -1973,8 +2056,103 @@ try {
     $putawayRaceCount++;
     echo 'PASS: shipment receipt putaway rolls back after a late audit failure'.PHP_EOL;
 
+    $manualReceiptRaceCount = 0;
+    $manualReceiver = User::factory()->create(['role' => 'admin']);
+    foreach ([false, true] as $outerSnapshot) {
+        $product = Product::factory()->create(['category_id' => $category->getKey()]);
+        $warehouse = Warehouse::factory()->create();
+        $receive = ['action' => 'manual_receipt', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(),
+            'data' => ['user_id' => $manualReceiver->id, 'product_id' => $product->getKey(), 'warehouse_id' => $warehouse->getKey(), 'quantity' => 20]];
+        check(race($database, [], [$receive, $receive], recordBarrier: $product) === ['OK', 'OK'], 'Manual receipt retry failed.');
+        $batch = \App\Models\ManualReceiptBatch::where('product_id', $product->getKey())->sole();
+        check($batch->pending_putaway_quantity === 20, 'Manual receipt protection was duplicated.');
+        $bin = fn (string $code) => $warehouse->storageLocations()->create(['code' => $code, 'name' => $code,
+            'kind' => 'shelf', 'active' => true, 'max_weight_grams' => 15000]);
+        $first = $bin('MANUAL-RACE-01');
+        $second = $bin('MANUAL-RACE-02');
+        $place = ['action' => 'manual_putaway', 'id' => $batch->id, 'actor' => $manualReceiver->id, 'outerSnapshot' => $outerSnapshot,
+            'data' => ['operation_key' => (string) Str::uuid(), 'version' => 1, 'to_location_id' => $first->id,
+                'quantity' => 15, 'cargo_weight_kg' => 1, 'pallet_slots' => 0, 'confirmed' => true, 'site_verified' => true]];
+        $other = array_replace($place, ['data' => array_replace($place['data'], ['operation_key' => (string) Str::uuid(), 'to_location_id' => $second->id])]);
+        check(race($database, [], [$place, $other], recordBarrier: $product) === ['OK', 'REJECTED'], 'Concurrent manual putaway reused held stock.');
+        $winner = $batch->putaways()->sole();
+        $replay = $winner->operation_key === $place['data']['operation_key'] ? $place : $other;
+        check(race($database, [], [$replay, $replay], recordBarrier: $product) === ['OK', 'OK'], 'Manual putaway retry failed.');
+        $balance = $availability->snapshot($warehouse->getKey(), $product->getKey());
+        check($batch->fresh()->pending_putaway_quantity === 5 && $batch->putaways()->count() === 1
+            && $balance['physical_quantity'] === 20 && $balance['assigned_quantity'] === 15 && $balance['pending_putaway_quantity'] === 5
+            && InventoryMovement::where('product_id', $product->getKey())->count() === 1, 'Manual putaway balances drifted.');
+        $manualReceiptRaceCount += 3;
+        echo 'PASS: manual receipt and putaway replay and version conflict'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+
+    $relocationRaceCount = 0;
+    foreach ([false, true] as $outerSnapshot) {
+        $warehouse = Warehouse::factory()->create();
+        $newStock = function () use ($category, $warehouse) {
+            $product = Product::factory()->create(['category_id' => $category->getKey()]);
+
+            return Stock::create(['warehouse_id' => $warehouse->getKey(), 'product_id' => $product->getKey(), 'quantity' => 20]);
+        };
+        $bin = function (string $code, int $capacity = 20000) use ($warehouse) {
+            return $warehouse->storageLocations()->create(['code' => $code, 'name' => $code,
+                'kind' => 'shelf', 'active' => true, 'max_weight_grams' => $capacity]);
+        };
+        $place = fn (Stock $stock, WarehouseLocation $location, int $grams) => $location->placements()->create([
+            'stock_id' => $stock->id, 'quantity' => 20, 'cargo_weight_grams' => $grams, 'pallet_slots' => 0,
+        ]);
+        $command = fn (Stock $stock, WarehouseLocation $source, WarehouseLocation $target, int $quantity) => [
+            'action' => 'relocate', 'actor' => $manualReceiver->id, 'outerSnapshot' => $outerSnapshot,
+            'data' => ['warehouse_id' => $warehouse->getKey(), 'product_id' => $stock->product_id,
+                'from_location_id' => $source->id, 'to_location_id' => $target->id, 'quantity' => $quantity,
+                'confirmed' => true, 'site_verified' => true, 'operation_key' => (string) Str::uuid()],
+        ];
+        $stock = $newStock();
+        $source = $bin('REK-FORRAS');
+        $first = $bin('REK-CEL1');
+        $second = $bin('REK-CEL2');
+        $place($stock, $source, 10000);
+        $jobs = [$command($stock, $source, $first, 15), $command($stock, $source, $second, 15)];
+        foreach ($jobs as &$job) $job['data'] += ['cargo_weight_kg' => 7.5, 'pallet_slots' => 0];
+        unset($job);
+        check(race($database, $stock->product_id, $jobs) === ['OK', 'REJECTED'], 'Relocations used the same source stock twice.');
+        $audit = \App\Models\WarehouseRelocation::where('warehouse_id', $warehouse->getKey())->sole();
+        $remaining = $source->placements()->sole();
+        check($audit->quantity === 15 && $remaining->quantity === 5 && $remaining->cargo_weight_grams === 10000
+            && $remaining->load_requires_verification
+            && (int) $first->placements()->sum('quantity') + (int) $second->placements()->sum('quantity') === 15
+            && $stock->fresh()->quantity === 20 && InventoryMovement::where('product_id', $stock->product_id)->doesntExist(),
+            'Competing relocations changed physical stock or lost the retained source load.');
+
+        $another = $newStock();
+        $retrySource = $bin('REK-UUID-FORRAS');
+        $retryTarget = $bin('REK-UUID-CEL');
+        $place($another, $retrySource, 6000);
+        $duplicate = $command($another, $retrySource, $retryTarget, 20);
+        check(race($database, $another->product_id, [$duplicate, $duplicate]) === ['OK', 'OK'], 'Same UUID did not replay a whole relocation.');
+        check($retrySource->placements()->doesntExist() && $retryTarget->placements()->sole()->quantity === 20
+            && \App\Models\WarehouseRelocation::where('operation_key', $duplicate['data']['operation_key'])->count() === 1,
+            'Relocation idempotency duplicated a placement or its audit.');
+
+        $left = $newStock();
+        $right = $newStock();
+        $leftBin = $bin('REK-KAPACITAS-1');
+        $rightBin = $bin('REK-KAPACITAS-2');
+        $shared = $bin('REK-KAPACITAS-CEL', 10000);
+        $place($left, $leftBin, 8000);
+        $place($right, $rightBin, 8000);
+        $jobs = [$command($left, $leftBin, $shared, 20), $command($right, $rightBin, $shared, 20)];
+        check(race($database, [], $jobs, recordBarrier: $warehouse) === ['OK', 'REJECTED'], 'Relocations exceeded shared target capacity.');
+        check($shared->placements()->sole()->cargo_weight_grams === 8000
+            && (int) $leftBin->placements()->sum('quantity') + (int) $rightBin->placements()->sum('quantity') === 20
+            && $left->fresh()->quantity === 20 && $right->fresh()->quantity === 20,
+            'Losing a target capacity race released source stock or booked a warehouse movement.');
+        $relocationRaceCount += 3;
+        echo 'PASS: warehouse relocation source, UUID and target capacity'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+
     echo (69 + $intentRaceCount + $reservationRaceCount + $pickingRaceCount + $planningRaceCount + $cargoRaceCount
-        + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount)." MySQL concurrency checks passed.\n";
+        + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount + $manualIssueRaceCount + $manualReceiptRaceCount + $relocationRaceCount)." MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

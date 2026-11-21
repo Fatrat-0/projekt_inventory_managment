@@ -83,6 +83,8 @@ class ShipmentReceiptStockProtectionTest extends TestCase
         $this->assertSame('pending', $legacy->status);
         $this->assertSame(0, $bin->placements()->count());
         $this->assertBalance(200, 0, 0);
+        $choices = $this->getJson(route('movements.out.options', ['warehouse_id' => $this->warehouse->getKey()]))->assertOk();
+        $this->assertNotContains((string) $this->productId, array_column($choices->json('products'), 'id'));
         $this->rejectsQuantity(fn () => $this->movement('out', 1));
 
         $listing = new StockListing(Request::create('/stock', 'GET', [
@@ -97,6 +99,65 @@ class ShipmentReceiptStockProtectionTest extends TestCase
         $expected = (int) $product->stocks()->sum('quantity') - (int) $product->stocks()->sum('quarantined_quantity') - 200;
         $this->get(route('products.show', $product))->assertOk()
             ->assertViewHas('product', fn (Product $shown) => (int) $shown->total_available === $expected);
+    }
+
+    public function test_manual_and_shipment_holds_are_counted_once_in_both_availability_projections(): void
+    {
+        $params = ['warehouse_id' => $this->warehouse->getKey(), 'product_id' => $this->productId];
+        $this->postJson(route('movements.store'), $params + [
+            'type' => 'in', 'quantity' => 30, 'confirmed' => true, 'request_key' => (string) Str::uuid(),
+        ])->assertCreated();
+        $this->assertBalance(280, 50, 50, 230);
+        $this->getJson(route('movements.stock', $params + ['details' => 1]))->assertOk()
+            ->assertJsonPath('pending_putaway_quantity', 230)->assertJsonPath('pickable_quantity', 50);
+        $this->getJson(route('movements.out.options', $params))->assertOk()
+            ->assertJsonFragment(['id' => (string) $this->productId, 'pickable_quantity' => 50, 'direct_issue_quantity' => 50]);
+    }
+
+    public function test_protected_receipt_is_shown_separately_and_movement_origin_filters_use_links(): void
+    {
+        $params = ['warehouse_id' => $this->warehouse->getKey(), 'product_id' => $this->productId];
+        $this->getJson(route('movements.stock', $params + ['details' => 1]))->assertOk()
+            ->assertJsonPath('physical_quantity', 250)->assertJsonPath('pending_putaway_quantity', 200)
+            ->assertJsonPath('direct_issue_quantity', 50)->assertJsonPath('pickable_quantity', 50);
+        $this->get(route('stock.index', $params))->assertOk()->assertSee('250 db')->assertSee('50 db')->assertSee('Betárolásra vár');
+
+        $receipt = InventoryMovement::where($params)->whereNotNull('shipment_receipt_item_id')->sole();
+        $dispatch = InventoryMovement::where('product_id', $this->productId)->whereNotNull('shipment_transit_item_id')->sole();
+        $this->get(route('movements.index', $params + ['origin' => 'shipment_receipt', 'search' => $receipt->movement_number,
+            'type' => 'in', 'sort_by' => 'quantity', 'sort_dir' => 'asc', 'per_page' => 10, 'page' => 1]))
+            ->assertOk()->assertSee('Fuvarátvétel')->assertViewHas('movements', fn ($page) => $page->total() === 1 && $page->first()->is($receipt));
+        $this->get(route('movements.index', $params + ['origin' => 'manual_in']))
+            ->assertOk()->assertSee('Kézi bevételezés')->assertViewHas('movements', fn ($page) => $page->total() === 1 && !$page->first()->isShipmentReceipt());
+        $this->get(route('movements.show', $receipt))->assertOk()->assertSee('Átvételi munkalap megnyitása');
+        $this->get(route('movements.show', $dispatch))->assertOk()->assertSee('Fuvar megnyitása');
+        $this->get(route('export.movements', $params + ['origin' => 'shipment_receipt', 'preview' => 1]))
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+        $this->actingAs(User::factory()->create(['role' => 'worker']));
+        $this->get(route('movements.show', $receipt))->assertOk()->assertDontSee('Átvételi munkalap megnyitása');
+        $this->get(route('movements.show', $dispatch))->assertOk()->assertDontSee('Fuvar megnyitása');
+    }
+
+    public function test_mixed_manual_issue_keeps_pending_receipt_protected_even_with_preflight(): void
+    {
+        $params = ['warehouse_id' => $this->warehouse->getKey(), 'product_id' => $this->productId];
+        $bin = $this->warehouse->storageLocations()->create(['code' => 'KIAD-01', 'name' => 'Próbapolc', 'kind' => 'shelf',
+            'active' => true, 'max_weight_grams' => 500000]);
+        app(WarehouseCapacity::class)->place($bin, ['product_id' => $this->productId, 'quantity' => 30,
+            'cargo_weight_kg' => '1', 'user_id' => $this->admin->id]);
+        $payload = $params + ['type' => 'out', 'request_key' => (string) Str::uuid(), 'quantity' => 51,
+            'source_allocations' => [['source_type' => 'location', 'location_id' => $bin->id, 'quantity' => 30],
+                ['source_type' => 'unassigned', 'quantity' => 21]]];
+        $this->getJson(route('movements.out.sources', $params + ['quantity' => 51]))->assertOk()
+            ->assertJsonPath('direct_issue_quantity', 20)->assertJsonPath('pending_putaway_quantity', 200)->assertJsonCount(0, 'suggestion');
+        $this->postJson(route('movements.out.validate'), $payload)->assertUnprocessable()->assertJsonValidationErrors('quantity');
+        $this->postJson(route('movements.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('quantity');
+        $this->assertBalance(250, 20, 50);
+        $payload['quantity'] = 50;
+        $payload['source_allocations'][1]['quantity'] = 20;
+        $this->postJson(route('movements.store'), $payload)->assertOk()
+            ->assertJsonPath('stock_before', 250)->assertJsonPath('stock_after', 200)->assertJsonCount(2, 'sources');
+        $this->assertBalance(200, 0, 0);
     }
 
     public function test_source_reservation_picking_and_another_dispatch_keep_receipt_stock_protected(): void
@@ -178,12 +239,12 @@ class ShipmentReceiptStockProtectionTest extends TestCase
         }
     }
 
-    private function assertBalance(int $physical, int $unassigned, int $free): void
+    private function assertBalance(int $physical, int $unassigned, int $free, int $pending = 200): void
     {
         $stock = app(WarehouseStockAvailability::class)->snapshot($this->warehouse->getKey(), $this->productId);
         $this->assertTrue($stock['consistent']);
         $this->assertSame($physical, $stock['physical_quantity']);
-        $this->assertSame(200, $stock['pending_putaway_quantity']);
+        $this->assertSame($pending, $stock['pending_putaway_quantity']);
         $this->assertSame($unassigned, $stock['unassigned_usable_quantity']);
         $this->assertSame($free, $stock['free_quantity']);
     }

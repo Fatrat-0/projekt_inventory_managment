@@ -1,3 +1,4 @@
+@inject('relocationPolicy', \App\Policies\WarehouseRelocationPolicy::class)
 <x-warehouse-layout :$warehouse :context="$params['context'] ?? ''" :detail-context="$params['detail_context'] ?? ''">
     @php
         $locationParams = $params + ['warehouseLocation' => $location];
@@ -56,7 +57,12 @@
             </section>
         @endif
         <section aria-labelledby="placements-title" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-            <h2 id="placements-title" class="font-semibold text-gray-900">Tárhelyen tárolt tételek</h2>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <h2 id="placements-title" class="font-semibold text-gray-900">Tárhelyen tárolt tételek</h2>
+                @if($location->active && $placements->total() && $relocationPolicy->canAccessWarehouse(auth()->user(), (int) $warehouse->getKey()))
+                    <x-warehouse-relocate-from :$location :$params />
+                @endif
+            </div>
             <ul class="divide-y divide-gray-100">
                 @forelse($placements as $placement)
                     <li class="flex flex-wrap items-center justify-between gap-3 py-3">

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { seedUsableStock } from './movement-fixtures';
 
 async function login(page, email = 'browser@example.test') {
     await page.goto('/login');
@@ -21,7 +22,7 @@ async function post(page, url, data) {
 async function makeReturn(page, { marker, quantity = 8, product = 1, warehouse = 1, reason = marker, partner = '' }) {
     const common = { product_id: String(product), warehouse_id: String(warehouse), quantity: String(quantity) };
     // Supply this fixture's issue independently of the available balance left by previous cases.
-    expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'in' })).status()).toBe(302);
+    seedUsableStock(common);
     const reference = marker+'-OUT-'+randomUUID();
     expect((await post(page, '/movements', { ...common, request_key: randomUUID(), type: 'out', reference, partner_id: partner })).status()).toBe(302);
     const listing = await page.request.get('/movements?search='+encodeURIComponent(reference));

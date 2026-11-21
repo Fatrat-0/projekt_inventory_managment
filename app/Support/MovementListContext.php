@@ -32,7 +32,7 @@ class MovementListContext
                 if (is_array($decoded)) {
                     $quality = ($decoded['view'] ?? null) === 'return_quality';
                     $keys = $quality ? ['search', 'status', 'product_id', 'warehouse_id', 'partner_id', 'sort_by', 'sort_dir', 'per_page', 'page']
-                        : ['search', 'type', 'kind', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'];
+                        : ['search', 'type', 'kind', 'origin', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to', 'sort_by', 'sort_dir', 'per_page', 'page'];
                     foreach ($keys as $key) {
                         if (isset($decoded[$key]) && is_scalar($decoded[$key])) $filters[$key] = $decoded[$key];
                     }

@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\{Shipment, ShipmentReceiptItem, ShipmentStop};
-use App\Services\{ShipmentReceiptPutawayReader, ShipmentReceivingReader};
+use App\Services\{PutawayTaskListing, ShipmentReceiptPutawayReader, ShipmentReceivingReader};
 use App\Support\{ListingSort, ListingSuggestions};
 use Illuminate\Http\{JsonResponse, Request, Response};
 use Illuminate\Support\Facades\{DB, Gate};
@@ -15,9 +15,9 @@ class WarehouseReceivingPageController extends Controller
         return $this->queue($request, $reader, false);
     }
 
-    public function putawayIndex(Request $request, ShipmentReceivingReader $reader): Response|JsonResponse
+    public function putawayIndex(Request $request, ShipmentReceivingReader $reader, PutawayTaskListing $listing): Response|JsonResponse
     {
-        return $this->queue($request, $reader, true);
+        return $this->queue($request, $reader, $listing);
     }
 
     public function show(Request $request, Shipment $shipment, ShipmentStop $stop, ShipmentReceivingReader $reader): Response
@@ -46,30 +46,31 @@ class WarehouseReceivingPageController extends Controller
         return $this->page('warehouse-putaway.show', compact('detail', 'history', 'shipmentUrl', 'receivingUrl', 'item'));
     }
 
-    private function queue(Request $request, ShipmentReceivingReader $reader, bool $putaway): Response|JsonResponse
+    private function queue(Request $request, ShipmentReceivingReader $reader, PutawayTaskListing|false $listing): Response|JsonResponse
     {
+        $putaway = $listing !== false;
         Gate::authorize('viewAnyReceiving', Shipment::class);
         $actor = $request->user();
-        $validation = ShipmentReceivingReader::listFilters($request->query(), $putaway);
+        $validation = ShipmentReceivingReader::listFilters($request->query(), $putaway, $putaway);
         $suggestions = ListingSuggestions::requested($request);
         if ($suggestions) $validation->validate();
         $filterErrors = $validation->errors();
         $allowed = array_keys($validation->getRules());
         $filters = array_diff_key($request->only($allowed), array_flip($filterErrors->keys()));
         $filters = ListingSort::normalize($filters,
-            $putaway ? ShipmentReceivingReader::PUTAWAY_SORTS : ShipmentReceivingReader::RECEIVING_SORTS,
+            $putaway ? PutawayTaskListing::SORTS : ShipmentReceivingReader::RECEIVING_SORTS,
             $putaway ? 'id' : 'shipment_id');
         if ($suggestions && !ListingSuggestions::hasQuery($filters)) return ListingSuggestions::response();
         if ($suggestions) {
             $searchFilters = ListingSuggestions::filters($filters);
-            $rows = DB::transaction(fn () => $putaway ? $reader->pendingPutaway($actor, $searchFilters) : $reader->openStops($actor, $searchFilters));
+            $rows = $listing ? $listing->paginate($actor, $searchFilters) : $reader->openStops($actor, $searchFilters);
 
             return ListingSuggestions::response($rows->items(), $putaway
                 ? fn (array $row) => [
-                    'key' => 'putaway-'.$row['id'],
+                    'key' => 'putaway-'.$row['origin'].'-'.$row['id'],
                     'value' => $row['sku'],
                     'name' => $row['product_name'],
-                    'detail' => $row['sku'].' · '.$row['shipment_number'].' · '.$row['warehouse_name'],
+                    'detail' => $row['sku'].' · '.$row['reference_number'].' · '.$row['warehouse_name'],
                 ]
                 : fn (array $row) => [
                     'key' => 'receiving-'.$row['stop']['id'],
@@ -79,7 +80,7 @@ class WarehouseReceivingPageController extends Controller
                 ]);
         }
         $warehouses = $reader->warehouses($actor)->get(['warehouse_id', 'warehouse_name']);
-        $rows = DB::transaction(fn () => $putaway ? $reader->pendingPutaway($actor, $filters) : $reader->openStops($actor, $filters));
+        $rows = DB::transaction(fn () => $listing ? $listing->paginate($actor, $filters) : $reader->openStops($actor, $filters));
 
         return $this->page($putaway ? 'warehouse-putaway.index' : 'warehouse-receiving.index',
             [$putaway ? 'items' : 'stops' => $rows] + compact('filters', 'filterErrors', 'warehouses'));

@@ -114,7 +114,7 @@ class MovementReturnTest extends TestCase
             $this->postReturn($original, array_replace($data, [$field => $value]))->assertUnprocessable()->assertJsonValidationErrors('request_key');
         }
         $this->postJson('/movements', ['request_key' => $data['request_key'], 'product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id,
-            'type' => 'in', 'quantity' => 2])->assertUnprocessable()->assertJsonValidationErrors('request_key');
+            'type' => 'in', 'quantity' => 2, 'confirmed' => true])->assertUnprocessable()->assertJsonValidationErrors('request_key');
         $this->assertSame(10, Stock::sole()->quantity);
         $this->assertDatabaseCount('inventory_movements', 2);
         $this->assertDatabaseCount('inventory_movement_requests', 1);
@@ -187,7 +187,7 @@ class MovementReturnTest extends TestCase
         $this->get(route('movements.return.create', $return))->assertNotFound();
         $this->postReturn($return)->assertUnprocessable()->assertJsonValidationErrors('movement');
         $this->postJson('/movements', ['request_key' => (string)Str::uuid(), 'product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id,
-            'type' => 'in', 'quantity' => 1, 'return_of_id' => $original->id, 'return_reason' => 'Hamis visszáru'])->assertRedirect();
+            'type' => 'in', 'quantity' => 1, 'confirmed' => true, 'return_of_id' => $original->id, 'return_reason' => 'Hamis visszáru'])->assertCreated();
         $this->assertFalse(InventoryMovement::latest('id')->first()->isReturn());
         $this->assertDatabaseCount('inventory_movements', 3);
     }

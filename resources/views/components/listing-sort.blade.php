@@ -6,10 +6,10 @@
     $field = 'mt-1 min-h-11 w-full min-w-0 rounded-md border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500';
 @endphp
 <div data-listing-sort x-data="listingSort(@js($applied), @js($form))" @pageshow.window="restorePage($event)" {{ $attributes->class('min-w-0 max-w-full text-sm') }}>
-    <input type="hidden" name="sort_by" value="{{ $filters['sort_by'] }}" disabled :disabled="false" :value="params.sort_by">
-    <input type="hidden" name="sort_dir" value="{{ $filters['sort_dir'] }}" disabled :disabled="false" :value="params.sort_dir">
-    <input type="hidden" name="then_by" value="{{ $filters['then_by'] ?? '' }}" disabled :disabled="!params.then_by" :value="params.then_by || ''">
-    <input type="hidden" name="then_dir" value="{{ $filters['then_dir'] ?? '' }}" disabled :disabled="!params.then_by" :value="params.then_dir || ''">
+    <input type="hidden" name="sort_by" value="{{ $filters['sort_by'] }}" disabled :disabled="false">
+    <input type="hidden" name="sort_dir" value="{{ $filters['sort_dir'] }}" disabled :disabled="false">
+    <input type="hidden" name="then_by" value="{{ $filters['then_by'] ?? '' }}" disabled :disabled="@js(empty($filters['then_by']))">
+    <input type="hidden" name="then_dir" value="{{ $filters['then_dir'] ?? '' }}" disabled :disabled="@js(empty($filters['then_by']))">
 
     <button type="button" x-cloak x-ref="trigger" data-listing-sort-trigger @click="openDialog()"
         aria-haspopup="dialog" aria-controls="{{ $form }}-sort-dialog" :aria-expanded="isOpen"

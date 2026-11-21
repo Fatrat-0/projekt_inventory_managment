@@ -15,13 +15,37 @@ test('global search sits on the right and each list has a single page heading in
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page.locator('main h1')).toBeVisible();
         const topbar = page.locator('[data-app-topbar]');
         await expect(topbar.getByRole('heading')).toHaveCount(0);
-        await expect(topbar.getByRole('navigation')).toHaveCount(path === 'warehouses' ? 1 : 0);
+        await expect(topbar.getByRole('navigation')).toHaveCount(['warehouses', 'movements', 'quality-returns'].includes(path) ? 1 : 0);
         await expect(search(page)).toBeVisible();
         const bar = await topbar.boundingBox(); const field = await search(page).boundingBox();
         expect(field.x, path).toBeGreaterThan(bar.x + bar.width / 2); expect(bar.height, path).toBeLessThanOrEqual(60);
         const title = await page.locator('main h1').boundingBox();
         expect(title.y - (bar.y + bar.height), path+' title should start close to the global bar').toBeLessThanOrEqual(32);
         if (['dashboard', 'products', 'stock'].includes(path)) await page.screenshot({ path: 'tests/Browser/.runtime/compact-'+path+'-desktop.png', fullPage: true });
+    }
+});
+
+test('movement list, new movement and quality share the topbar on desktop and mobile', async ({ page }) => {
+    await login(page);
+    const navigation = page.locator('[data-app-topbar]').getByRole('navigation', { name: 'Készletmozgások nézetei' });
+    const movements = navigation.getByRole('link', { name: 'Mozgásnapló', exact: true });
+    const quality = navigation.getByRole('link', { name: 'Minősítés', exact: true });
+    for (const width of [1440, 320]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.goto('/movements');
+        await expect(movements).toHaveAttribute('aria-current', 'page');
+        await expect(page.locator('main').getByRole('link', { name: 'Minősítési munkalista', exact: true })).toHaveCount(0);
+        await page.getByRole('link', { name: '+ Új mozgás', exact: true }).click();
+        await expect(page.getByRole('heading', { name: 'Új készletmozgás', exact: true })).toBeVisible();
+        await expect(movements).toBeVisible();
+        await expect(quality).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        await quality.click();
+        await expect(page).toHaveURL(/\/quality-returns$/);
+        await expect(quality).toHaveAttribute('aria-current', 'page');
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+        await movements.click();
+        await expect(page).toHaveURL(/\/movements$/);
     }
 });
 

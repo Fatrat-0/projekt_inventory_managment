@@ -1,4 +1,6 @@
 import intentSubmission from './transfer-intent-submission';
+import readJson from './warehouse-json';
+import stockCaption from './putaway-stock-caption';
 
 const number = new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 3 });
 const date = new Intl.DateTimeFormat('hu-HU', {
@@ -8,6 +10,7 @@ const axes = ['width', 'depth', 'height'];
 const geometryChecks = ['cargo_dimensions', 'location_dimensions', 'remaining_physical_space'];
 const labels = { pending: 'Betárolásra vár', partial: 'Részben betárolva', completed: 'Teljesen betárolva' };
 const statuses = { verified: 'Ellenőrzött', conditional: 'Feltételes', rejected: 'Nem alkalmas' };
+const receiptItem = response => response?.item ?? response?.batch;
 
 function integer(value, min, max) {
     const text = String(value).trim();
@@ -21,35 +24,8 @@ function weightGrams(value) {
     return /^\d+(\.\d{1,3})?$/.test(text) && parsed >= 1 && parsed <= 1_000_000_000 ? parsed : null;
 }
 
-async function readJson(url, signal, payload) {
-    const headers = { Accept: 'application/json' };
-    if (payload) {
-        headers['Content-Type'] = 'application/json';
-        headers['X-CSRF-TOKEN'] = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
-    }
-    let response;
-    try {
-        response = await fetch(url, {
-            signal, headers, credentials: 'same-origin', cache: 'no-store',
-            method: payload ? 'POST' : 'GET', body: payload ? JSON.stringify(payload) : undefined,
-        });
-    } catch (error) {
-        if (error.name === 'AbortError') throw error;
-        throw new Error('A kapcsolat megszakadt. Próbáld újra.');
-    }
-
-    const data = await response.json().catch(() => null);
-    if (response.ok && data && !response.redirected) return data;
-    const status = response.redirected ? 401 : response.status;
-    const error = new Error([401, 419].includes(status)
-        ? 'A munkamenet lejárt. Jelentkezz be újra, majd nyisd meg a feladatot.'
-        : data?.message || 'Az adatok betöltése sikertelen. Próbáld újra.');
-    error.status = status;
-    throw error;
-}
-
 export default ({ detail, history, urls }) => ({
-    ...intentSubmission(result => result?.item?.id === detail.item.id && Boolean(result?.event?.id && result?.placement?.id)),
+    ...intentSubmission(result => receiptItem(result)?.id === detail.item.id && Boolean(result?.event?.id && result?.placement?.id)),
     detail,
     history,
     quantity: String(detail.item.pending_putaway_quantity || ''),
@@ -79,8 +55,10 @@ export default ({ detail, history, urls }) => ({
     confirmation: false,
     siteVerified: false,
     success: null,
+    previewRequest: null,
+    previewing: false,
 
-    destroy() { this.lookupRequest?.abort(); },
+    destroy() { this.lookupRequest?.abort(); this.previewRequest?.abort(); },
 
     get item() { return this.detail.item; },
     get draftLocked() { return this.submitting || this.pendingCommand !== null; },
@@ -142,9 +120,9 @@ export default ({ detail, history, urls }) => ({
     },
     get canReview() {
         return this.canLookUp && !this.loading && this.weightValue !== null && this.palletValue !== null
-            && Boolean(this.selected) && this.signature === this.selectedSignature;
+            && Boolean(this.selected) && (urls.preview || this.signature === this.selectedSignature);
     },
-    get canSave() { return this.canReview && this.confirmation && (!this.requiresSiteCheck || this.siteVerified); },
+    get canSave() { return this.canReview && this.signature === this.selectedSignature && this.confirmation && (!this.requiresSiteCheck || this.siteVerified); },
     get resultRows() {
         if (!this.results) return [];
         return this.showMore ? this.results : this.results.slice(0, this.mode === 'manual' ? 8 : 3);
@@ -165,10 +143,12 @@ export default ({ detail, history, urls }) => ({
         if (this.palletValue === null) return 'Add meg a raklaphelyigényt. Raklap nélküli áruhoz adj meg 0-t.';
         if (this.dimensionError) return 'Ellenőrizd a rakomány méreteit.';
         if (!this.selected) return 'Kérj ajánlást vagy válassz célrekeszt.';
+        if (this.selectedSignature !== this.signature) return 'Ellenőrizd a kijelölt rekeszt az aktuális rakományadatokkal.';
         if (this.requiresSiteCheck) return 'A rögzítéshez helyszíni elférés-ellenőrzés szükséges.';
         return '';
     },
 
+    stockCaption,
     numberValue(value) { return value == null ? '—' : number.format(value); },
     pieces(value) { return value == null ? '—' : `${number.format(value)} db`; },
     mass(value) { return value == null ? 'Ismeretlen' : `${number.format(value / 1000)} kg`; },
@@ -180,10 +160,6 @@ export default ({ detail, history, urls }) => ({
         const nameParts = new Set((location.name ?? '').split(' · '));
         return Object.values(location.position ?? {}).filter(text => text && !nameParts.has(text)).join(' · ');
     },
-    reason(location) {
-        const reasons = location.reasons ?? [];
-        return location.score?.same_product ? reasons[0] : reasons.at(-1);
-    },
     checks(checks) { return Object.values(checks ?? {}); },
 
     stopLookup() {
@@ -192,7 +168,13 @@ export default ({ detail, history, urls }) => ({
         this.loading = false;
     },
     clearSelection() {
+        this.invalidatePreview();
         this.selected = null;
+    },
+    invalidatePreview() {
+        this.previewRequest?.abort();
+        this.previewRequest = null;
+        this.previewing = false;
         this.selectedSignature = '';
         this.confirmation = false;
         this.siteVerified = false;
@@ -200,7 +182,8 @@ export default ({ detail, history, urls }) => ({
     changeCargo() {
         if (!this.packagingWeight) this.usePackaging = false;
         this.stopLookup();
-        this.clearSelection();
+        if (urls.preview) this.invalidatePreview();
+        else this.clearSelection();
         this.results = null;
         this.rejected = [];
         this.lookupError = '';
@@ -219,7 +202,8 @@ export default ({ detail, history, urls }) => ({
     async loadLocations() {
         if (!this.canLookUp) return;
         this.stopLookup();
-        this.clearSelection();
+        if (urls.preview) this.invalidatePreview();
+        else this.clearSelection();
         this.results = null;
         this.rejected = [];
         this.showMore = false;
@@ -241,13 +225,16 @@ export default ({ detail, history, urls }) => ({
                 ...this.cargo, ...(manual && search ? { search } : {}),
             });
             if (!matchesRequest()) return;
-            if (result.item?.id !== this.item.id || result.item?.version !== version) {
+            if (receiptItem(result)?.id !== this.item.id || receiptItem(result)?.version !== version) {
                 this.needsRefresh = true;
                 this.lookupError = 'A tétel időközben megváltozott. Töltsd be az aktuális állapotát.';
                 return;
             }
             this.results = (manual ? result.locations : result.recommendations) ?? [];
             this.rejected = manual ? [] : (result.rejected ?? []);
+            if (this.selected) {
+                this.selected.product_stock = this.results.find(row => row.location_id === this.selected.location_id)?.product_stock;
+            }
         } catch (error) {
             if (!matchesRequest() || error.name === 'AbortError') return;
             this.needsRefresh = error.status === 409;
@@ -272,13 +259,56 @@ export default ({ detail, history, urls }) => ({
         this.clearSelection();
         this.selected = location;
         this.selectedSignature = this.signature;
-        this.$nextTick(() => this.$refs.selection.focus());
+        this.$nextTick(() => this.$refs.selection.focus({ preventScroll: true }));
     },
 
-    openConfirmation() {
-        if (!this.canReview) return;
+    async openConfirmation() {
+        if (!this.canReview || this.previewing || this.$refs.confirmation.open) return;
         this.confirmation = false;
         this.siteVerified = false;
+        if (urls.preview) {
+            this.clearIntentFeedback();
+            this.selectedSignature = '';
+            const controller = new AbortController();
+            this.previewRequest = controller;
+            this.previewing = true;
+            const signature = this.signature;
+            const version = this.item.version;
+            const locationId = this.selected.location_id;
+            const current = () => this.previewRequest === controller && this.signature === signature
+                && this.item.version === version && this.selected?.location_id === locationId;
+            try {
+                const result = await readJson(urls.preview, controller.signal, {
+                    ...this.cargo, version, to_location_id: locationId,
+                });
+                if (!current()) return;
+                if (result.batch?.id !== this.item.id || result.batch?.version !== version) {
+                    this.needsRefresh = true;
+                    return;
+                }
+                this.selected = result.location;
+                const blockers = Object.entries(result.blocking_reasons ?? {})
+                    .filter(([rule]) => !result.site_verification_required || !geometryChecks.includes(rule));
+                if (blockers.length) {
+                    this.submissionError = 'A kiválasztott rekeszhez a betárolás nem véglegesíthető.';
+                    this.fieldErrors = Object.fromEntries(blockers.map(([rule, reason]) => [rule, [reason]]));
+                    return;
+                }
+                if (!result.can_putaway && !result.site_verification_required) return;
+                this.selectedSignature = signature;
+            } catch (error) {
+                if (!current() || error.name === 'AbortError') return;
+                this.needsRefresh = error.status === 409;
+                if ([401, 403, 404, 419].includes(error.status)) this.accessError = error.message;
+                this.submissionError = error.message;
+                return;
+            } finally {
+                if (this.previewRequest === controller) {
+                    this.previewRequest = null;
+                    this.previewing = false;
+                }
+            }
+        }
         this.$refs.confirmation.showModal();
     },
     closeConfirmation() {
@@ -310,7 +340,8 @@ export default ({ detail, history, urls }) => ({
             if ([401, 403, 404, 419].includes(status)) this.accessError = this.submissionError;
             if ([409, 422].includes(status)) {
                 this.stopLookup();
-                this.clearSelection();
+                if (urls.preview) this.invalidatePreview();
+                else this.clearSelection();
                 this.results = null;
                 this.rejected = [];
             }
@@ -321,17 +352,18 @@ export default ({ detail, history, urls }) => ({
 
         this.pendingCommand = null;
         this.success = { ...result.placement, location_view_url: result.location_view_url };
-        this.detail.item = { ...this.item, ...result.item };
+        this.detail.item = { ...this.item, ...receiptItem(result) };
         this.quantity = String(this.item.pending_putaway_quantity || '');
         this.weight = '';
         this.usePackaging = false;
         this.pallets = '';
         this.dimensions = { width: '', depth: '', height: '' };
         this.note = '';
+        this.clearSelection();
         this.changeCargo();
         this.resetIntentSubmission();
         this.closeConfirmation();
-        this.$nextTick(() => this.$refs.success?.focus());
+        this.$nextTick(() => this.$refs.success?.focus({ preventScroll: true }));
         window.dispatchEvent(new CustomEvent('warehouse-tasks:changed'));
         this.loadHistory();
         await this.refresh(true);
@@ -341,16 +373,17 @@ export default ({ detail, history, urls }) => ({
         this.refreshing = true;
         this.stopLookup();
         if (!quiet) {
-            this.clearSelection();
+            if (urls.preview) this.invalidatePreview();
+            else this.clearSelection();
             this.results = null;
             this.rejected = [];
             this.lookupError = '';
         }
         try {
             const latest = await readJson(urls.detail);
-            if (latest.item?.id !== this.item.id) throw new Error('A betárolási tétel nem érhető el.');
+            if (receiptItem(latest)?.id !== this.item.id) throw new Error('A betárolási tétel nem érhető el.');
             if (latest.packaging?.revision !== this.detail.packaging?.revision) this.usePackaging = false;
-            this.detail = latest;
+            this.detail = { ...latest, item: receiptItem(latest) };
             this.needsRefresh = false;
             this.resetIntentSubmission();
             if (quiet) this.quantity = String(this.item.pending_putaway_quantity || '');

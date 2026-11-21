@@ -10,14 +10,19 @@ export default (initial) => {
             this.items = this.allItems.filter(item => item.types.includes(this.type));
             initialize.call(this);
             this.$watch('type', () => {
-                this.items = this.allItems.filter(item => item.types.includes(this.type));
-                // A dual-role partner stays selected when the movement direction changes.
-                if (this.value && !this.items.some(item => String(item.value) === this.value)) {
-                    this.value = ''; this.query = ''; this.notify();
-                }
-                this.open = false; this.active = -1;
-                this.syncValidity();
+                this.replaceItems(this.allItems);
+                this.open = false;
             });
+        },
+        replaceItems(items) {
+            this.allItems = items;
+            this.items = items.filter(item => item.types.includes(this.type));
+            // Keep a selection only if its current role still allows the movement.
+            if (this.value && !this.items.some(item => String(item.value) === this.value)) {
+                this.value = ''; this.query = ''; this.notify();
+            }
+            this.active = -1;
+            this.syncValidity();
         },
     });
 };

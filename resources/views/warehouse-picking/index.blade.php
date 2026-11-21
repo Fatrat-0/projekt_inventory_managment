@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-task-layout>
     @php
         $statuses = ['pending' => 'Várakozik', 'in_progress' => 'Folyamatban', 'picked' => 'Kitárolva', 'cancelled' => 'Visszavonva'];
         $styles = ['pending' => 'bg-gray-100 text-gray-800', 'in_progress' => 'bg-indigo-50 text-indigo-800', 'picked' => 'bg-emerald-50 text-emerald-800', 'cancelled' => 'bg-amber-50 text-amber-900'];
@@ -11,9 +11,7 @@
         $columns = 'xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1.25fr)_minmax(0,1.15fr)_minmax(0,0.75fr)]';
     @endphp
     <div class="app-page space-y-4 py-4" data-picking-task-list>
-        <x-page-toolbar title="Raktári feladatok" :count="$tasks->total()" unit="kitárolási feladat" />
-        @include('transfers.tabs')
-        @include('transfers.task-tabs')
+        <x-page-toolbar title="Kitárolási feladatok" :count="$tasks->total()" unit="kitárolási feladat" />
 
         <form id="picking-filters" x-data method="get" action="{{ route('warehouse-picking-pages.index') }}" aria-label="Raktári feladatok szűrése"
               class="relative rounded-lg border border-gray-200 bg-white p-4">
@@ -105,4 +103,4 @@
 
         @if ($tasks->hasPages()){{ $tasks->links('pagination.inventory') }}@endif
     </div>
-</x-app-layout>
+</x-warehouse-task-layout>

@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-task-layout>
     @php
         $statuses = ['pending' => 'Átvételre vár', 'partial' => 'Részben átvéve', 'received' => 'Teljesen átvéve'];
         $config = [
@@ -22,8 +22,6 @@
         <x-page-toolbar title="Átvételi munkalap">
             <a href="{{ route('shipments.show', $shipment) }}" class="{{ $button }}">Fuvar megnyitása</a>
         </x-page-toolbar>
-        @include('transfers.tabs')
-        @include('transfers.task-tabs')
 
         <p x-show="accessError" x-cloak x-ref="accessNotice" tabindex="-1" role="alert" x-text="accessError"
            class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900"></p>
@@ -94,5 +92,5 @@
 
         @include('warehouse-receiving.confirmation')
     </div>
-</x-app-layout>
+</x-warehouse-task-layout>
 

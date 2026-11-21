@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-async function login(page) {
+async function login(page, email = 'browser@example.test') {
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill('browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill(email);
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByLabel('Password', { exact: true }).press('Enter');
     await expect(page).toHaveURL(/dashboard/);
@@ -25,7 +25,9 @@ async function openForm(page) {
     await chooseWarehouse(page);
 }
 
-test.beforeEach(async ({ page }) => { await login(page); });
+test.beforeEach(async ({ page }, { tags }) => {
+    await login(page, tags.includes('@manual-out') ? 'warehouse-admin@example.test' : undefined);
+});
 
 test('product suggestions appear in the same field and editing clears the old identifier', async ({ page }) => {
     await openForm(page);
@@ -44,11 +46,29 @@ test('product suggestions appear in the same field and editing clears the old id
     expect(await input.evaluate(element => element.checkValidity())).toBe(false);
 });
 
-test('a slow previous stock response cannot overwrite the new selection', async ({ page }) => {
+test('product search retains text entered while the form script is loading', async ({ page }) => {
+    let releaseScript;
+    const script = new Promise(resolve => { releaseScript = resolve; });
+    await page.route('**/build/assets/app-*.js', async route => { await script; await route.continue(); }, { times: 1 });
+    const input = page.getByRole('combobox', { name: 'Termék', exact: true });
+    try {
+        await page.goto('/movements/create', { waitUntil: 'commit' });
+        await input.fill('ALPHA');
+    } finally {
+        releaseScript();
+    }
+    await expect(input).toHaveValue('ALPHA');
+    const suggestion = page.getByRole('option', { name: 'Alpha teszttermék (ALPHA-001)', exact: true });
+    await suggestion.click();
+    await expect(page.locator('input[name="product_id"]')).toHaveValue('1');
+});
+
+test('a slow previous stock response cannot overwrite the new selection', { tag: '@manual-out' }, async ({ page }) => {
     await page.route('**/movements/stock?**', async route => {
         const id = new URL(route.request().url()).searchParams.get('product_id');
         if (id === '1') await new Promise(resolve => setTimeout(resolve, 500));
-        await route.fulfill({ json: { quantity: id === '1' ? 20 : 7 } });
+        const quantity = id === '1' ? 20 : 7;
+        await route.fulfill({ json: { physical_quantity: quantity, direct_issue_quantity: quantity, pickable_quantity: quantity, consistent: true } });
     });
     await openForm(page);
     await chooseProduct(page, '2');
@@ -65,7 +85,7 @@ test('stock request failure offers retry and recovers', async ({ page }) => {
     await page.route('**/movements/stock?**', async route => {
         requests++;
         if (requests === 1) return route.abort('failed');
-        await route.fulfill({ json: { quantity: 20 } });
+        await route.fulfill({ json: { physical_quantity: 20, direct_issue_quantity: 20, pickable_quantity: 20, consistent: true } });
     });
     await openForm(page);
     await expect(page.getByRole('status')).toContainText('A készlet nem tölthető be');
@@ -83,36 +103,40 @@ test('cancel and successful save retain the original list context', async ({ pag
     await chooseProduct(page);
     await chooseWarehouse(page);
     await page.getByLabel('Mennyiség (db)').fill('1');
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
+    await page.getByRole('button', { name: 'Bevételezés ellenőrzése', exact: true }).click();
+    await page.getByRole('button', { name: 'Bevételezés véglegesítése', exact: true }).click();
+    await page.getByRole('link', { name: 'Később tárolom be', exact: true }).click();
+    await page.getByRole('link', { name: '← Készletmozgások', exact: true }).click();
     await expect(page).toHaveURL(new RegExp('search=Alpha.*page=2'));
-    await expect(page.getByRole('status')).toContainText('Mozgás rögzítve: MOZ-');
 });
 
-test('insufficient stock shows linked field errors and preserves the form', async ({ page }) => {
+test('insufficient stock blocks issue preflight and preserves the form', { tag: '@manual-out' }, async ({ page }) => {
     await openForm(page);
     await page.getByLabel('Mozgás típusa').selectOption('out');
     await page.getByLabel('Mennyiség (db)').fill('999');
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page.locator('#movement-quantity')).toHaveAttribute('aria-invalid', 'true');
-    await expect(page.locator('#movement-quantity-error')).toContainText('Nincs elegendő készlet');
+    await expect(page.getByText('A megadott mennyiség meghaladja a legutóbb lekért készletet.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Kiadás ellenőrzése', exact: true })).toBeDisabled();
     await expect(page.getByLabel('Mennyiség (db)')).toHaveValue('999');
     await expect(page.locator('input[name="product_id"]')).toHaveValue('1');
 });
 
 test('first submit disables the button and repeated submit events are blocked', async ({ page }) => {
     await openForm(page);
-    // Keep the first submission on this document so its pending state can be inspected.
-    await page.evaluate(() => {
-        document.querySelector('form[action$="/movements"]').addEventListener('submit', event => event.preventDefault(), { once: true });
+    let finish;
+    let attempts = 0;
+    const held = new Promise(resolve => { finish = resolve; });
+    await page.route('**/movements', async route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        attempts++;
+        await held;
+        await route.continue();
     });
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Mentés…', exact: true })).toBeDisabled();
-    const prevented = await page.evaluate(() => {
-        const event = new Event('submit', { bubbles: true, cancelable: true });
-        document.querySelector('form[action$="/movements"]').dispatchEvent(event);
-        return event.defaultPrevented;
-    });
-    expect(prevented).toBe(true);
+    await page.getByRole('button', { name: 'Bevételezés ellenőrzése', exact: true }).click();
+    await page.getByRole('button', { name: 'Bevételezés véglegesítése', exact: true }).evaluate(button => { button.click(); button.click(); });
+    await expect(page.getByRole('button', { name: 'Rögzítés…', exact: true })).toBeDisabled();
+    finish();
+    await expect(page.getByText('1 db sikeresen bevételezve.')).toBeVisible();
+    expect(attempts).toBe(1);
 });
 
 
@@ -132,7 +156,9 @@ test('warehouse supports keyboard choice, Escape, and clearing', async ({ page }
     await page.getByRole('button', { name: 'Raktár törlése a mezőből', exact: true }).click();
     await expect(input).toHaveValue('');
     await expect(page.locator('input[name="warehouse_id"]')).toHaveValue('');
-    await expect(page.getByText('Válassz terméket és raktárt a készlet megtekintéséhez.', { exact: true })).toBeVisible();
+    const summary = page.getByRole('complementary', { name: 'Bevételezés összegzése' });
+    await expect(summary).toContainText('Válassz terméket és célraktárt.');
+    await expect(summary.getByRole('button', { name: 'Bevételezés ellenőrzése' })).toBeDisabled();
 });
 
 test('list product filter uses suggestions and clearing restores all products', async ({ page }) => {
@@ -161,8 +187,9 @@ test('replaying the same form creates one movement and details show its original
     }});
     expect(first.ok()).toBe(true);
     // The still-open original form submits exactly the same key and business payload.
-    await page.getByRole('button', { name: 'Mozgás rögzítése', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText('Mozgás rögzítve: MOZ-');
+    await page.getByRole('button', { name: 'Bevételezés ellenőrzése', exact: true }).click();
+    await page.getByRole('button', { name: 'Bevételezés véglegesítése', exact: true }).click();
+    await expect(page.getByText('1 db sikeresen bevételezve.')).toBeVisible();
     const after = await page.request.get('/movements/stock?product_id=1&warehouse_id=1');
     expect((await after.json()).physical_quantity).toBe(before + 1);
     await page.goto('/movements?search='+reference);

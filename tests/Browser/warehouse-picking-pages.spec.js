@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-const moduleUrl = '/atmozgatasok/raktari-feladatok';
+const moduleUrl = '/raktari-feladatok/kitarolas';
 const intentPage = id => '/atmozgatasok/igenyek/' + id;
 const taskPage = id => moduleUrl + '/' + id;
 const intentApi = id => '/transfer-intents/' + id;
@@ -44,9 +45,7 @@ async function createProduct(page, name, stock, warehouse = 1) {
     const listing = await response.text();
     const id = Number(listing.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
     if (stock > 0) {
-        await command(page, 'POST', '/movements', {
-            request_key: randomUUID(), product_id: id, warehouse_id: warehouse, quantity: stock, type: 'in',
-        }, 302);
+        seedUsableStock({ product_id: id, warehouse_id: warehouse, quantity: stock });
     }
 
     return { id, sku, name };
@@ -227,7 +226,7 @@ test('the supervisor secures stock and opens a task, then a dispatcher uses advi
         const dispatcher = await dispatcherContext.newPage();
         await login(dispatcher, dispatcherEmail);
         await dispatcher.goto(moduleUrl + '?search=' + product.sku);
-        await expect(dispatcher.getByRole('heading', { name: /^Raktári feladatok\b/, level: 1 })).toBeVisible();
+        await expect(dispatcher.getByRole('heading', { name: /^Kitárolási feladatok\b/, level: 1 })).toBeVisible();
         await expect(dispatcher.getByText(product.sku, { exact: true })).toBeVisible();
         await dispatcher.getByRole('link', { name: intent.reference, exact: true }).click();
         await expect(dispatcher).toHaveURL(new RegExp(taskPage(intent.id) + '(?:\\?task=\\d+)?$'));
@@ -240,6 +239,8 @@ test('the supervisor secures stock and opens a task, then a dispatcher uses advi
         const plan = visibleSource(dispatcher, rackCode).getByRole('link', { name: /^Megtekintés az alaprajzon/ });
         const [planPage] = await Promise.all([dispatcher.waitForEvent('popup'), plan.click()]);
         await expect(planPage).toHaveURL(/\/alaprajz\/\d+\?task=\d+$/);
+        await expect(planPage.locator('[data-app-topbar]').getByRole('link', { name: 'Kitárolás', exact: true }))
+            .toHaveAttribute('aria-current', 'page');
         await expect(planPage.locator('[data-picking-source=' + rackCode + ']')).toBeVisible();
         await expect(planPage.locator('[data-floor-tile^=system-][aria-pressed=true]')).toBeVisible();
         await expect(byName(planPage, 'Tervrajz szerkesztése')).toHaveCount(0);

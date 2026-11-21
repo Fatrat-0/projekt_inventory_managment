@@ -247,7 +247,8 @@ class InventoryWorkflowTest extends TestCase
     public function test_receipt_and_completion_cannot_overflow_stock_column(): void
     {
         Stock::where('warehouse_id', $this->source->warehouse_id)->update(['quantity' => 2147483647]);
-        $this->postJson(route('movements.store'), $this->movement(['type' => 'in', 'quantity' => 1]))->assertUnprocessable();
+        $this->postJson(route('movements.store'), $this->movement(['type' => 'in', 'quantity' => 1, 'confirmed' => true]))
+            ->assertUnprocessable()->assertJsonValidationErrors('quantity');
         $this->assertSame(2147483647, $this->quantity($this->source));
         $this->assertDatabaseCount('inventory_movements', 0);
         Stock::create(['product_id' => $this->product->product_id, 'warehouse_id' => $this->destination->warehouse_id, 'quantity' => 2147483647]);

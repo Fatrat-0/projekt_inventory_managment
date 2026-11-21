@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\{Category, Product, Stock, TransferIntent, User, Warehouse, WarehouseLocation, WarehousePlacement};
+use App\Queries\StockListing;
 use App\Services\{InventoryService, SmartPicking, TransferIntentService, WarehouseCapacity, WarehouseStockAvailability};
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -135,6 +137,13 @@ class WarehouseStockAvailabilityTest extends TestCase
         $this->assertFalse($locations[$inactive->id]['active']);
         $this->assertSame(50, $locations[$inactive->id]['stored_quantity']);
         $this->assertSame(0, $locations[$inactive->id]['available_quantity']);
+
+        $this->actingAs(User::factory()->create(['role' => 'worker']));
+        $this->getJson(route('movements.stock', ['product_id' => $stock->product_id, 'warehouse_id' => $stock->warehouse_id, 'details' => 1]))
+            ->assertOk()->assertJsonPath('physical_quantity', 100)->assertJsonPath('direct_issue_quantity', 10)
+            ->assertJsonPath('pickable_quantity', 40)->assertJsonPath('inactive_bin_quantity', 50);
+        $this->get(route('stock.index'))->assertOk()->assertSee('Közvetlenül kiadható')
+            ->assertSee('Kitárolható összesen 40 db')->assertSee('Inaktív rekeszben');
     }
 
     public function test_approved_intent_does_not_change_any_availability_or_create_a_source_reservation(): void
@@ -210,6 +219,9 @@ class WarehouseStockAvailabilityTest extends TestCase
         $this->assertNull($result['free_quantity']);
         $this->assertNull($result['direct_issue_quantity']);
         $this->assertNull($result['pickable_quantity']);
+        $invalid = (new StockListing(Request::create('/stock', 'GET', ['stock_status' => 'unknown'])))->query()->sole();
+        $this->assertNull($invalid->direct_issue_quantity);
+        $this->assertNull($invalid->pickable_quantity);
         foreach ($result['locations'] as $location) {
             $this->assertNull($location['available_quantity']);
         }
@@ -356,7 +368,15 @@ class WarehouseStockAvailabilityTest extends TestCase
 
     private function snapshot(?Warehouse $warehouse = null): array
     {
-        return app(WarehouseStockAvailability::class)->snapshot(($warehouse ?? $this->source)->getKey(), $this->product->getKey());
+        $snapshot = app(WarehouseStockAvailability::class)->snapshot(($warehouse ?? $this->source)->getKey(), $this->product->getKey());
+        if ($snapshot['stock_id'] !== null) {
+            $listed = WarehouseStockAvailability::listingRows()->where('balances.id', $snapshot['stock_id'])->first();
+            foreach (['direct_issue_quantity', 'pickable_quantity', 'assigned_quantity', 'staged_quantity', 'source_reserved_quantity', 'pending_putaway_quantity'] as $field) {
+                $this->assertSame($snapshot[$field], $listed->$field === null ? null : (int) $listed->$field, $field);
+            }
+        }
+
+        return $snapshot;
     }
 
     private function stock(Warehouse $warehouse, int $quantity, int $quarantined = 0, ?Product $product = null): Stock

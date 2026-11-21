@@ -2,6 +2,19 @@ export default (initial) => ({
     ...initial,
     value: String(initial.value ?? ''), query: '', open: false, active: -1, available: null,
     init() {
+        const input = this.$el.querySelector('input[role="combobox"]');
+        // Text inputs strip line breaks from their HTML default before Alpine starts.
+        if (input && input.value !== input.defaultValue.replace(/[\r\n]/g, '')) {
+            const replaced = this.value !== '';
+            this.value = '';
+            this.query = input.value;
+            this.open = document.activeElement === input;
+            this.$nextTick(() => {
+                this.syncValidity();
+                if (replaced) this.notify();
+            });
+            return;
+        }
         const selected = this.items.find(item => String(item.value) === this.value);
         this.query = selected?.label ?? '';
         if (!selected) {
@@ -20,7 +33,7 @@ export default (initial) => ({
         for (const item of this.items) {
             if (this.available && !this.available.has(String(item.value))) continue;
             const text = this.normalize(item.search ?? item.label);
-            if (!words.every(word => text.includes(word))) continue;
+            if (!initial.searchEvent && !words.every(word => text.includes(word))) continue;
             matches.push(item);
             if (matches.length === this.maxResults) break;
         }
@@ -41,7 +54,7 @@ export default (initial) => ({
         this.active = -1;
     },
     syncValidity() {
-        this.$refs.input?.setCustomValidity(!this.value && this.query ? 'Válassz egy elemet a találati listából.' : '');
+        this.$refs.input?.setCustomValidity(initial.validateSelection !== false && !this.value && this.query ? 'Válassz egy elemet a találati listából.' : '');
     },
     notify() { this.$dispatch(this.eventName, { value: this.value }); },
     edit() {
@@ -51,6 +64,7 @@ export default (initial) => ({
         this.active = -1;
         this.syncValidity();
         if (hadSelection) this.notify();
+        if (initial.searchEvent) this.$dispatch(initial.searchEvent, { query: this.query });
     },
     choose(item) {
         this.value = String(item.value);
@@ -66,6 +80,7 @@ export default (initial) => ({
     clear() {
         this.value = ''; this.query = ''; this.active = -1;
         this.syncValidity(); this.notify(); this.$refs.input.focus();
+        if (initial.searchEvent) this.$dispatch(initial.searchEvent, { query: '' });
         // Clearing a filter must leave the apply/save buttons reachable below it.
         this.open = false;
     },

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 
 async function login(page, admin = false) {
@@ -32,10 +33,19 @@ test('list pages use the full desktop workspace and collapsed sidebar space whil
     await page.getByRole('button', { name: 'Oldalsáv megjelenítése', exact: true }).click();
     await page.setViewportSize({ width: 1920, height: 1000 });
     await page.screenshot({ path: 'tests/Browser/.runtime/workspace-stock-wide.png', fullPage: true });
-    for (const path of ['/movements/create', '/partners/create']) {
-        await page.goto(path);
-        expect((await page.locator('#main-content form').first().boundingBox()).width).toBeLessThan(1000);
-    }
+    await page.goto('/partners/create');
+    expect((await page.locator('#main-content form').first().boundingBox()).width).toBeLessThan(1000);
+
+    await page.goto('/movements/create');
+    const movementForm = page.locator('#main-content form').first();
+    const movement = await movementForm.boundingBox();
+    const fields = await movementForm.locator('fieldset').first().boundingBox();
+    const receiptSummary = await movementForm.getByRole('complementary', { name: 'Bevételezés összegzése' }).boundingBox();
+    expect(movement.width).toBeLessThanOrEqual(1360);
+    expect(fields.width).toBeLessThan(1000);
+    expect(receiptSummary.x).toBeGreaterThan(fields.x + fields.width);
+    expect(receiptSummary.x + receiptSummary.width).toBeLessThanOrEqual(movement.x + movement.width + 1);
+
     await page.goto('/transfers/create');
     const workspace = await page.locator('#main-content').boundingBox();
     const transfer = await page.locator('#main-content form').first().boundingBox();
@@ -117,7 +127,7 @@ test('task indicator uses real pending transfers, supports keyboard and closes b
     expect((await post(page, '/products', { product_name: 'Feladat teszt', sku, category_id: 1, price: 1, min_stock_override: 0 })).status()).toBe(302);
     const html = await (await page.request.get('/products?search='+sku)).text();
     const product = Number(html.match(/href="[^"]*\/products\/(\d+)\/edit/)[1]);
-    expect((await post(page, '/movements', { request_key: randomUUID(), product_id: product, warehouse_id: 1, quantity: 5, type: 'in' })).status()).toBe(302);
+    seedUsableStock({ product_id: product, warehouse_id: 1, quantity: 5 });
     expect((await post(page, '/transfers', { request_key: randomUUID(), product_id: product, from_warehouse_id: 1, to_warehouse_id: targetId, quantity: 1 })).status()).toBe(302);
     await page.reload();
     const trigger = page.getByRole('button', { name: /^Nyitott feladatok,/ });

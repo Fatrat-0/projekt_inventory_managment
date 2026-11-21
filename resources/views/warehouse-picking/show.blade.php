@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-warehouse-task-layout>
     @php
         $statuses = ['pending' => 'Várakozik', 'in_progress' => 'Folyamatban', 'picked' => 'Kitárolva', 'cancelled' => 'Visszavonva'];
         $config = [
@@ -21,8 +21,6 @@
         <x-page-toolbar title="Kitárolási feladat">
             <a href="{{ route('transfer-intent-pages.show', $intent) }}" class="{{ $secondary }}">Átmozgatási igény megnyitása</a>
         </x-page-toolbar>
-        @include('transfers.tabs')
-        @include('transfers.task-tabs')
 
         <p hidden :hidden="!accessError" x-ref="accessNotice" tabindex="-1" role="alert" x-text="accessError"
            class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"></p>
@@ -225,4 +223,4 @@
             </div>
         </dialog>
     </div>
-</x-app-layout>
+</x-warehouse-task-layout>

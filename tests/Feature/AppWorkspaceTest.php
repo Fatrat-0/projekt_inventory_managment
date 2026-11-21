@@ -31,9 +31,15 @@ class AppWorkspaceTest extends TestCase
         $worker = $this->getJson('/search')->assertOk()->assertHeader('Cache-Control', 'no-store, private')->json('results');
         $this->assertCount(6, $worker);
         foreach ($worker as $result) { $this->assertSame('Oldal', $result['kind']); $this->get($result['url'])->assertOk(); }
-        foreach (['admin', 'manager'] as $role) {
+        foreach (['admin' => 10, 'manager' => 9] as $role => $count) {
             $this->actingAs(User::factory()->create(['role' => $role]));
-            $this->getJson('/search')->assertOk()->assertJsonCount(9, 'results');
+            $this->getJson('/search')->assertOk()->assertJsonCount($count, 'results');
+            $search = $this->getJson('/search?q=raktari+feladatok')->assertOk();
+            if ($role === 'admin') {
+                $search->assertJsonPath('results.0.url', route('warehouse-tasks.index'));
+            } else {
+                $search->assertJsonCount(0, 'results');
+            }
         }
     }
 

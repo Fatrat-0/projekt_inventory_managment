@@ -30,7 +30,7 @@ export default ({ urls, canManage, sortColumns }) => ({
     ...intentSubmission(result => Boolean(result?.vehicle?.id)),
     vehicles: [],
     search: '',
-    status: 'active',
+    status: canManage ? '' : 'active',
     sortBy: 'name',
     sortDirection: 'ascending',
     loading: true,

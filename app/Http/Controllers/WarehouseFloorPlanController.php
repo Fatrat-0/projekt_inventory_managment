@@ -2,7 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\{Shipment, ShipmentReceiptItem, TransferIntent, Warehouse, WarehouseLocation, WarehouseStorageSystem};
+use App\Models\{ManualReceiptBatch, Shipment, ShipmentReceiptItem, TransferIntent, Warehouse, WarehouseLocation, WarehouseStorageSystem};
+use App\Policies\WarehouseRelocationPolicy;
 use App\Services\WarehouseFloorPlan;
 use App\Services\{WarehouseCapacity, WarehouseStorageDesigner};
 use App\Support\{WarehouseListContext, WarehouseStockContext, WarehouseStorageOverview};
@@ -39,19 +40,40 @@ class WarehouseFloorPlanController extends Controller
 
     public function putaway(ShipmentReceiptItem $item, WarehouseLocation $warehouseLocation)
     {
-        [$warehouse, $putawayTarget, $plan] = DB::transaction(function () use ($item, $warehouseLocation) {
-            Gate::authorize('putawayReceiptItem', [Shipment::class, $item]);
-            abort_unless((int) $warehouseLocation->warehouse_id === (int) $item->to_warehouse_id, 404,
-                'A célrekesz nem ehhez az átvételi raktárhoz tartozik.');
-            $preview = $this->locationPreview($item->warehouse, $warehouseLocation);
+        Gate::authorize('putawayReceiptItem', [Shipment::class, $item]);
+
+        return $this->putawayPreview($item->warehouse, $warehouseLocation, route('warehouse-putaway-pages.show', $item));
+    }
+
+    public function manualPutaway(ManualReceiptBatch $batch, WarehouseLocation $warehouseLocation)
+    {
+        Gate::authorize('putawayInWarehouse', [Shipment::class, (int) $batch->warehouse_id]);
+
+        return $this->putawayPreview($batch->warehouse, $warehouseLocation, route('warehouse-putaway-pages.manual', $batch));
+    }
+
+    public function relocation(Request $request, Warehouse $warehouse, WarehouseLocation $warehouseLocation, WarehouseRelocationPolicy $policy)
+    {
+        $policy->authorize($request->user(), (int) $warehouse->getKey());
+
+        return $this->putawayPreview($warehouse, $warehouseLocation,
+            route('warehouses.relocations.create', $warehouse), 'Vissza az áthelyezéshez');
+    }
+
+    private function putawayPreview(
+        Warehouse $warehouse, WarehouseLocation $warehouseLocation, string $putawayBackUrl,
+        string $previewBackLabel = 'Vissza a betárolási munkalaphoz',
+    ) {
+        [$warehouse, $putawayTarget, $plan] = DB::transaction(function () use ($warehouse, $warehouseLocation) {
+            abort_unless((int) $warehouseLocation->warehouse_id === (int) $warehouse->getKey(), 404,
+                'A célrekesz nem ehhez a raktárhoz tartozik.');
+            $preview = $this->locationPreview($warehouse, $warehouseLocation);
             $object = $preview[1]->system ?? $preview[1];
             abort_if($object->floor_x === null || $object->floor_y === null, 404, 'A rekesz nincs elhelyezve az alaprajzon.');
 
             return $preview;
         });
-        $putawayBackUrl = route('warehouse-putaway-pages.show', $item);
-
-        return response()->view('warehouses.floor-plan', compact('warehouse', 'plan', 'putawayTarget', 'putawayBackUrl') + [
+        return response()->view('warehouses.floor-plan', compact('warehouse', 'plan', 'putawayTarget', 'putawayBackUrl', 'previewBackLabel') + [
             'pickingSource' => null, 'context' => null, 'detailContext' => null,
         ])->header('Cache-Control', 'private, no-store');
     }

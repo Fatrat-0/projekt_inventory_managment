@@ -49,18 +49,7 @@ class ShipmentReceiptPutawayReader
                 'status' => $receipt->shipment->status,
                 'stop_position' => $receipt->stop->position,
             ],
-            'packaging' => $packaging === null ? null : [
-                'id' => $packaging->id,
-                'name' => $packaging->name,
-                'pieces_per_package' => $packaging->pieces_per_package,
-                'gross_weight_grams' => $packaging->grossWeightGrams(),
-                'dimensions_cm' => [
-                    'width' => $packaging->width_cm,
-                    'depth' => $packaging->depth_cm,
-                    'height' => $packaging->height_cm,
-                ],
-                'revision' => TransferCargoWeight::packagingRevision($packaging),
-            ],
+            'packaging' => ReceiptPutawayCargo::packagingData($packaging),
         ];
     }
 

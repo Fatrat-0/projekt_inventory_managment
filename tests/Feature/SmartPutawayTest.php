@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\{Category, InventoryTransfer, Product, Stock, User, Warehouse, WarehouseLocation};
 use App\Services\{InventoryService, SmartPutaway, WarehouseCapacity, WarehouseStorageDesigner};
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -45,7 +46,9 @@ class SmartPutawayTest extends TestCase
         $this->assertSame('verified', $result['recommendations'][0]['status']);
         $this->assertContains('dimensions_fit', $result['recommendations'][0]['checks']['passed']);
         $this->assertSame(80000, $result['recommendations'][0]['score']['remaining_weight_grams']);
-        $this->assertNotEmpty($result['recommendations'][0]['reasons']);
+        $this->assertContains('A rakomány után 80 kg szabad teherbírás maradna.', $result['recommendations'][0]['reasons']);
+        $this->assertSame(['Azonos kapacitásmaradéknál a kisebb fizikai térfogat előnyt élvez.'],
+            $result['recommendations'][0]['ranking_notes']);
         $this->assertArrayHasKey('active', $this->rejected($result, $inactive)['checks']['failed']);
         $this->assertNotContains($foreign->id, array_column([...$result['recommendations'], ...$result['rejected']], 'location_id'));
         $this->assertSame($before, $this->warehouse->storageLocations()->orderBy('id')->get()->modelKeys());
@@ -231,6 +234,61 @@ class SmartPutawayTest extends TestCase
         $this->assertSame([], $engine->assessLocations($this->warehouse, $this->product, $cargo, $foreign->id));
         $this->assertDatabaseCount('warehouse_placements', 0);
         $this->assertDatabaseCount('inventory_transfers', 1);
+    }
+
+    public function test_stock_projection_counts_only_placed_units_of_the_requested_product_and_uses_bounded_queries(): void
+    {
+        [$target, $inactive] = $this->rack('KESZLET', 0, 100, 150);
+        $this->place($target, 5);
+        $this->place($inactive, 5);
+        $inactive->update(['active' => false]);
+        $mixed = $this->location('VEGYES');
+        $other = Product::factory()->create();
+        $otherStock = Stock::create(['warehouse_id' => $this->warehouse->getKey(), 'product_id' => $other->getKey(), 'quantity' => 90]);
+        foreach ([$target, $mixed] as $bin) {
+            $bin->placements()->create(['stock_id' => $otherStock->id, 'quantity' => 40, 'cargo_weight_grams' => 5000]);
+        }
+        $this->reserve($mixed, 5);
+        $foreignBin = $this->source->storageLocations()->create([
+            'code' => 'KULSO', 'name' => 'Külső tárhely', 'kind' => 'shelf', 'max_weight_grams' => 100000,
+        ]);
+        $foreignStock = Stock::where('warehouse_id', $this->source->getKey())->sole();
+        $foreignBin->placements()->create(['stock_id' => $foreignStock->id, 'quantity' => 5, 'cargo_weight_grams' => 5000]);
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $first = collect($this->recommend()['recommendations'])->keyBy('location_id');
+            $smallQueryCount = count(DB::getQueryLog());
+            $this->assertSame('conditional', $first[$target->id]['status']);
+            $this->assertSame([
+                'bin' => ['before' => 1, 'after' => 3],
+                'level' => ['before' => 2, 'after' => 4],
+                'system' => ['before' => 2, 'after' => 4, 'kind' => 'rack'],
+            ], $first[$target->id]['product_stock']);
+            $this->assertSame(['bin' => ['before' => 0, 'after' => 2], 'level' => null, 'system' => null],
+                $first[$mixed->id]['product_stock']);
+            $this->assertFalse($first->has($foreignBin->id));
+            $this->assertFalse($first->has($inactive->id));
+
+            foreach (range(1, 30) as $index) $this->location('URES-'.$index);
+            DB::flushQueryLog();
+            $this->assertCount(5, $this->recommend()['recommendations']);
+            $this->assertSame($smallQueryCount, count(DB::getQueryLog()));
+        } finally {
+            DB::disableQueryLog();
+        }
+    }
+
+    public function test_contradictory_stock_is_unknown_rather_than_an_empty_bin(): void
+    {
+        $bin = $this->location('KESZLET');
+        $this->place($bin, 1);
+        Stock::where('warehouse_id', $this->warehouse->getKey())->update(['quantity' => 0]);
+
+        $stock = $this->recommend()['recommendations'][0]['product_stock'];
+
+        $this->assertSame(['before' => null, 'after' => null], $stock['bin']);
     }
 
     private function recommend(array $overrides = []): array

@@ -1,3 +1,4 @@
+@inject('relocationPolicy', \App\Policies\WarehouseRelocationPolicy::class)
 <x-warehouse-layout :$warehouse :context="$params['context'] ?? ''" :detail-context="$params['detail_context'] ?? ''">
     @php
         $kg = \App\Models\WarehouseLocation::formatWeight(...);
@@ -62,6 +63,7 @@
             {{ $systems->links('pagination.inventory') }}
 
             @if($locations->total())
+                @php($canRelocate = $relocationPolicy->canAccessWarehouse(auth()->user(), (int) $warehouse->getKey()))
                 <details @if(!$systems->total() || request()->has('location_page')) open @endif class="rounded-lg border border-gray-200 bg-white">
                     <summary class="cursor-pointer px-4 py-3 font-semibold">Tárolórendszerhez nem rendelt tárhelyek · {{ $locations->total() }}</summary>
                     <div class="space-y-2 border-t border-gray-200 p-3">
@@ -70,8 +72,14 @@
                                 <summary class="cursor-pointer break-words p-3 text-sm"><strong>{{ $location->code }} · {{ $location->name }}</strong>@if(!$location->active) · Kikapcsolt @endif</summary>
                                 <div class="space-y-2 border-t border-gray-200 p-3">
                                     @include('warehouses.locations.capacity')
-                                    @include('warehouses.locations.stored-products', ['stored' => $products->get($location->id, collect())])
-                                    <a href="{{ route('warehouses.locations.show', $params + ['warehouseLocation' => $location]) }}" class="inline-flex min-h-10 items-center text-sm font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
+                                    @php($stored = $products->get($location->id, collect()))
+                                    @include('warehouses.locations.stored-products')
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <a href="{{ route('warehouses.locations.show', $params + ['warehouseLocation' => $location]) }}" class="inline-flex min-h-10 items-center text-sm font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
+                                        @if($canRelocate && $location->active && $stored->isNotEmpty())
+                                            <x-warehouse-relocate-from :$location :$params />
+                                        @endif
+                                    </div>
                                 </div>
                             </details>
                         @endforeach

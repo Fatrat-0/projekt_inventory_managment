@@ -12,6 +12,12 @@ class MovementListing
 {
     public const SORTS = ['created_at' => 'Dátum', 'type' => 'Irány', 'product_name' => 'Termék',
         'warehouse_name' => 'Raktár', 'quantity' => 'Mennyiség', 'user_name' => 'Rögzítette'];
+    public const KINDS = [
+        'regular' => 'Kézi és fuvaros mozgások',
+        'return' => 'Visszáruk',
+        'quarantined' => 'Minősítésre váró visszáruk',
+        'scrap' => 'Selejtezések',
+    ];
 
     public array $filters;
 
@@ -21,6 +27,7 @@ class MovementListing
             'search' => ['nullable', 'string', 'max:200'],
             'type' => ['nullable', Rule::in(['in', 'out', 'all'])],
             'kind' => ['nullable', Rule::in(['all', 'regular', 'return', 'scrap', 'quarantined'])],
+            'origin' => ['nullable', Rule::in(array_keys(InventoryMovement::ORIGIN_LABELS))],
             'product_id' => ['nullable', 'integer', 'exists:products,product_id'],
             'warehouse_id' => ['nullable', 'integer', 'exists:warehouses,warehouse_id'],
             'user_id' => ['nullable', 'integer', 'exists:users,id'],
@@ -32,7 +39,7 @@ class MovementListing
             'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 100])],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
-        $this->filters = array_replace(array_fill_keys(['search', 'type', 'kind', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to'], null), $data);
+        $this->filters = array_replace(array_fill_keys(['search', 'type', 'kind', 'origin', 'product_id', 'warehouse_id', 'user_id', 'partner_id', 'date_from', 'date_to'], null), $data);
         $this->filters['search'] = trim($data['search'] ?? '');
         $this->filters['type'] = ($data['type'] ?? null) === 'all' ? null : ($data['type'] ?? null);
         $this->filters['kind'] = ($data['kind'] ?? null) === 'all' ? null : ($data['kind'] ?? null);
@@ -46,6 +53,16 @@ class MovementListing
     {
         $f = $this->filters;
         $query = InventoryMovement::with(['product', 'warehouse', 'user', 'partner', 'qualityAction']);
+        match ($f['origin']) {
+            'manual_in', 'manual_out' => $query->whereNull('inventory_movements.return_of_id')->whereNull('inventory_movements.scrap_of_id')
+                ->whereNull('inventory_movements.shipment_transit_item_id')->whereNull('inventory_movements.shipment_receipt_item_id')
+                ->where('inventory_movements.type', $f['origin'] === 'manual_in' ? 'in' : 'out'),
+            'shipment_dispatch' => $query->whereNotNull('inventory_movements.shipment_transit_item_id'),
+            'shipment_receipt' => $query->whereNotNull('inventory_movements.shipment_receipt_item_id'),
+            'return' => $query->whereNotNull('inventory_movements.return_of_id'),
+            'scrap' => $query->whereNotNull('inventory_movements.scrap_of_id'),
+            default => null,
+        };
         if ($f['kind'] === 'regular') $query->whereNull('inventory_movements.return_of_id')->whereNull('inventory_movements.scrap_of_id');
         if ($f['kind'] === 'return') $query->whereNotNull('inventory_movements.return_of_id');
         if ($f['kind'] === 'scrap') $query->whereNotNull('inventory_movements.scrap_of_id');
@@ -118,7 +135,8 @@ class MovementListing
         $labels = [];
         if ($f['search'] !== '') $labels['search'] = 'Keresés: '.$f['search'];
         if ($f['type']) $labels['type'] = $f['type'] === 'in' ? 'Bevételezés' : 'Kiadás';
-        if ($f['kind']) $labels['kind'] = ['return' => 'Csak visszáruk', 'regular' => 'Csak normál mozgások', 'scrap' => 'Csak selejtezések', 'quarantined' => 'Minősítésre váró visszáruk'][$f['kind']];
+        if ($f['kind']) $labels['kind'] = self::KINDS[$f['kind']];
+        if ($f['origin']) $labels['origin'] = InventoryMovement::ORIGIN_LABELS[$f['origin']];
         if ($f['product_id']) $labels['product_id'] = 'Termék: '.Product::findOrFail($f['product_id'])->product_name;
         if ($f['warehouse_id']) $labels['warehouse_id'] = 'Raktár: '.Warehouse::findOrFail($f['warehouse_id'])->warehouse_name;
         if ($f['user_id']) $labels['user_id'] = 'Rögzítette: '.User::findOrFail($f['user_id'])->name;

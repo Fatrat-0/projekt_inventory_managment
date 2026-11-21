@@ -3,7 +3,7 @@
         <article data-movement-id="{{ $movement->id }}" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
             <header class="flex flex-wrap items-start justify-between gap-2">
                 <a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="font-mono text-xs text-indigo-600 hover:underline">{{ $movement->movement_number }}</a>
-                <span class="rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span>
+                <div class="space-y-1 text-right">@include('movements.origin')</div>
             </header>
             <div><h3 class="font-semibold text-gray-900"><a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="hover:text-indigo-600 hover:underline">{{ $movement->product->product_name }}</a></h3><p class="mt-1 break-all font-mono text-xs text-gray-500">{{ $movement->product->sku }}</p></div>
             <dl class="grid grid-cols-2 gap-3 rounded-md bg-gray-50 p-3 text-sm">

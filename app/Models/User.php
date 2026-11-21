@@ -38,7 +38,7 @@ class User extends Authenticatable
     protected static function booted(): void
     {
         static::deleting(function (self $user) {
-            if ($user->shipmentReceiptPutaways()->exists()) {
+            if ($user->shipmentReceiptPutaways()->exists() || $user->manualReceiptPutaways()->exists()) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'user' => 'A fiók megőrzendő betárolási eseményhez tartozik, ezért nem törölhető.',
                 ]);
@@ -69,7 +69,7 @@ class User extends Authenticatable
                 ]);
             }
             if (($exception->errorInfo[0] ?? $exception->getCode()) === '23000') {
-                if ($this->shipmentReceiptPutaways()->sharedLock()->first(['id'])) {
+                if ($this->shipmentReceiptPutaways()->sharedLock()->first(['id']) || $this->manualReceiptPutaways()->sharedLock()->first(['id'])) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'user' => 'A fiók megőrzendő betárolási eseményhez tartozik, ezért nem törölhető.',
                     ]);
@@ -127,6 +127,11 @@ class User extends Authenticatable
     public function shipmentReceiptPutaways(): HasMany
     {
         return $this->hasMany(ShipmentReceiptPutaway::class, 'actor_id');
+    }
+
+    public function manualReceiptPutaways(): HasMany
+    {
+        return $this->hasMany(ManualReceiptPutaway::class, 'actor_id');
     }
 
     /**

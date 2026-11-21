@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
+use App\Models\{User, Warehouse};
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -18,7 +18,7 @@ class AppNavigationTest extends TestCase
         return new \DOMXPath($document);
     }
 
-    public static function roles(): array { return [['admin', 9], ['manager', 9], ['worker', 6]]; }
+    public static function roles(): array { return [['admin', 10], ['manager', 9], ['worker', 6]]; }
 
     #[DataProvider('roles')]
     public function test_navigation_only_links_to_pages_the_role_can_open(string $role, int $count): void
@@ -29,7 +29,14 @@ class AppNavigationTest extends TestCase
         $links = $xpath->query("//nav[@aria-label='Főmenü']//a");
         $this->assertCount($count, $links);
         $this->assertCount($count, $xpath->query("//nav[@aria-label='Mobil főmenü']//a"));
-        foreach ($links as $link) $this->get($link->getAttribute('href'))->assertOk();
+        foreach ($links as $link) {
+            $href = $link->getAttribute('href');
+            if ($href === route('warehouse-tasks.index')) {
+                $this->get($href)->assertRedirectToRoute('warehouse-picking-pages.index');
+            } else {
+                $this->get($href)->assertOk();
+            }
+        }
         if ($role === 'worker') {
             foreach (['categories', 'warehouses', 'users'] as $path) {
                 $this->assertCount(0, $xpath->query("//nav[@aria-label='Főmenü']//a[@href='".route($path.'.index')."']"));
@@ -50,6 +57,11 @@ class AppNavigationTest extends TestCase
             ['/stock', 'stock.index', 'Készlet'],
             ['/movements/create', 'movements.index', 'Új készletmozgás'],
             ['/quality-returns', 'movements.index', 'Visszáru-minősítés'],
+            ['/raktari-feladatok/kitarolas', 'warehouse-tasks.index', 'Kitárolás'],
+            ['/raktari-feladatok/atvetel', 'warehouse-tasks.index', 'Átvétel'],
+            ['/raktari-feladatok/betarolas', 'warehouse-tasks.index', 'Betárolás'],
+            ['/raktari-feladatok/athelyezes', 'warehouses.index', 'Áthelyezési előzmények'],
+            ['/raktari-feladatok/athelyezes/uj', 'warehouses.index', 'Új áthelyezés'],
             ['/atmozgatasok', 'transfer-intent-pages.index', 'Átmozgatások'],
             ['/atmozgatasok/uj-igeny', 'transfer-intent-pages.index', 'Új átmozgatási igény'],
             ['/transfers/create', 'transfer-intent-pages.index', 'Új átmozgatás'],
@@ -69,10 +81,84 @@ class AppNavigationTest extends TestCase
         $selected = $xpath->query("//nav[@aria-label='Főmenü']//a[@aria-current='page']");
         $this->assertCount($active ? 1 : 0, $selected);
         if ($active) $this->assertSame(route($active), $selected->item(0)->getAttribute('href'));
-        $this->assertCount(0, $xpath->query("//header[@data-app-topbar]//nav"));
+        $topbarNavigation = "//header[@data-app-topbar]//nav";
+        $hasTopbarNavigation = $active === 'warehouse-tasks.index' || in_array($path, ['/quality-returns', '/movements/create'], true);
+        $this->assertCount($hasTopbarNavigation ? 1 : 0, $xpath->query($topbarNavigation));
+        if ($path === '/quality-returns') {
+            $current = $xpath->query($topbarNavigation."//a[@aria-current='page']");
+            $this->assertCount(1, $current);
+            $this->assertSame(route('quality-returns.index'), $current->item(0)->getAttribute('href'));
+        }
         $this->assertCount(1, $xpath->query('//main//h1'));
         $this->assertStringContainsString($label, $xpath->query('//title')->item(0)->textContent);
         foreach ($xpath->query('//main//a[@data-parent-navigation]') as $link) $this->get($link->getAttribute('href'))->assertOk();
+    }
+
+    public function test_warehouse_task_home_and_tabs_follow_existing_warehouse_permissions(): void
+    {
+        $warehouse = Warehouse::factory()->create();
+        $home = route('warehouse-tasks.index');
+        $this->get($home)->assertRedirect(route('login'));
+        $desktop = "//nav[@aria-label='Főmenü']";
+        $tabs = "//header[@data-app-topbar]//nav[@data-warehouse-task-tabs]//a";
+        $menuEntry = $desktop."//a[@href='".$home."']";
+
+        foreach ([
+            'requester' => [null, []],
+            'dispatch_operator' => ['warehouse-picking-pages.index', ['Kitárolás']],
+            'receiving_operator' => ['warehouse-receiving-pages.index', ['Átvétel', 'Betárolás']],
+            'supervisor' => ['warehouse-picking-pages.index', ['Kitárolás', 'Átvétel', 'Betárolás']],
+        ] as $role => [$target, $labels]) {
+            $member = User::factory()->create(['role' => 'worker']);
+            $member->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+            $this->actingAs($member);
+            $dashboard = $this->document($this->get('/dashboard')->assertOk()->getContent());
+            $this->assertCount($target ? 1 : 0, $dashboard->query($menuEntry));
+            if ($target === null) {
+                $this->get($home)->assertForbidden();
+                continue;
+            }
+
+            $this->get($home)->assertRedirectToRoute($target);
+            $page = $this->document($this->get(route($target))->assertOk()->getContent());
+            $actual = [];
+            foreach ($page->query($tabs) as $tab) $actual[] = $tab->getAttribute('aria-label');
+            $this->assertSame($labels, $actual);
+            $this->assertCount(0, $page->query($tabs."[@aria-label='Áthelyezés']"));
+            $this->assertCount(1, $page->query($menuEntry."[@aria-current='page']"));
+            $this->assertCount(1, $page->query($tabs."[@aria-current='page']"));
+            $this->assertCount(0, $page->query("//nav[@aria-label='Átmozgatások modul']"));
+        }
+    }
+
+    public function test_previous_task_urls_keep_ids_and_query_and_cannot_bypass_permissions(): void
+    {
+        $legacy = '/atmozgatasok/raktari-feladatok';
+        $canonical = '/raktari-feladatok';
+        $this->actingAs(User::factory()->create(['role' => 'admin']));
+        foreach ([
+            '' => '/kitarolas',
+            '/42' => '/kitarolas/42',
+            '/42/alaprajz/22' => '/kitarolas/42/alaprajz/22',
+            '/atvetel' => '/atvetel',
+            '/atvetel/42/7' => '/atvetel/42/7',
+            '/betarolas' => '/betarolas',
+            '/betarolas/42' => '/betarolas/42',
+            '/betarolas/42/alaprajz/22' => '/betarolas/42/alaprajz/22',
+            '/betarolas/kezi/42' => '/betarolas/kezi/42',
+            '/betarolas/kezi/42/alaprajz/22' => '/betarolas/kezi/42/alaprajz/22',
+        ] as $path => $target) {
+            $query = '?origin=manual&per_page=25&task=4';
+            $this->get($legacy.$path.$query)->assertRedirect($canonical.$target.$query);
+        }
+        $this->getJson($legacy.'/szamlalok')->assertOk()->assertJsonPath('counts.putaway', 0);
+        $this->get($legacy.'/ismeretlen')->assertNotFound();
+
+        $this->actingAs(User::factory()->create(['role' => 'worker']));
+        foreach (['' => '/kitarolas', '/atvetel' => '/atvetel', '/betarolas' => '/betarolas'] as $path => $target) {
+            $this->get($canonical.$target)->assertForbidden();
+            $this->followingRedirects()->get($legacy.$path)->assertForbidden();
+        }
     }
 
     public function test_user_content_is_escaped_and_logout_remains_a_csrf_protected_post(): void

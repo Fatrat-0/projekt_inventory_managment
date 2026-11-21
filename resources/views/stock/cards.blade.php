@@ -9,7 +9,7 @@
                 <p class="dashboard-text text-sm"><span class="text-gray-500">Raktár: </span><a href="{{ route('stock.index', array_replace($filters, ['warehouse_id' => $stock->warehouse_id])) }}" class="font-medium text-indigo-700 underline">{{ $stock->warehouse->warehouse_name }}</a></p>
                 <dl class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,6rem),1fr))] gap-2">
                     <div class="min-w-0"><dt class="dashboard-text text-xs text-gray-500">Fizikai</dt><dd class="dashboard-text mt-1 text-sm font-semibold tabular-nums">{{ number_format($stock->quantity, 0, ',', ' ') }} db</dd></div>
-                    <div class="min-w-0"><dt class="dashboard-text text-xs text-gray-500">Kiadható</dt><dd class="dashboard-text mt-1 text-sm font-semibold tabular-nums {{ $stock->available_quantity < $stock->min_quantity ? 'text-amber-800' : 'text-gray-900' }}">{{ number_format($stock->available_quantity, 0, ',', ' ') }} db</dd></div>
+                    <div class="min-w-0"><dt class="dashboard-text text-xs text-gray-500">Közvetlenül kiadható</dt><dd class="dashboard-text mt-1 text-sm tabular-nums">@include('stock.availability')</dd></div>
                     <div class="min-w-0"><dt class="dashboard-text text-xs text-gray-500">Elkülönített</dt><dd class="dashboard-text mt-1 text-sm tabular-nums">@include('stock.quarantine')</dd></div>
                 </dl>
                 <div class="border-t border-gray-100 pt-3"><p class="mb-1 text-xs text-gray-500">Helyi minimum</p>@include('stock.minimum', ['variant' => 'card'])</div>

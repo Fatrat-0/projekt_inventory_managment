@@ -6,6 +6,7 @@
     $tones = ['available' => 'border-emerald-300 bg-emerald-50 text-emerald-900', 'near' => 'border-amber-300 bg-amber-50 text-amber-900',
         'full' => 'border-rose-300 bg-rose-50 text-rose-900', 'blocked' => 'border-slate-300 bg-slate-100 text-slate-800'];
 @endphp
+@inject('relocationPolicy', \App\Policies\WarehouseRelocationPolicy::class)
 <x-warehouse-layout :$warehouse :context="$params['context'] ?? ''" :detail-context="$params['detail_context'] ?? ''">
     <div class="app-page space-y-4 py-4">
         <x-page-toolbar :title="$title" :description="$warehouse->warehouse_name.' · '.$overview['zone'].' · '.$overview['code'].' · '.$record->name">
@@ -72,7 +73,12 @@
                         <p class="break-words text-sm text-gray-700">{{ $bin->allowedCategories->isEmpty() ? 'Minden kategória' : $bin->allowedCategories->pluck('category_name')->sort()->implode(', ') }}</p>
                     </div>
                     @include('warehouses.locations.stored-products')
-                    <a href="{{ route('warehouses.locations.show', $params + ['warehouseLocation' => $bin]) }}" class="inline-flex min-h-10 items-center text-sm font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <a href="{{ route('warehouses.locations.show', $params + ['warehouseLocation' => $bin]) }}" class="inline-flex min-h-10 items-center text-sm font-medium text-indigo-700 hover:underline">Tárhely adatlapja</a>
+                        @if($bin->active && $stored->isNotEmpty() && $relocationPolicy->canAccessWarehouse(auth()->user(), (int) $warehouse->getKey()))
+                            <x-warehouse-relocate-from :location="$bin" :$params />
+                        @endif
+                    </div>
                     @if($canManage)
                         <details @if($errors->any()) open @endif class="rounded border border-gray-200 p-3">
                             <summary class="cursor-pointer text-sm font-semibold">Rekesz beállításainak szerkesztése</summary>

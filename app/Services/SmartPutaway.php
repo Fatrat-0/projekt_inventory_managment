@@ -4,12 +4,12 @@ namespace App\Services;
 
 use App\Models\{Product, Warehouse, WarehouseLocation};
 use Illuminate\Support\Facades\{DB, Validator};
-use Illuminate\Support\Str;
+use Illuminate\Support\{Collection, Str};
 
 final class SmartPutaway
 {
 
-    public function __construct(private WarehouseCapacity $capacity) {}
+    public function __construct(private WarehouseCapacity $capacity, private WarehouseStockAvailability $availability) {}
 
     /**
      * Read-only advice for one unsplit cargo line in its intended orientation.
@@ -25,16 +25,18 @@ final class SmartPutaway
      * Each candidate has a location ID, code, name, kind and status. Checks contain
      * passed rule IDs and maps of missing or failed rule IDs to Hungarian explanations.
      * Up to five eligible candidates are returned, with verified candidates ahead
-     * of conditional candidates. Each includes its score and explanations.
+     * of conditional candidates. Each includes its score, explanations and physical
+     * stock snapshots (before/projected after) for the location and applicable hierarchy.
+     * A null quantity means the corresponding figure could not be confirmed.
      * Rejected locations are reported separately, within the requested warehouse only.
      *
      * @param array{quantity: int, cargo_weight_kg?: numeric|null, pallet_slots?: int|null, dimensions_cm?: array{width?: int|null, depth?: int|null, height?: int|null}|null} $cargo
      * @return array{warehouse_id: int, product_id: int, quantity: int, recommendations: list<array>, rejected: list<array>}
      */
-    public function recommend(Warehouse $warehouse, Product $product, array $cargo): array
+    public function recommend(Warehouse $warehouse, Product $product, array $cargo, ?array $sourceRelease = null): array
     {
         $data = $this->validatedCargo($cargo);
-        $candidates = $this->candidates($warehouse, $product, $data);
+        $candidates = $this->candidates($warehouse, $product, $data, null, null, $sourceRelease);
         $recommendations = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] !== 'rejected'));
         $rejected = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] === 'rejected'));
         usort($recommendations, fn (array $a, array $b) => PutawayRanking::compare($a['score'], $b['score'], $a['code'], $b['code']));
@@ -49,9 +51,10 @@ final class SmartPutaway
      *
      * @return list<array>
      */
-    public function assessLocations(Warehouse $warehouse, Product $product, array $cargo, ?int $locationId = null, ?string $search = null): array
-    {
-        return $this->candidates($warehouse, $product, $this->validatedCargo($cargo), $locationId, $search);
+    public function assessLocations(
+        Warehouse $warehouse, Product $product, array $cargo, ?int $locationId = null, ?string $search = null, ?array $sourceRelease = null,
+    ): array {
+        return $this->candidates($warehouse, $product, $this->validatedCargo($cargo), $locationId, $search, $sourceRelease);
     }
 
     private function validatedCargo(array $cargo): array
@@ -70,14 +73,16 @@ final class SmartPutaway
         ])->validate();
     }
 
-    private function candidates(Warehouse $warehouse, Product $product, array $cargo, ?int $locationId = null, ?string $search = null): array
-    {
+    /** The optional source relief comes from the server's fully removed placements, never from client input. */
+    private function candidates(
+        Warehouse $warehouse, Product $product, array $cargo, ?int $locationId, ?string $search, ?array $sourceRelease,
+    ): array {
         $weight = isset($cargo['cargo_weight_kg']) ? WarehouseCapacity::grams($cargo['cargo_weight_kg']) : null;
         $slots = isset($cargo['pallet_slots']) ? (int) $cargo['pallet_slots'] : null;
         $dimensions = $cargo['dimensions_cm'] ?? [];
         $needle = Str::lower(Str::ascii(trim($search ?? '')));
 
-        return DB::transaction(function () use ($warehouse, $product, $weight, $slots, $dimensions, $locationId, $needle) {
+        return DB::transaction(function () use ($warehouse, $product, $cargo, $weight, $slots, $dimensions, $locationId, $needle, $sourceRelease) {
             $category = (int) $product->newQuery()->findOrFail($product->getKey(), ['category_id'])->category_id;
             $locations = $warehouse->storageLocations()->withCapacityUsage()->with(['system.zone', 'level', 'allowedCategories'])
                 ->withExists(['placements', 'reservations', 'placements as stores_product' => fn ($query) => $query
@@ -86,8 +91,20 @@ final class SmartPutaway
             $committed = fn ($bins) => $bins->sum(fn ($bin) => (int) $bin->occupied_weight + (int) $bin->reserved_weight);
             $bySystem = $locations->whereNotNull('system_id')->groupBy('system_id')->map($committed);
             $byLevel = $locations->whereNotNull('level_id')->groupBy('level_id')->map($committed);
+            $source = $sourceRelease === null ? null : $locations->find($sourceRelease['location_id']);
+            $released = $source ? max(0, min($sourceRelease['weight_grams'], (int) $source->occupied_weight)) : 0;
+            if ($source?->system_id !== null) $bySystem[$source->system_id] -= $released;
+            if ($source?->level_id !== null) $byLevel[$source->level_id] -= $released;
+
+            $snapshot = $this->availability->snapshot((int) $warehouse->getKey(), (int) $product->getKey());
+            $quantities = $this->productQuantities($locations, $snapshot);
+            $quantity = (int) $cargo['quantity'];
+            $canProject = $sourceRelease === null
+                || ($source?->active && ($quantities['bin'][$source->id] ?? 0) >= $quantity);
+
             $candidates = [];
             foreach ($locations as $location) {
+                if ($source?->id === $location->id) continue;
                 if ($locationId !== null && (int) $location->id !== $locationId) continue;
                 if ($needle !== '' && !$this->matchesLocation($location, $needle)) continue;
 
@@ -99,11 +116,53 @@ final class SmartPutaway
                 if ($location->level !== null) {
                     $limits['level_grams'] = $location->level->max_weight_grams - $byLevel[$location->level_id];
                 }
-                $candidates[] = $this->candidate($location, $category, $weight, $slots, $dimensions, $limits);
+                $candidate = $this->candidate($location, $category, $weight, $slots, $dimensions, $limits);
+                if ($candidate['status'] !== 'rejected') {
+                    $candidate['product_stock'] = $this->productStock($location, $source, $quantities, $canProject ? $quantity : null);
+                }
+                $candidates[] = $candidate;
             }
 
             return $candidates;
         });
+    }
+
+    /** Keep every bin in the totals, including inactive bins that still hold stock. */
+    private function productQuantities(Collection $locations, array $snapshot): array
+    {
+        if (!$snapshot['consistent']) return ['bin' => null, 'level' => null, 'system' => null];
+
+        $bins = array_column($snapshot['locations'], 'stored_quantity', 'location_id');
+        $sum = fn (Collection $group) => $group->sum(fn (WarehouseLocation $bin) => $bins[$bin->id] ?? 0);
+        $hasInvalidSystem = $locations->contains(fn (WarehouseLocation $bin) => $bin->system_id !== null
+            && (int) $bin->system?->zone?->warehouse_id !== (int) $bin->warehouse_id);
+        $hasInvalidLevel = $locations->contains(fn (WarehouseLocation $bin) => $bin->level_id !== null
+            && ($bin->system_id === null || (int) $bin->level?->system_id !== (int) $bin->system_id));
+
+        return [
+            'bin' => $bins,
+            'level' => $hasInvalidSystem || $hasInvalidLevel ? null : $locations->whereNotNull('level_id')->groupBy('level_id')->map($sum)->all(),
+            'system' => $hasInvalidSystem ? null : $locations->whereNotNull('system_id')->groupBy('system_id')->map($sum)->all(),
+        ];
+    }
+
+    private function productStock(WarehouseLocation $location, ?WarehouseLocation $source, array $totals, ?int $quantity): array
+    {
+        $balance = function (string $scope, int $id, bool $sameGroup = false) use ($totals, $quantity): array {
+            $before = $totals[$scope] === null ? null : ($totals[$scope][$id] ?? 0);
+
+            return [
+                'before' => $before,
+                'after' => $before === null || $quantity === null ? null : $before + ($sameGroup ? 0 : $quantity),
+            ];
+        };
+
+        return [
+            'bin' => $balance('bin', $location->id),
+            'level' => $location->level_id === null ? null : $balance('level', $location->level_id, $source?->level_id === $location->level_id),
+            'system' => $location->system_id === null ? null : $balance('system', $location->system_id, $source?->system_id === $location->system_id)
+                + ['kind' => $location->system?->kind],
+        ];
     }
 
     private function matchesLocation(WarehouseLocation $location, string $needle): bool
@@ -147,18 +206,21 @@ final class SmartPutaway
             'nominal_weight_grams' => $location->max_weight_grams,
         ];
 
-        return $result + ['score' => $score, 'reasons' => $this->rankingReasons($score)];
+        $reasons = $this->rankingReasons($score);
+
+        return $result + ['score' => $score, 'reasons' => array_values($reasons),
+            'ranking_notes' => array_values(array_diff_key($reasons, array_flip(['weight_capacity', 'pallet_capacity'])))];
     }
 
     private function rankingReasons(array $score): array
     {
         $reasons = [];
-        if ($score['same_product']) $reasons[] = 'Ezen a tárhelyen már van azonos termék.';
-        if ($score['remaining_pallet_slots'] !== null) $reasons[] = 'A rakomány után '.$score['remaining_pallet_slots'].' szabad raklaphely maradna.';
+        if ($score['same_product']) $reasons['same_product'] = 'Ezen a tárhelyen már van azonos termék.';
+        if ($score['remaining_pallet_slots'] !== null) $reasons['pallet_capacity'] = 'A rakomány után '.$score['remaining_pallet_slots'].' szabad raklaphely maradna.';
         if ($score['remaining_weight_grams'] !== null) {
-            $reasons[] = 'A rakomány után '.WarehouseLocation::formatWeight($score['remaining_weight_grams']).' kg szabad teherbírás maradna.';
+            $reasons['weight_capacity'] = 'A rakomány után '.WarehouseLocation::formatWeight($score['remaining_weight_grams']).' kg szabad teherbírás maradna.';
         }
-        $reasons[] = $score['volume_cm3'] === null
+        $reasons['size_preference'] = $score['volume_cm3'] === null
             ? 'A tárhely mérete hiányos, a névleges teherbírás alapján is rangsoroltuk.'
             : 'Azonos kapacitásmaradéknál a kisebb fizikai térfogat előnyt élvez.';
 

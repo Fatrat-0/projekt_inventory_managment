@@ -5,7 +5,7 @@
 @endphp
 <div id="stock-minimum-{{ $stock->id }}-{{ $variant }}" data-stock-minimum="{{ $stock->id }}" class="min-w-0 text-sm" x-init="registerMinimum({{ $stock->id }}, {{ \Illuminate\Support\Js::from((string)$minimumDraft) }}, {{ $editingMinimum ? 'true' : 'false' }})" @stock-minimum-edit.window="if ($event.detail.id === {{ $stock->id }} && $event.detail.variant === '{{ $variant }}') { minimumEdits[{{ $stock->id }}].editing = true; $nextTick(() => { const input = $el.querySelector('input[name=min_quantity]'); input?.focus({ preventScroll: true }); input?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }); }">
     <span class="font-semibold tabular-nums text-gray-900">{{ number_format($stock->min_quantity, 0, ',', ' ') }} db</span>
-    @if($stock->available_quantity < $stock->min_quantity)<span class="mt-1 block text-xs font-medium text-amber-800">Minimum alatt</span>@endif
+    @if($stock->pickable_quantity !== null && $stock->pickable_quantity < $stock->min_quantity)<span class="mt-1 block text-xs font-medium text-amber-800">Minimum alatt</span>@endif
     @if($canManage)
         <div class="mt-2" x-show="minimumEdits[{{ $stock->id }}].editing" @if(!$editingMinimum) style="display:none;" @endif>
             <form method="POST" action="{{ route('stock.minimum', $stock) }}" class="mt-2 space-y-2" x-data="{ submitting: false }" @submit="if (submitting) $event.preventDefault(); else submitting = true" @pageshow.window="submitting = false">

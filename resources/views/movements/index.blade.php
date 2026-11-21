@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-movement-layout>
     <div data-listing-page="movements" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('movements', { filtersOpen: {{ count($filterLabels) ? 'true' : 'false' }} })">
         <div class="bg-white border-b border-gray-200">
             <div data-page-toolbar class="app-page py-3 space-y-3">
@@ -13,7 +13,6 @@
                         </div>
                     </form>
                     <div class="flex flex-wrap gap-2 items-center">
-                        <a href="{{ route('quality-returns.index') }}" class="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Minősítési munkalista</a>
                         <a href="{{ $createUrl }}" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">+ Új mozgás</a>
                         @include('movements.pdf-options')
                         <x-listing-view-toggle />
@@ -52,7 +51,19 @@
                     <div>
                         <label for="movement-kind" class="block text-xs font-medium text-gray-600 mb-1">Művelet jellege</label>
                         <select id="movement-kind" name="kind" form="movement-filters" class="w-full rounded-md border-gray-300 text-sm">
-                            <option value="">Összes művelet</option><option value="regular" @selected($filters['kind'] === 'regular')>Normál mozgások</option><option value="return" @selected($filters['kind'] === 'return')>Visszáruk</option><option value="quarantined" @selected($filters['kind'] === 'quarantined')>Minősítésre váró visszáruk</option><option value="scrap" @selected($filters['kind'] === 'scrap')>Selejtezések</option>
+                            <option value="">Összes művelet</option>
+                            @foreach(\App\Queries\MovementListing::KINDS as $value => $label)
+                                <option value="{{ $value }}" @selected($filters['kind'] === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
+                        <label for="movement-origin" class="mb-1 block text-xs font-medium text-gray-600">Mozgás eredete</label>
+                        <select id="movement-origin" name="origin" form="movement-filters" class="w-full rounded-md border-gray-300 text-sm">
+                            <option value="">Minden eredet</option>
+                            @foreach(\App\Models\InventoryMovement::ORIGIN_LABELS as $value => $label)
+                                <option value="{{ $value }}" @selected($filters['origin'] === $value)>{{ $label }}</option>
+                            @endforeach
                         </select>
                     </div>
                     <div>
@@ -91,23 +102,25 @@
                         <tr>
                             @foreach($sortOptions as $key => $label)
                                 <th data-listing-column="{{ $key }}" x-show="columnVisible('{{ $key }}')" scope="col" class="px-4 py-3 {{ $key === 'quantity' ? 'text-right' : '' }}" aria-sort="{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? 'ascending' : 'descending') : 'none' }}">
-                                    <div class="flex items-center justify-between gap-2"><a class="whitespace-nowrap hover:text-indigo-600" href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => $key, 'sort_dir' => $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc']) }}">{{ $label }} <span class="{{ $filters['sort_by'] === $key ? 'text-indigo-600' : 'text-gray-400' }}">{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</span></a>
-                                @if($key === 'product_name')<x-listing-columns />@endif</div></th>
+                                    <a class="whitespace-nowrap hover:text-indigo-600" href="{{ request()->fullUrlWithQuery(['page' => null, 'sort_by' => $key, 'sort_dir' => $filters['sort_by'] === $key && $filters['sort_dir'] === 'asc' ? 'desc' : 'asc']) }}">{{ $label }} <span class="{{ $filters['sort_by'] === $key ? 'text-indigo-600' : 'text-gray-400' }}">{{ $filters['sort_by'] === $key ? ($filters['sort_dir'] === 'asc' ? '↑' : '↓') : '↕' }}</span></a>
+                                </th>
                             @endforeach
                             <th data-listing-column="reference" x-show="columnVisible('reference')" scope="col" class="px-4 py-3">Hivatkozás</th>
+                            <th x-cloak scope="col" class="sticky right-0 w-px bg-gray-50 px-2 py-2"><x-listing-columns /></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         @foreach($movements as $movement)
                             <tr data-movement-id="{{ $movement->id }}" class="hover:bg-indigo-50/30">
                                 <td data-listing-column="created_at" x-show="columnVisible('created_at')" class="px-4 py-3 whitespace-nowrap">{{ $movement->created_at->format('Y.m.d H:i') }}</td>
-                                <td data-listing-column="type" x-show="columnVisible('type')" class="px-4 py-3"><span class="inline-flex rounded-md px-2 py-1 text-xs font-medium {{ $movement->type === 'in' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800' }}">{{ $movement->type === 'in' ? 'Bevételezés' : 'Kiadás' }}</span></td>
+                                <td data-listing-column="type" x-show="columnVisible('type')" class="px-4 py-3">@include('movements.origin')</td>
                                 <td data-listing-column="product_name" x-show="columnVisible('product_name')" class="px-4 py-3 min-w-[180px]"><a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="block font-semibold text-gray-900 hover:text-indigo-600 hover:underline">{{ $movement->product->product_name }}</a>
                                     <a href="{{ route('movements.show', ['movement' => $movement, 'context' => $listContext]) }}" class="text-xs font-mono text-indigo-600 hover:underline">{{ $movement->movement_number }}</a><div class="text-xs font-mono text-gray-500">{{ $movement->product->sku }}</div></td>
                                 <td data-listing-column="warehouse_name" x-show="columnVisible('warehouse_name')" class="px-4 py-3">{{ $movement->warehouse->warehouse_name }}</td>
                                 <td data-listing-column="quantity" x-show="columnVisible('quantity')" class="px-4 py-3 text-right whitespace-nowrap font-medium">{{ $movement->type === 'in' ? '+' : '−' }}{{ number_format($movement->quantity, 0, ',', ' ') }} db</td>
                                 <td data-listing-column="user_name" x-show="columnVisible('user_name')" class="px-4 py-3">{{ $movement->user->name }}</td>
                                 <td data-listing-column="reference" x-show="columnVisible('reference')" class="px-4 py-3 break-words max-w-xs">@include('movements.list-reference')</td>
+                                <td x-cloak aria-hidden="true"></td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -127,4 +140,4 @@
             </div>
         </div>
     </div>
-</x-app-layout>
+</x-movement-layout>

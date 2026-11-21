@@ -3,9 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { plan, shipmentCommand as command } from './shipment-fixtures';
 
-const workUrl = '/atmozgatasok/raktari-feladatok';
-const receivingUrl = workUrl + '/atvetel';
-const putawayUrl = workUrl + '/betarolas';
+const moduleUrl = '/raktari-feladatok';
+const workUrl = moduleUrl + '/kitarolas';
+const receivingUrl = moduleUrl + '/atvetel';
+const putawayUrl = moduleUrl + '/betarolas';
 function fixture() {
     return JSON.parse(execFileSync('php', ['tests/Browser/prepare-shipment-receiving.php', '--open-picking'], { encoding: 'utf8' }));
 }
@@ -42,8 +43,11 @@ async function sortControl(page, key, direction, retained = {}, secondary = null
     await editor.getByRole('combobox', { name: 'Elsődleges irány', exact: true }).selectOption(direction);
     if (secondary) {
         const add = editor.getByRole('button', { name: /Másodlagos rendezés hozzáadása$/ });
-        if (await add.count() && await add.isVisible()) await add.click();
-        await editor.getByRole('combobox', { name: 'Másodlagos szempont', exact: true }).selectOption(secondary.key);
+        const field = editor.getByRole('combobox', { name: 'Másodlagos szempont', exact: true });
+        // Promoting the secondary removes its field before Alpine reveals the add button.
+        await expect(add.or(field).filter({ visible: true })).toHaveCount(1);
+        if (await add.isVisible()) await add.click();
+        await field.selectOption(secondary.key);
         await editor.getByRole('combobox', { name: 'Másodlagos irány', exact: true }).selectOption(secondary.direction);
     }
     // A repeated sort key can already match the old URL before the queued GET starts.
@@ -402,7 +406,7 @@ test('az öt lista azonos rendezővel minden korábbi mezőt kínál és 1440–
         { name: 'fuvarok', path: '/shipments?origin_warehouse_id=' + shipment.source, by: 'status', then: 'reference', fields: ['id', 'reference', 'origin_warehouse', 'planned_departure_at', 'vehicle_label', 'status', 'created_at'] },
         { name: 'kitarolas', path: workUrl + '?warehouse_id=' + shipment.source + '&status=all', by: 'priority', then: 'remaining_quantity', fields: ['id', 'reference', 'product_name', 'from_warehouse', 'to_warehouse', 'remaining_quantity', 'status', 'priority'] },
         { name: 'atvetel', path: receivingUrl + '?search=' + shipment.number + '&status=all', by: 'status', then: 'remaining_quantity', fields: ['shipment_id', 'reference', 'origin_warehouse', 'warehouse_name', 'item_count', 'remaining_quantity', 'status', 'dispatched_at'] },
-        { name: 'betarolas', path: putawayUrl + '?receipt_id=' + received.receipt.id, by: 'status', then: 'pending_putaway_quantity', fields: ['id', 'product_name', 'warehouse_name', 'received_quantity', 'placed_quantity', 'pending_putaway_quantity', 'received_at', 'status'] },
+        { name: 'betarolas', path: putawayUrl + '?receipt_id=' + received.receipt.id, by: 'status', then: 'pending_putaway_quantity', fields: ['id', 'product_name', 'warehouse_name', 'received_quantity', 'placed_quantity', 'pending_putaway_quantity', 'received_at', 'status', 'origin'] },
     ];
     const health = watchBrowserHealth(page);
     for (const view of views) {
@@ -422,7 +426,9 @@ test('az öt lista azonos rendezővel minden korábbi mezőt kínál és 1440–
             const dialog = await openSort(page);
             expect(await dialog.getByRole('combobox', { name: 'Elsődleges szempont', exact: true }).locator('option').evaluateAll(options => options.map(option => option.value))).toEqual(view.fields);
             await expect(dialog.getByRole('combobox', { name: 'Elsődleges szempont', exact: true })).toHaveValue(view.by);
+            await expect(dialog.getByRole('combobox', { name: 'Elsődleges irány', exact: true })).toHaveValue('desc');
             await expect(dialog.getByRole('combobox', { name: 'Másodlagos szempont', exact: true })).toHaveValue(view.then);
+            await expect(dialog.getByRole('combobox', { name: 'Másodlagos irány', exact: true })).toHaveValue('asc');
             await assertDialogLayout(page, dialog, label);
             await clickBlankAreas(page, dialog);
             for (const name of ['Elsődleges szempont', 'Elsődleges irány', 'Másodlagos szempont', 'Másodlagos irány']) {
@@ -607,7 +613,7 @@ test('nagyon alacsony ablakban minden rendezési mező és az utolsó művelet a
     health.assertHealthy();
 });
 
-test('valódi BFCache-visszalépés a korábbi két rendezési szintet és a következő szűrés paramétereit állítja vissza', async ({ baseURL }) => {
+test('valódi BFCache-vissza- és előrelépés megtartja a rendezési szinteket és a szűrőket', async ({ baseURL }) => {
     test.setTimeout(90000);
     const shipment = fixture();
     // Playwright normally disables BFCache, which would hide a stale in-memory draft.
@@ -620,7 +626,15 @@ test('valódi BFCache-visszalépés a korábbi két rendezési szintet és a kö
     try {
         await context.addInitScript(() => {
             window.sortPageShows = [];
-            window.addEventListener('pageshow', event => window.sortPageShows.push({ persisted: event.persisted, url: location.href }));
+            window.sortDepartures = [];
+            window.addEventListener('pageshow', event => window.sortPageShows.push(event.persisted));
+            window.addEventListener('pagehide', () => {
+                const form = document.querySelector('#intent-filters');
+                if (!form) return;
+                const fields = [...form.querySelectorAll('[data-listing-sort] input[type="hidden"]')];
+                window.sortDepartures.push(Object.fromEntries(fields.filter(field => !field.disabled)
+                    .map(field => [field.name, field.value])));
+            });
         });
         const page = await context.newPage();
         const health = watchBrowserHealth(page);
@@ -629,37 +643,68 @@ test('valódi BFCache-visszalépés a korábbi két rendezési szintet és a kö
         expect(commandLine.arguments).not.toContain('--disable-back-forward-cache');
         await protocol.detach();
         await login(page);
-        await page.goto('/atmozgatasok?warehouse_id=' + shipment.source + '&per_page=2'
-            + '&sort_by=quantity&sort_dir=asc&then_by=priority&then_dir=desc');
-        const originalUrl = page.url();
-        const originalSummary = await sortLabel(page).textContent();
-        const originalRows = await intentRowIds(page);
-        await sortControl(page, 'priority', 'desc', { warehouse_id: shipment.source, per_page: 2 }, { key: 'reference', direction: 'asc' });
-        await page.goBack({ waitUntil: 'commit', timeout: 10000 });
-        await expect(page).toHaveURL(originalUrl);
-        await page.waitForFunction(url => window.sortPageShows?.some(event => event.persisted && event.url === url), originalUrl);
-        expect(await sortLabel(page).textContent()).toBe(originalSummary);
-        expect(await intentRowIds(page)).toEqual(originalRows);
+        const filters = { warehouse_id: String(shipment.source), per_page: '2', status: 'approved', search: '5C' };
         const original = { sort_by: 'quantity', sort_dir: 'asc', then_by: 'priority', then_dir: 'desc' };
-        for (const [name, value] of Object.entries(original)) {
-            const field = page.locator('[data-listing-sort] input[type="hidden"][name="' + name + '"]');
-            await expect(field).toHaveValue(value);
-            await expect(field).toBeEnabled();
-        }
-        const dialog = await openSort(page);
-        await expect(dialog.getByRole('combobox', { name: 'Elsődleges szempont', exact: true })).toHaveValue('quantity');
-        await expect(dialog.getByRole('combobox', { name: 'Elsődleges irány', exact: true })).toHaveValue('asc');
-        await expect(dialog.getByRole('combobox', { name: 'Másodlagos szempont', exact: true })).toHaveValue('priority');
-        await expect(dialog.getByRole('combobox', { name: 'Másodlagos irány', exact: true })).toHaveValue('desc');
+        const alternative = { sort_by: 'priority', sort_dir: 'desc', then_by: 'reference', then_dir: 'asc' };
+        const fieldLabels = { sort_by: 'Elsődleges szempont', sort_dir: 'Elsődleges irány', then_by: 'Másodlagos szempont', then_dir: 'Másodlagos irány' };
+        const navigation = { waitUntil: 'commit', timeout: 10000 };
+        const capture = async sort => ({ sort, url: page.url(), summary: await sortLabel(page).textContent(), rows: await intentRowIds(page) });
+        const restored = async (view, visit) => {
+            await expect(page).toHaveURL(view.url);
+            await expect.poll(() => page.evaluate(() => window.sortPageShows.filter(Boolean).length)).toBe(visit);
+            await expect(sortLabel(page)).toHaveText(view.summary);
+            expect(await intentRowIds(page)).toEqual(view.rows);
+            await expect(page.locator('#intent-search')).toHaveValue(filters.search);
+            await expect(page.locator('#intent-filter-status')).toHaveValue(filters.status);
+            await expect(page.locator('#intent-filter-warehouse')).toHaveValue(filters.warehouse_id);
+            const dialog = await openSort(page);
+            for (const [name, value] of Object.entries(view.sort)) {
+                const field = page.locator('[data-listing-sort] input[type="hidden"][name="' + name + '"]');
+                await expect(field).toHaveValue(value);
+                await expect(field).toBeEnabled();
+                await expect(dialog.getByRole('combobox', { name: fieldLabels[name], exact: true })).toHaveValue(value);
+            }
+            return dialog;
+        };
+
+        await page.goto('/atmozgatasok?' + new URLSearchParams({ ...filters, ...original }));
+        const first = await capture(original);
+        await sortControl(page, alternative.sort_by, alternative.sort_dir, filters,
+            { key: alternative.then_by, direction: alternative.then_dir });
+        const second = await capture(alternative);
+        expect(second.summary).not.toBe(first.summary);
+        expect(second.rows).not.toEqual(first.rows);
+
+        await page.goBack(navigation);
+        const dialog = await restored(first, 1);
+        // The outgoing request must never overwrite the cached document's filter controls.
+        expect(await page.evaluate(() => window.sortDepartures.at(-1))).toEqual(original);
+        await dialog.getByRole('button', { name: 'Másodlagos rendezés eltávolítása', exact: true }).click();
         await dialog.getByRole('button', { name: 'Mégse', exact: true }).click();
+        await expect(page).toHaveURL(first.url);
+        await expect(sortLabel(page)).toBeFocused();
+
+        await page.goForward(navigation);
+        await restored(second, 1);
+        await page.keyboard.press('Escape');
+        await expect(sortLabel(page)).toBeFocused();
+        await sortLabel(page).press('Enter');
+        await dialog.getByRole('button', { name: 'Másodlagos rendezés eltávolítása', exact: true }).click();
+        await sortControl(page, alternative.sort_by, 'asc', filters);
+        const singleSort = new URL(page.url()).searchParams;
+        expect(singleSort.get('then_by')).toBeNull();
+        expect(singleSort.get('then_dir')).toBeNull();
+
+        await page.goBack(navigation);
+        await restored(second, 2);
+        await page.keyboard.press('Escape');
         await page.locator('#intent-search').fill(shipment.products.screw.sku);
         await page.getByRole('button', { name: 'Szűrés', exact: true }).click();
-        await page.waitForLoadState('load');
+        await expect(page).toHaveURL(url => url.searchParams.get('search') === shipment.products.screw.sku);
         const query = new URL(page.url()).searchParams;
-        for (const [name, value] of Object.entries(original)) expect(query.get(name), name).toBe(value);
+        for (const [name, value] of Object.entries(alternative)) expect(query.get(name), name).toBe(value);
         expect(query.get('search')).toBe(shipment.products.screw.sku);
-        expect(query.get('warehouse_id')).toBe(String(shipment.source));
-        expect(query.get('per_page')).toBe('2');
+        for (const name of ['warehouse_id', 'per_page', 'status']) expect(query.get(name), name).toBe(filters[name]);
         await expect(page.locator('[data-transfer-intent-list] [role="rowgroup"] [role="row"]')).toHaveCount(1);
         health.assertHealthy();
     } finally {

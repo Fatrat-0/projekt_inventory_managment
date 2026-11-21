@@ -37,5 +37,6 @@ class Shipment extends Model
     }
 
     public function isTransferIntentPlan(): bool { return $this->planning_mode === self::MODE_TRANSFER_INTENT; }
-    public function getShipmentNumberAttribute(): string { return 'SZALL-'.str_pad((string)$this->id, 6, '0', STR_PAD_LEFT); }
+    public function getShipmentNumberAttribute(): string { return self::formatNumber((int) $this->id); }
+    public static function formatNumber(int $id): string { return 'SZALL-'.str_pad((string) $id, 6, '0', STR_PAD_LEFT); }
 }

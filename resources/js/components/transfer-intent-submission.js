@@ -1,4 +1,4 @@
-function operationKey() {
+export function operationKey() {
     if (globalThis.crypto.randomUUID) return globalThis.crypto.randomUUID();
 
     const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
@@ -8,7 +8,7 @@ function operationKey() {
     return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
 }
 
-export default (isSuccess = result => Boolean(result?.intent?.id)) => ({
+export default (isSuccess = result => Boolean(result?.intent?.id), { keyField = 'operation_key', firstKey = null } = {}) => ({
     submitting: false,
     submissionError: '',
     submissionStatus: null,
@@ -38,7 +38,7 @@ export default (isSuccess = result => Boolean(result?.intent?.id)) => ({
         try {
             const signature = JSON.stringify([url, method, payload]);
             if (this.intentAttempt?.signature !== signature) {
-                this.intentAttempt = { signature, key: operationKey() };
+                this.intentAttempt = { signature, key: this.intentAttempt === null && firstKey ? firstKey : operationKey() };
             }
 
             const response = await fetch(url, {
@@ -49,7 +49,7 @@ export default (isSuccess = result => Boolean(result?.intent?.id)) => ({
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '',
                 },
-                body: JSON.stringify({ ...payload, operation_key: this.intentAttempt.key }),
+                body: JSON.stringify({ ...payload, [keyField]: this.intentAttempt.key }),
             });
             const result = await response.json().catch(() => null);
             if (response.ok && isSuccess(result)) return result;

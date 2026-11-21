@@ -36,7 +36,8 @@ class PartnerMovementIntegrationTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_replace(['request_key' => (string) Str::uuid(), 'product_id' => $this->product->product_id,
-            'warehouse_id' => $this->warehouse->warehouse_id, 'type' => 'in', 'quantity' => 2, 'partner_id' => $this->partner->id], $overrides);
+            'warehouse_id' => $this->warehouse->warehouse_id, 'type' => 'in', 'quantity' => 2, 'partner_id' => $this->partner->id,
+            'confirmed' => true], $overrides);
     }
 
     public function test_partner_details_are_saved_searched_escaped_and_clearable(): void
@@ -104,7 +105,7 @@ class PartnerMovementIntegrationTest extends TestCase
         $data = $this->payload(['type' => $type]);
         $response = $this->postJson('/movements', $data);
         if ($allowed) {
-            $response->assertRedirect();
+            $response->assertStatus($type === 'in' ? 201 : 302);
             $movement = InventoryMovement::sole();
             $this->assertSame($this->partner->id, $movement->partner_id);
             $this->assertSame($this->partner->name, $movement->partner_name);

@@ -548,6 +548,11 @@ class WarehouseTransferTaskTest extends TestCase
         $this->assertSame($staged, $snapshot['staged_quantity']);
         $this->assertSame($free, $snapshot['free_quantity']);
         $this->assertSame($free, $snapshot['pickable_quantity']);
+        $listed = WarehouseStockAvailability::listingRows()->where('balances.id', $snapshot['stock_id'])->sole();
+        $this->assertSame($reserved, (int) $listed->source_reserved_quantity);
+        $this->assertSame($staged, (int) $listed->staged_quantity);
+        $this->assertSame($free, (int) $listed->pickable_quantity);
+        $this->assertSame($snapshot['direct_issue_quantity'], (int) $listed->direct_issue_quantity);
     }
 
     private function bin(string $code, int $quantity, ?int $weight = null, bool $active = true, int $palletSlots = 0): WarehouseLocation

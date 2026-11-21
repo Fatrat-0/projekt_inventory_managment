@@ -40,6 +40,74 @@ class ShipmentReceiptPutawayTest extends TestCase
         $this->remote = ShipmentReceiptItem::where('received_quantity', 24)->sole();
     }
 
+    public function test_manual_and_shipment_tasks_share_filters_order_pagination_and_warehouse_permissions(): void
+    {
+        $warehouse = $this->screws->warehouse;
+        $product = $this->screws->product;
+        $created = $this->postJson(route('movements.store'), [
+            'type' => 'in', 'product_id' => $product->getKey(), 'warehouse_id' => $warehouse->getKey(),
+            'quantity' => 40, 'confirmed' => true, 'request_key' => (string) Str::uuid(),
+        ])->assertCreated();
+        $batchId = $created->json('batch.id');
+        $reference = $created->json('movement.movement_number');
+        $work = route('warehouse-putaway-pages.manual', $batchId);
+        $created->assertJsonPath('putaway_url', $work);
+        $this->assertNotEmpty($reference);
+        $movementUrl = $created->json('movement_url');
+        $this->get($movementUrl)->assertOk()->assertSeeText('A bevételezés betárolása')
+            ->assertSeeText('Betárolás folytatása')->assertSee($work);
+        $detail = $this->get($work)->assertOk()->assertSeeText($reference)->viewData('detail');
+        $this->assertSame(40, $detail['item']['pending_putaway_quantity']);
+
+        $local = $this->member($warehouse->getKey(), 'receiving_operator');
+        $this->actingAs($local);
+        $queue = 'warehouse-putaway-pages.index';
+        $filters = ['search' => $product->sku, 'sort_by' => 'received_quantity', 'sort_dir' => 'asc'];
+        $first = $this->get(route($queue, $filters + ['per_page' => 1]))->assertOk()->viewData('items');
+        $this->assertSame(2, $first->total());
+        $this->assertSame(['manual'], array_column($first->items(), 'origin'));
+        $this->assertSame(40, (int) $first->items()[0]['pending_putaway_quantity']);
+        $second = $this->get(route($queue, $filters + ['per_page' => 1, 'page' => 2]))->assertOk()->viewData('items');
+        $this->assertSame(['shipment'], array_column($second->items(), 'origin'));
+        $this->assertSame(200, (int) $second->items()[0]['pending_putaway_quantity']);
+        foreach (['manual' => 'Kézi bevételezés', 'shipment' => 'Fuvarátvétel'] as $origin => $label) {
+            $response = $this->get(route($queue, $filters + ['origin' => $origin]))->assertOk()->assertSeeText($label);
+            $this->assertSame([$origin], array_column($response->viewData('items')->items(), 'origin'));
+        }
+        $found = $this->get(route($queue, ['search' => $reference]))->assertOk();
+        $this->assertSame([$reference], array_column($found->viewData('items')->items(), 'reference_number'));
+        $this->getJson(route('warehouse-task-counts'))->assertJsonPath('counts.putaway', 3);
+
+        $rack = app(WarehouseStorageDesigner::class)->create($warehouse, [
+            'version' => $warehouse->floor_version, 'kind' => 'rack', 'code' => '6C2-R',
+            'name' => 'Bevételezési próbaállvány', 'zone' => 'A', 'width' => 2, 'height' => 2,
+            'rack_height' => 2, 'x' => 0, 'y' => 0, 'levels' => 1, 'bins' => 1,
+            'bin_weight' => 50, 'level_weight' => 50, 'system_weight' => 50,
+        ]);
+        $location = $warehouse->storageSystems()->findOrFail($rack['id'])->locations()->sole();
+        $plan = route('warehouse-putaway-pages.manual-plan', [$batchId, $location]);
+        $this->get($plan)->assertOk()->assertViewHas('plan', fn ($view) => $view['canEdit'] === false
+            && $view['focus'] === 'system-'.$location->system_id && $view['focusBin'] === $location->id);
+
+        $this->actingAs($this->member($this->remote->to_warehouse_id, 'receiving_operator'));
+        $this->get($work)->assertForbidden();
+        $this->get($plan)->assertForbidden();
+        $noManual = $this->get(route($queue, ['origin' => 'manual']))->assertOk()->viewData('items');
+        $this->assertSame(0, $noManual->total());
+        $this->getJson(route('warehouse-task-counts'))->assertJsonPath('counts.putaway', 1);
+
+        $this->actingAs($local);
+        $this->postJson(route('movements.in.receipts.putaway', $batchId), $this->command($location, 40, 4))
+            ->assertCreated()->assertJsonPath('batch.status', 'completed')->assertJsonPath('location_view_url', $plan);
+        $this->getJson(route('warehouse-task-counts'))->assertJsonPath('counts.putaway', 2);
+        $done = $this->get(route($queue, ['origin' => 'manual', 'status' => 'completed']))->assertOk()->viewData('items');
+        $this->assertSame(40, (int) $done->items()[0]['placed_quantity']);
+        $this->get($movementUrl)->assertOk()->assertSeeText('Teljesen betárolva')
+            ->assertSeeText('Betárolási előzmények')->assertSeeText($location->code)
+            ->assertDontSeeText('Betárolás folytatása');
+        $this->getJson(route('movements.in.receipts.history', $batchId))->assertOk()->assertJsonPath('data.0.location_view_url', $plan);
+    }
+
     public function test_completed_shipment_puts_200_pecs_screws_into_two_bins_without_booking_stock_again(): void
     {
         $local = $this->member($this->screws->to_warehouse_id, 'receiving_operator');
@@ -176,12 +244,14 @@ class ShipmentReceiptPutawayTest extends TestCase
         $data = $this->postJson($this->url('recommendations'), $this->cargo(20, 2))->assertOk()->json();
         $locations = collect([...$data['recommendations'], ...$data['rejected']])->keyBy('location_id');
         $this->assertSame('verified', $locations[$eligible->id]['status']);
+        $this->assertSame(['before' => 0, 'after' => 20], $locations[$eligible->id]['product_stock']['bin']);
         $this->assertSame('rejected', $locations[$inactive->id]['status']);
         $this->assertSame('rejected', $locations[$tooSmall->id]['status']);
         $this->assertFalse($locations->has($foreign->id));
         $this->assertStringContainsString('location='.$eligible->id, $locations[$eligible->id]['floor_plan_url']);
         $this->postJson($this->url('locations'), $this->cargo(20, 2) + ['search' => 'b-01'])->assertOk()
-            ->assertJsonCount(1, 'locations')->assertJsonPath('locations.0.location_id', $eligible->id);
+            ->assertJsonCount(1, 'locations')->assertJsonPath('locations.0.location_id', $eligible->id)
+            ->assertJsonPath('locations.0.product_stock.bin', ['before' => 0, 'after' => 20]);
         $this->postJson($this->url('locations'), $this->cargo(20, 2) + ['to_location_id' => $foreign->id])->assertOk()
             ->assertJsonCount(0, 'locations');
         $this->postJson($this->url(), $this->command($foreign, 10, 2))->assertUnprocessable()

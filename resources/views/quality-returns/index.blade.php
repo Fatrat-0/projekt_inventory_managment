@@ -1,8 +1,7 @@
-<x-app-layout>
+<x-movement-layout>
     <div class="app-page space-y-4 py-4" @pageshow.window="if ($event.persisted) window.location.reload()"
         data-listing-page="quality-returns" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('quality-returns', { status(value, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.status.value = value; this.$refs.filtersForm.requestSubmit(); }, sort(value, direction, event) { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); this.$refs.sortBy.value = value; this.$refs.sortDir.value = direction; this.$refs.filtersForm.requestSubmit(); } })">
         <x-page-toolbar title="Minősítési munkalista" description="Vevői visszáruk vizsgálata és az elkülönített készlet feldolgozása.">
-            <a href="{{ route('movements.index') }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Készletmozgások</a>
             <x-listing-view-toggle />
         </x-page-toolbar>
         <x-operation-feedback />
@@ -106,4 +105,4 @@
         <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-600"><div class="flex flex-wrap items-center gap-3"><span>{{ $returns->firstItem() ?? 0 }}–{{ $returns->lastItem() ?? 0 }} / {{ $returns->total() }} találat</span><label for="quality-per-page" class="sr-only">Minősítések oldalanként</label><select id="quality-per-page" name="per_page" form="quality-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">@foreach([10,25,50,100] as $size)<option value="{{ $size }}" @selected($filters['per_page'] === $size)>{{ $size }} / oldal</option>@endforeach</select></div>{{ $returns->links('pagination.inventory') }}</div>
         <p class="text-xs text-gray-500">A munkalista az elkülönítve bevett vevői visszárukat tartalmazza. A hátralévő mennyiség az adott visszáruból még minősítendő áru.</p>
     </div>
-</x-app-layout>
+</x-movement-layout>

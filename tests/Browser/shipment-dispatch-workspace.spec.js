@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -54,9 +55,7 @@ async function newWarehouse(page, name) {
 }
 
 async function receive(page, product, warehouse, quantity) {
-    await command(page, 'POST', '/movements', {
-        request_key: randomUUID(), product_id: product.id, warehouse_id: warehouse.id, quantity, type: 'in',
-    }, 302);
+    seedUsableStock({ product_id: product.id, warehouse_id: warehouse.id, quantity });
 }
 
 async function product(page, name, prefix, packaging = null) {
@@ -699,6 +698,30 @@ test('vehicle registry searches, edits and records downtime without altering in-
     } finally {
         await viewer.close();
     }
+});
+
+test('vehicle filters retain a search and status entered before Alpine starts', async ({ page }) => {
+    await login(page);
+    const token = randomUUID().slice(0, 8);
+    const plate = `START-${token}`;
+    await createVehicle(page, `Korai keresés ${token}`, plate, '100', 1, false);
+
+    let releaseScript;
+    const script = new Promise(resolve => { releaseScript = resolve; });
+    await page.route('**/build/assets/app-*.js', async route => {
+        await script;
+        await route.continue();
+    });
+    try {
+        await page.goto(registryUrl, { waitUntil: 'commit' });
+        await page.getByLabel('Állapot', { exact: true }).selectOption('inactive');
+        await registrySearch(page).fill(plate);
+    } finally {
+        releaseScript();
+    }
+    await expect(registryRow(page, plate)).toBeVisible();
+    await expect(registrySearch(page)).toHaveValue(plate);
+    await expect(page.getByLabel('Állapot', { exact: true })).toHaveValue('inactive');
 });
 
 test('vehicle headers and mobile cards sort filtered rows with unknown capacities last', async ({ page }) => {

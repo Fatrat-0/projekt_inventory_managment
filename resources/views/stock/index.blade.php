@@ -7,13 +7,16 @@
         </x-page-toolbar>
         <x-operation-feedback />
         <section aria-label="Szűrt készletösszesítők" class="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3">
-            @foreach(['physical' => ['Fizikai készlet', null, 'db'], 'available' => ['Kiadható készlet', 'positive', 'db'], 'quarantined' => ['Elkülönített készlet', 'quarantined', 'db'], 'low_count' => ['Helyi minimum alatt', 'low', 'készletsor']] as $key => [$label, $status, $unit])
+            @foreach(['physical' => ['Fizikai készlet', null, 'db'], 'available' => ['Közvetlenül kiadható', 'positive', 'db'], 'quarantined' => ['Elkülönített készlet', 'quarantined', 'db'], 'low_count' => ['Helyi minimum alatt', 'low', 'készletsor']] as $key => [$label, $status, $unit])
                 <a href="{{ route('stock.index', array_replace($filters, ['stock_status' => $status ?? 'all'])) }}" class="min-w-0 rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-400 focus-visible:ring-2 focus-visible:ring-indigo-500" @if($status !== null && $filters['stock_status'] === $status) aria-current="page" @endif>
                     <p class="text-xs text-gray-500">{{ $label }}</p><p data-stock-summary="{{ $key }}" class="dashboard-text mt-2 text-2xl font-semibold tabular-nums text-gray-900">{{ number_format($summary->$key, 0, ',', ' ') }} <span class="text-xs font-normal text-gray-500">{{ $unit }}</span></p>
                 </a>
             @endforeach
         </section>
         <p class="text-xs text-gray-500">Az összesítők minden szűrt készletsorra vonatkoznak, nem csak az aktuális oldalra. {{ number_format($summary->products_count, 0, ',', ' ') }} termék · {{ number_format($summary->warehouses_count, 0, ',', ' ') }} raktár.</p>
+        @if($summary->unknown_count)
+            <a href="{{ route('stock.index', array_replace($filters, ['stock_status' => 'unknown'])) }}" class="inline-block text-sm font-medium text-amber-800 underline">{{ $summary->unknown_count }} készletsor elérhetősége nem számítható. A kiadható összeg a számítható sorokat tartalmazza.</a>
+        @endif
         <form id="stock-filters" method="GET" action="{{ route('stock.index') }}" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
             <input type="hidden" name="sort_by" value="{{ $filters['sort_by'] }}"><input type="hidden" name="sort_dir" value="{{ $filters['sort_dir'] }}"><input type="hidden" name="product_id" value="{{ $filters['product_id'] }}">
             <div title="Több szóval is kereshetsz terméknév, cikkszám, kategória, raktárnév vagy cím alapján. Minden szónak egyeznie kell. A javaslatokból pontos termék választható.">
@@ -37,8 +40,8 @@
         @endif
         <details class="rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
             <summary class="cursor-pointer font-medium">Mit jelentenek a készletértékek?</summary>
-            <p class="mt-2">A fizikai készletbe a kiadható, az elkülönített és a betárolásra váró mennyiség is beletartozik. Az úton lévő áru még nincs a célraktárban. A lista a nulla mennyiségű készletsorokat is tartalmazza, a készletsor nélküli termékeket nem.</p>
-            <p class="mt-2">A helyi minimum raktáranként és termékenként érvényes, alapból 5 db. Az utánpótlási javaslatokat vezérli; a globális termék- és kategóriaminimumoktól független. A 0 kikapcsolja az adott készletsor helyi pótlási igényét.</p>
+            <p class="mt-2">A fizikai készlet a raktárban nyilvántartott teljes darabszám. A közvetlenül kiadható mennyiség a manuális kiadás határa. A teljes kitárolható mennyiség az aktív rekeszekből felhasználható készletet is figyelembe veszi.</p>
+            <p class="mt-2">A lista a teljes kitárolható mennyiséget hasonlítja össze a helyi minimummal. A készletrészletek értékei átfedhetnek.</p>
         </details>
         <div data-stock-card-sort data-listing-card-sort="block">
             <details class="rounded-lg border border-gray-200 bg-white p-3">

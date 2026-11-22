@@ -281,7 +281,8 @@ class WarehouseCapacity
         ];
         if ($limits['slots'] !== null) {
             $free = $limits['slots'];
-            $checks['pallet_space'] = $check($slots === null && $pallet ? ($free <= 0 ? false : null) : ($slots ?? 0) <= $free,
+            $fits = $slots === null ? ($free < ($pallet ? 1 : 0) ? false : null) : $slots <= $free;
+            $checks['pallet_space'] = $check($fits,
                 'pallet_slots', $location->code.' tárhelyen '.$free.' szabad raklaphely van.'
                     .($slots === null ? '' : ' Hiányzik '.($slots - $free).' hely.'));
         }
@@ -320,7 +321,7 @@ class WarehouseCapacity
             $checks['dimensions_fit'] = ['passed' => !$tooLarge, 'message' => 'A rakomány a megadott tájolásban meghaladja a tárhely méretét.'];
         }
         if (!$tooLarge && $hasCommittedCargo) {
-            $checks['remaining_physical_space'] = ['passed' => null, 'message' => 'A tárolt vagy lefoglalt áru szabadon hagyott fizikai helye nem ismert.'];
+            $checks['remaining_physical_space'] = ['passed' => null, 'message' => 'A tárolt vagy lefoglalt áru mellett a szabad hely nem ismert. Ellenőrizd a helyszínen, hogy van-e egybefüggő szabad hely a rakománynak.'];
         }
 
         return $checks;

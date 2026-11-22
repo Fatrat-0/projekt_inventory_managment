@@ -98,7 +98,7 @@
                         </div>
                     </section>
                     @include('warehouse-putaway.cargo')
-                    @include('warehouse-putaway.locations')
+                    @include('warehouse-putaway.locations', ['allowSelectedRecheck' => true, 'showStockInSideSummary' => true])
                 </div>
 
                 <aside class="{{ $panel }} lg:sticky lg:top-[calc(var(--app-topbar-height,4rem)_+_1rem)]" aria-labelledby="putaway-summary-title">
@@ -106,7 +106,11 @@
                     <dl class="space-y-2 text-sm">
                         <div><dt class="text-xs text-gray-600">Termék és mennyiség</dt><dd class="font-semibold text-gray-900">{{ $item['product_name'] }} · <span x-text="pieces(quantityValue)"></span></dd></div>
                         <div><dt class="text-xs text-gray-600">Célraktár</dt><dd class="font-medium text-gray-900">{{ $item['warehouse_name'] }}</dd></div>
-                        <div><dt class="text-xs text-gray-600">Célrekesz</dt><dd class="font-medium text-gray-900" x-text="selected?.code ?? 'Még nincs kiválasztva'"></dd></div>
+                        <div><dt class="text-xs text-gray-600">Célrekesz</dt><dd class="font-medium text-gray-900 [overflow-wrap:anywhere]" x-text="selected?.code ?? 'Még nincs kiválasztva'"></dd></div>
+                        <div x-show="selected" data-putaway-target-stock aria-live="polite">
+                            <dt class="text-xs text-gray-600">Ebből a termékből a célrekeszben</dt>
+                            <dd class="font-semibold" x-text="selectedCurrent ? stockCaption(selected?.product_stock?.bin) : 'Új ellenőrzés szükséges'"></dd>
+                        </div>
                         <div class="grid min-w-0 grid-cols-2 gap-2 border-t border-gray-100 pt-2">
                             <div><dt class="text-xs text-gray-600">Bruttó tömeg</dt><dd x-text="mass(weightValue)"></dd></div>
                             <div><dt class="text-xs text-gray-600">Raklaphelyigény</dt><dd x-text="slots(palletValue)"></dd></div>

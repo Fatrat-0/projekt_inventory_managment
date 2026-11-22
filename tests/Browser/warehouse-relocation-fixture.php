@@ -1,8 +1,10 @@
 <?php
 
-use App\Models\{Category, Product, Stock, Warehouse, WarehouseStorageSystem, WarehouseStorageZone};
+use App\Models\{Category, Product, Stock, TransferIntent, User, Warehouse, WarehouseStorageSystem, WarehouseStorageZone};
+use App\Services\{TransferIntentService, TransferStockReservationService};
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 require __DIR__.'/environment.php';
 require $root.'/vendor/autoload.php';
@@ -26,14 +28,32 @@ Stock::create(['product_id' => $loose->getKey(), 'warehouse_id' => $warehouse->g
 Stock::create(['product_id' => $product->getKey(), 'warehouse_id' => $other->getKey(), 'quantity' => 9]);
 
 $bins = [];
-foreach (['A-01' => 100000, 'B-01' => 25000, 'B-02' => 500, 'C-01' => 200000] as $i => $cap) {
+$capacities = ['A-01' => 100000, 'B-01' => 25000, 'B-02' => 500, 'C-01' => 200000];
+if ($key === 'MERET') $capacities['C-01'] = $capacities['B-01'];
+if (in_array($key, ['BOV', 'BOVHATAR'], true)) $capacities += ['D-01' => 30000, 'E-01' => 40000, 'F-01' => 50000];
+foreach ($capacities as $i => $cap) {
     $location = $warehouse->storageLocations()->make();
-    $location->forceFill(['code' => $i, 'name' => 'Rekesz '.$i, 'kind' => 'shelf', 'active' => true,
+    $name = $key === 'BOV' && in_array($i, ['E-01', 'F-01'], true) ? str_repeat('hosszúrekesznév', 5) : 'Rekesz '.$i;
+    $location->forceFill(['code' => $i, 'name' => $name, 'kind' => 'shelf', 'active' => true,
         'max_weight_grams' => $cap, 'width_cm' => 100, 'depth_cm' => 100, 'height_cm' => 100,
         'floor_x' => 1 + count($bins) * 2, 'floor_y' => 1, 'floor_width' => 1, 'floor_height' => 1])->save();
     $bins[$i] = $location;
 }
 $bins['A-01']->placements()->create(['stock_id' => $stock->id, 'quantity' => 40, 'cargo_weight_grams' => 12000]);
+if ($key === 'MERET') $bins['C-01']->forceFill(['width_cm' => 45])->save();
+if ($key === 'AZONOS') {
+    $bins['C-01']->placements()->create(['stock_id' => $stock->id, 'quantity' => 6, 'cargo_weight_grams' => 1800]);
+}
+if ($key === 'BOV') {
+    $actor = User::where('role', 'admin')->firstOrFail();
+    $intents = app(TransferIntentService::class);
+    $intent = TransferIntent::findOrFail($intents->create($actor, [
+        'from_warehouse_id' => $warehouse->getKey(), 'to_warehouse_id' => $other->getKey(), 'product_id' => $product->getKey(),
+        'quantity' => 75, 'operation_key' => (string) Str::uuid(),
+    ])['intent']['id']);
+    $intents->approve($actor, $intent, ['version' => $intent->version, 'operation_key' => (string) Str::uuid()]);
+    app(TransferStockReservationService::class)->reserve($actor, $intent, ['version' => $intent->refresh()->version, 'operation_key' => (string) Str::uuid()]);
+}
 $additional = null;
 if ($key === 'TOBB') {
     $additional = Product::factory()->create(['sku' => 'REK-MASIK-'.$key, 'category_id' => $category->getKey(),

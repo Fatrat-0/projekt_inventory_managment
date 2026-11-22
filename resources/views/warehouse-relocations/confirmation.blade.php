@@ -1,11 +1,11 @@
-<dialog x-ref="confirmation" @cancel.prevent="closeReview()" aria-labelledby="relocation-confirm-title"
+<dialog x-ref="confirmation" @cancel.prevent="closeReview()" @close="confirmationOpen = false" aria-labelledby="relocation-confirm-title"
         class="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-lg border border-gray-200 bg-white p-0 text-gray-900 shadow-xl backdrop:bg-slate-950/40">
     <div class="min-w-0 space-y-4 p-4 sm:p-5">
         <h2 id="relocation-confirm-title" x-ref="reviewTitle" tabindex="-1" class="text-lg font-semibold">Áthelyezés megerősítése</h2>
         <dl class="grid min-w-0 gap-3 rounded-md bg-gray-50 p-3 text-sm sm:grid-cols-2">
-            <div><dt class="text-xs text-gray-600">Termék</dt><dd x-text="chosenProduct?.label"></dd></div>
-            <div><dt class="text-xs text-gray-600">Raktár</dt><dd x-text="warehouseName"></dd></div>
-            <div><dt class="text-xs text-gray-600">Útvonal</dt><dd class="font-medium" x-text="(source?.code ?? '—') + ' → ' + (selected?.code ?? '—')"></dd></div>
+            <div><dt class="text-xs text-gray-600">Termék</dt><dd x-text="reviewed?.productLabel"></dd></div>
+            <div><dt class="text-xs text-gray-600">Raktár</dt><dd x-text="reviewed?.warehouseName ?? '—'"></dd></div>
+            <div><dt class="text-xs text-gray-600">Útvonal</dt><dd class="font-medium" x-text="(reviewed?.source.code ?? '—') + ' → ' + (reviewed?.location.code ?? '—')"></dd></div>
             <div><dt class="text-xs text-gray-600">Áthelyezendő</dt><dd class="font-semibold" x-text="pieces(reviewed?.cargo.quantity)"></dd></div>
             <div><dt class="text-xs text-gray-600">Bruttó tömeg</dt><dd x-text="mass(reviewed?.cargo.cargo_weight_grams)"></dd></div>
             <div><dt class="text-xs text-gray-600">Raklaphelyigény</dt><dd x-text="slots(reviewed?.cargo.pallet_slots)"></dd></div>
@@ -23,7 +23,7 @@
         <p x-show="submissionError" x-text="submissionError" role="alert" class="rounded-md bg-amber-50 p-2 text-sm text-amber-900"></p>
         <div class="flex flex-wrap justify-end gap-2">
             <button type="button" @click="closeReview()" :disabled="submitting" class="{{ $secondary }}">Vissza a szerkesztéshez</button>
-            <button type="button" @click="save()" :disabled="submitting || (!pendingCommand && (!confirmed || !reviewed?.allowed))" class="{{ $primary }}"
+            <button type="button" @click="save()" :disabled="submitting || (!pendingCommand && !canSave)" class="{{ $primary }}"
                     x-text="submitting ? 'Rögzítés folyamatban…' : (pendingCommand ? 'Mentés újrapróbálása' : 'Áthelyezés rögzítése')"></button>
         </div>
     </div>

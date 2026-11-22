@@ -89,7 +89,7 @@ export default (initial) => ({
         if (!this.results.length) { this.active = -1; return; }
         this.active = this.active < 0 ? (direction > 0 ? 0 : this.results.length - 1)
             : (this.active + direction + this.results.length) % this.results.length;
-        this.$nextTick(() => this.$refs.list.children[this.active]?.scrollIntoView({ block: 'nearest' }));
+        this.$nextTick(() => this.$refs.list?.children[this.active]?.scrollIntoView({ block: 'nearest' }));
     },
     enter(event) {
         if (event.isComposing || event.keyCode === 229) return;

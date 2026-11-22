@@ -1,6 +1,8 @@
 import intentSubmission from './transfer-intent-submission';
 import readJson from './warehouse-json';
 import stockCaption from './putaway-stock-caption';
+import queueAdvice from './putaway-advice';
+import putawayResultRows, { hasHiddenPutawayRows } from './putaway-result-rows';
 
 const number = new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 3 });
 const date = new Intl.DateTimeFormat('hu-HU', {
@@ -43,6 +45,9 @@ export default ({ detail, history, urls }) => ({
     showMore: false,
     lookupError: '',
     lookupRequest: null,
+    adviceTimer: null,
+    lastAdviceKey: '',
+    selectedError: '',
     lookupSequence: 0,
     loading: false,
     historyLoading: false,
@@ -57,8 +62,18 @@ export default ({ detail, history, urls }) => ({
     success: null,
     previewRequest: null,
     previewing: false,
+    reviewed: null,
+    confirmationOpen: false,
 
-    destroy() { this.lookupRequest?.abort(); this.previewRequest?.abort(); },
+    init() {
+        this.$watch('adviceKey', () => this.queueAdvice());
+        this.queueAdvice();
+    },
+    destroy() {
+        clearTimeout(this.adviceTimer);
+        this.lookupRequest?.abort();
+        this.previewRequest?.abort();
+    },
 
     get item() { return this.detail.item; },
     get draftLocked() { return this.submitting || this.pendingCommand !== null; },
@@ -111,25 +126,42 @@ export default ({ detail, history, urls }) => ({
     },
     get signature() { return JSON.stringify(this.cargo); },
     get canLookUp() {
-        return this.eligible && !this.draftLocked && !this.refreshing && !this.needsRefresh
+        return this.eligible && !this.draftLocked && !this.refreshing && !this.needsRefresh && !this.previewing
             && !this.quantityError && !this.weightError && !this.palletError && !this.dimensionError;
     },
+    get canSearchLocations() { return this.canLookUp && !this.confirmationOpen; },
     get requiresSiteCheck() {
         const missing = this.selected?.checks?.missing ?? {};
         return geometryChecks.some(check => Boolean(missing[check]));
     },
     get canReview() {
-        return this.canLookUp && !this.loading && this.weightValue !== null && this.palletValue !== null
-            && Boolean(this.selected) && (urls.preview || this.signature === this.selectedSignature);
+        return this.canSearchLocations && this.weightValue !== null && this.palletValue !== null
+            && this.selectedCurrent && this.selected.status !== 'rejected';
     },
-    get canSave() { return this.canReview && this.signature === this.selectedSignature && this.confirmation && (!this.requiresSiteCheck || this.siteVerified); },
-    get resultRows() {
-        if (!this.results) return [];
-        return this.showMore ? this.results : this.results.slice(0, this.mode === 'manual' ? 8 : 3);
+    get canSave() {
+        const review = this.reviewed;
+        return this.confirmationOpen && this.eligible && !this.draftLocked && !this.needsRefresh && review
+            && review.signature === this.signature && review.command.version === this.item.version
+            && review.command.to_location_id === this.selected?.location_id && review.command.note === (this.note.trim() || null)
+            && this.confirmation && (!review.requiresSiteCheck || this.siteVerified);
     },
-    get canSeeMore() {
-        return Boolean(this.results?.length > (this.mode === 'manual' ? 8 : 3));
+    get adviceKey() {
+        if (!this.canSearchLocations) return '';
+        const search = this.mode === 'manual' ? this.search.trim() : '';
+        return JSON.stringify([this.mode, this.item.version, this.signature, search]);
     },
+    queueAdvice,
+    get selectedCurrent() {
+        return Boolean(this.selected && !this.needsRefresh && !this.accessError && this.selectedSignature === this.signature);
+    },
+    get lookupHint() {
+        if (this.needsRefresh) return 'Frissítsd a tételt az aktuális ajánlásokhoz.';
+        if (this.quantityError || this.weightError || this.palletError || this.dimensionError) return 'Ellenőrizd a mennyiséget és a megadott rakományadatokat.';
+        return '';
+    },
+    get visibleLimit() { return this.mode === 'manual' ? 8 : 3; },
+    get resultRows() { return putawayResultRows(this); },
+    get canSeeMore() { return hasHiddenPutawayRows(this); },
     get emptyMessage() {
         if (this.mode === 'manual' && this.search.trim()) return 'A keresésre nem található rekesz ebben a célraktárban.';
         return this.rejected.length
@@ -143,7 +175,8 @@ export default ({ detail, history, urls }) => ({
         if (this.palletValue === null) return 'Add meg a raklaphelyigényt. Raklap nélküli áruhoz adj meg 0-t.';
         if (this.dimensionError) return 'Ellenőrizd a rakomány méreteit.';
         if (!this.selected) return 'Kérj ajánlást vagy válassz célrekeszt.';
-        if (this.selectedSignature !== this.signature) return 'Ellenőrizd a kijelölt rekeszt az aktuális rakományadatokkal.';
+        if (!this.selectedCurrent) return 'Ellenőrizd a kijelölt rekeszt az aktuális rakományadatokkal.';
+        if (this.selected.status === 'rejected') return 'Válassz alkalmas célrekeszt.';
         if (this.requiresSiteCheck) return 'A rögzítéshez helyszíni elférés-ellenőrzés szükséges.';
         return '';
     },
@@ -157,12 +190,12 @@ export default ({ detail, history, urls }) => ({
     itemStatus(status) { return labels[status] ?? 'Betárolás'; },
     locationStatus(status) { return statuses[status] ?? 'Elérhetetlen'; },
     position(location) {
-        const nameParts = new Set((location.name ?? '').split(' · '));
-        return Object.values(location.position ?? {}).filter(text => text && !nameParts.has(text)).join(' · ');
+        return [...new Set(Object.values(location.position ?? {}).filter(Boolean))].join(' · ');
     },
     checks(checks) { return Object.values(checks ?? {}); },
 
     stopLookup() {
+        clearTimeout(this.adviceTimer);
         this.lookupRequest?.abort();
         this.lookupSequence++;
         this.loading = false;
@@ -176,74 +209,112 @@ export default ({ detail, history, urls }) => ({
         this.previewRequest = null;
         this.previewing = false;
         this.selectedSignature = '';
+        this.reviewed = null;
         this.confirmation = false;
         this.siteVerified = false;
     },
     changeCargo() {
         if (!this.packagingWeight) this.usePackaging = false;
         this.stopLookup();
-        if (urls.preview) this.invalidatePreview();
-        else this.clearSelection();
+        this.invalidatePreview();
+        this.lastAdviceKey = '';
+        this.selectedError = '';
         this.results = null;
         this.rejected = [];
         this.lookupError = '';
         this.clearIntentFeedback();
+        this.$nextTick(() => this.queueAdvice());
     },
     setMode(mode) {
         if (this.draftLocked || mode === this.mode) return;
         this.stopLookup();
         this.mode = mode;
+        this.lastAdviceKey = '';
         this.results = null;
         this.rejected = [];
         this.lookupError = '';
         this.showMore = false;
-        if (mode === 'manual') this.$nextTick(() => this.$refs.search.focus());
+        this.queueAdvice();
+        if (mode === 'manual') this.$nextTick(() => {
+            const search = this.$refs.search;
+            if (this.mode === 'manual' && search?.isConnected) search.focus();
+        });
     },
-    async loadLocations() {
-        if (!this.canLookUp) return;
+    async loadLocations(onlySelected = false) {
+        if (!this.canSearchLocations || this.loading) return;
         this.stopLookup();
-        if (urls.preview) this.invalidatePreview();
-        else this.clearSelection();
-        this.results = null;
-        this.rejected = [];
-        this.showMore = false;
+        if (!onlySelected) {
+            this.lastAdviceKey = this.adviceKey;
+            this.results = null;
+            this.rejected = [];
+            this.showMore = false;
+        }
         this.lookupError = '';
         this.loading = true;
 
         const mode = this.mode;
+        const manual = mode === 'manual';
         const search = this.search.trim();
         const signature = this.signature;
         const version = this.item.version;
+        const targetId = this.selected?.location_id;
+        const cargo = this.cargo;
         const controller = new AbortController();
         const sequence = this.lookupSequence;
         this.lookupRequest = controller;
-        const matchesRequest = () => this.lookupSequence === sequence && this.signature === signature
-            && this.item.version === version && this.mode === mode && (mode !== 'manual' || this.search.trim() === search);
-        const manual = mode === 'manual';
-        try {
-            const result = await readJson(manual ? urls.locations : urls.recommendations, controller.signal, {
-                ...this.cargo, ...(manual && search ? { search } : {}),
-            });
-            if (!matchesRequest()) return;
-            if (receiptItem(result)?.id !== this.item.id || receiptItem(result)?.version !== version) {
+        const matchesRequest = () => this.canSearchLocations && this.lookupSequence === sequence && this.signature === signature
+            && this.item.version === version && this.mode === mode && (onlySelected || !manual || this.search.trim() === search);
+        const isCurrentTarget = () => matchesRequest() && Boolean(targetId) && this.selected?.location_id === targetId;
+        if (targetId && (onlySelected || !manual)) {
+            this.selectedSignature = '';
+            this.selectedError = '';
+        }
+        const read = async (url, payload) => {
+            const response = await readJson(url, controller.signal, payload);
+            if (!matchesRequest()) return null;
+            if (receiptItem(response)?.id !== this.item.id || receiptItem(response)?.version !== version) {
                 this.needsRefresh = true;
                 this.lookupError = 'A tétel időközben megváltozott. Töltsd be az aktuális állapotát.';
-                return;
+                return null;
             }
-            this.results = (manual ? result.locations : result.recommendations) ?? [];
-            this.rejected = manual ? [] : (result.rejected ?? []);
-            if (this.selected) {
-                this.selected.product_stock = this.results.find(row => row.location_id === this.selected.location_id)?.product_stock;
+            return response;
+        };
+        try {
+            const result = await read(manual || onlySelected ? urls.locations : urls.recommendations, {
+                ...cargo, ...(onlySelected ? { to_location_id: targetId } : (manual && search ? { search } : {})),
+            });
+            if (!result || !matchesRequest()) return;
+            const rows = (manual || onlySelected ? result.locations : result.recommendations) ?? [];
+            if (!onlySelected) {
+                this.results = rows;
+                this.rejected = manual ? [] : (result.rejected ?? []);
+            }
+            if (!isCurrentTarget()) return;
+
+            let match = [...rows, ...(result.rejected ?? [])].find(row => row.location_id === targetId);
+            if (!match && !onlySelected && (!manual || !this.selectedCurrent)) {
+                const exact = await read(urls.locations, { ...cargo, to_location_id: targetId });
+                if (!exact || !isCurrentTarget()) return;
+                match = exact.locations?.find(row => row.location_id === targetId);
+            }
+            if (match) {
+                this.selected = match;
+                this.selectedSignature = signature;
+                this.selectedError = '';
+            } else if (!this.selectedCurrent) {
+                this.selectedError = 'A kiválasztott rekesz már nem érhető el.';
             }
         } catch (error) {
             if (!matchesRequest() || error.name === 'AbortError') return;
             this.needsRefresh = error.status === 409;
             if ([401, 403, 404, 419].includes(error.status)) this.accessError = error.message;
             this.lookupError = error.message;
+            if (isCurrentTarget() && !this.selectedCurrent) this.selectedError = error.message;
         } finally {
             if (this.lookupSequence === sequence) {
                 this.lookupRequest = null;
                 this.loading = false;
+                if (onlySelected && !this.lookupError) this.queueAdvice();
             }
         }
     },
@@ -252,64 +323,85 @@ export default ({ detail, history, urls }) => ({
         this.stopLookup();
         this.results = null;
         this.lookupError = '';
+        this.lastAdviceKey = '';
+        this.queueAdvice();
     },
     selectLocation(location) {
         if (!this.canLookUp || this.loading || !['verified', 'conditional'].includes(location.status)) return;
         this.clearIntentFeedback();
         this.clearSelection();
+        this.selectedError = '';
         this.selected = location;
         this.selectedSignature = this.signature;
-        this.$nextTick(() => this.$refs.selection.focus({ preventScroll: true }));
     },
 
     async openConfirmation() {
-        if (!this.canReview || this.previewing || this.$refs.confirmation.open) return;
-        this.confirmation = false;
-        this.siteVerified = false;
-        if (urls.preview) {
-            this.clearIntentFeedback();
-            this.selectedSignature = '';
-            const controller = new AbortController();
-            this.previewRequest = controller;
-            this.previewing = true;
-            const signature = this.signature;
-            const version = this.item.version;
-            const locationId = this.selected.location_id;
-            const current = () => this.previewRequest === controller && this.signature === signature
-                && this.item.version === version && this.selected?.location_id === locationId;
-            try {
-                const result = await readJson(urls.preview, controller.signal, {
-                    ...this.cargo, version, to_location_id: locationId,
-                });
-                if (!current()) return;
-                if (result.batch?.id !== this.item.id || result.batch?.version !== version) {
-                    this.needsRefresh = true;
-                    return;
-                }
-                this.selected = result.location;
-                const blockers = Object.entries(result.blocking_reasons ?? {})
-                    .filter(([rule]) => !result.site_verification_required || !geometryChecks.includes(rule));
-                if (blockers.length) {
-                    this.submissionError = 'A kiválasztott rekeszhez a betárolás nem véglegesíthető.';
-                    this.fieldErrors = Object.fromEntries(blockers.map(([rule, reason]) => [rule, [reason]]));
-                    return;
-                }
-                if (!result.can_putaway && !result.site_verification_required) return;
-                this.selectedSignature = signature;
-            } catch (error) {
-                if (!current() || error.name === 'AbortError') return;
-                this.needsRefresh = error.status === 409;
-                if ([401, 403, 404, 419].includes(error.status)) this.accessError = error.message;
-                this.submissionError = error.message;
+        if (!this.canReview) return;
+        if (this.loading) this.lastAdviceKey = '';
+        this.stopLookup();
+        this.clearIntentFeedback();
+        this.invalidatePreview();
+        const controller = new AbortController();
+        this.previewRequest = controller;
+        this.previewing = true;
+        const signature = this.signature;
+        const version = this.item.version;
+        const locationId = this.selected.location_id;
+        const note = this.note.trim() || null;
+        const current = () => this.previewRequest === controller && this.signature === signature
+            && this.item.version === version && this.selected?.location_id === locationId
+            && (this.note.trim() || null) === note;
+
+        try {
+            const payload = { ...this.cargo, to_location_id: locationId };
+            const result = await readJson(urls.preview ?? urls.locations, controller.signal,
+                urls.preview ? { ...payload, version } : payload);
+            if (!current()) return;
+            const latest = receiptItem(result);
+            if (latest?.id !== this.item.id || latest?.version !== version) {
+                this.needsRefresh = true;
+                this.submissionError = 'A tétel időközben megváltozott. Töltsd be az aktuális állapotát.';
                 return;
-            } finally {
-                if (this.previewRequest === controller) {
-                    this.previewRequest = null;
-                    this.previewing = false;
-                }
+            }
+            const location = urls.preview ? result.location : result.locations?.find(row => row.location_id === locationId);
+            if (!location) {
+                this.selectedError = 'A kiválasztott rekesz már nem érhető el.';
+                return;
+            }
+
+            if (location.status !== this.selected.status) {
+                this.results = null;
+                this.rejected = [];
+            }
+            this.selected = location;
+            this.selectedError = '';
+            this.selectedSignature = signature;
+            const reasons = urls.preview ? result.blocking_reasons : { ...location.checks.failed, ...location.checks.missing };
+            const blockers = Object.entries(reasons ?? {}).filter(([rule]) => !geometryChecks.includes(rule));
+            if (blockers.length) {
+                this.submissionError = 'A kiválasztott rekeszhez a betárolás nem véglegesíthető.';
+                this.fieldErrors = Object.fromEntries(blockers.map(([rule, reason]) => [rule, [reason]]));
+                return;
+            }
+            if (urls.preview && !result.can_putaway && !result.site_verification_required) return;
+            this.reviewed = {
+                signature, command: { ...payload, version, note }, location, cargo: result.cargo,
+                remaining: latest.pending_putaway_quantity - payload.quantity,
+                requiresSiteCheck: geometryChecks.some(rule => Boolean(location.checks.missing?.[rule])),
+            };
+            this.confirmationOpen = true;
+            this.$refs.confirmation.showModal();
+        } catch (error) {
+            if (!current() || error.name === 'AbortError') return;
+            this.needsRefresh = error.status === 409;
+            if ([401, 403, 404, 419].includes(error.status)) this.accessError = error.message;
+            this.submissionError = error.message;
+        } finally {
+            if (this.previewRequest === controller) {
+                this.previewRequest = null;
+                this.previewing = false;
             }
         }
-        this.$refs.confirmation.showModal();
     },
     closeConfirmation() {
         if (!this.submitting && this.$refs.confirmation.open) this.$refs.confirmation.close();
@@ -317,8 +409,7 @@ export default ({ detail, history, urls }) => ({
     async submit() {
         if (!this.canSave) return;
         const command = {
-            ...this.cargo, version: this.item.version, to_location_id: this.selected.location_id,
-            confirmed: true, site_verified: this.requiresSiteCheck && this.siteVerified, note: this.note.trim() || null,
+            ...this.reviewed.command, confirmed: true, site_verified: this.reviewed.requiresSiteCheck && this.siteVerified,
         };
         await this.runCommand(command);
     },
@@ -340,8 +431,7 @@ export default ({ detail, history, urls }) => ({
             if ([401, 403, 404, 419].includes(status)) this.accessError = this.submissionError;
             if ([409, 422].includes(status)) {
                 this.stopLookup();
-                if (urls.preview) this.invalidatePreview();
-                else this.clearSelection();
+                this.invalidatePreview();
                 this.results = null;
                 this.rejected = [];
             }
@@ -373,8 +463,8 @@ export default ({ detail, history, urls }) => ({
         this.refreshing = true;
         this.stopLookup();
         if (!quiet) {
-            if (urls.preview) this.invalidatePreview();
-            else this.clearSelection();
+            this.invalidatePreview();
+            this.lastAdviceKey = '';
             this.results = null;
             this.rejected = [];
             this.lookupError = '';

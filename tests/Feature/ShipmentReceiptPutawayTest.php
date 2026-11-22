@@ -287,7 +287,7 @@ class ShipmentReceiptPutawayTest extends TestCase
             ->assertJsonPath('event.geometry_status', 'site_verified')->assertJsonPath('event.dimensions_cm', null);
         $this->postJson($this->url('locations'), $this->cargo(10, 5) + ['to_location_id' => $bin->id])->assertOk()
             ->assertJsonPath('locations.0.status', 'conditional')
-            ->assertJsonPath('locations.0.checks.missing.remaining_physical_space', 'A tárolt vagy lefoglalt áru szabadon hagyott fizikai helye nem ismert.');
+            ->assertJsonPath('locations.0.checks.missing.remaining_physical_space', 'A tárolt vagy lefoglalt áru mellett a szabad hely nem ismert. Ellenőrizd a helyszínen, hogy van-e egybefüggő szabad hely a rakománynak.');
         $this->postJson($this->url(), $this->command($bin, 10, 5, 2))->assertUnprocessable()->assertJsonValidationErrors('site_verified');
     }
 

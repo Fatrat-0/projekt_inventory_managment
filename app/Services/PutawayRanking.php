@@ -10,18 +10,28 @@ final class PutawayRanking
      */
     public static function compare(array $left, array $right, string $leftCode, string $rightCode): int
     {
-        return (self::priority($left) <=> self::priority($right)) ?: strcmp($leftCode, $rightCode);
+        return (array_values(self::priority($left)) <=> array_values(self::priority($right))) ?: strcmp($leftCode, $rightCode);
+    }
+
+    public static function firstDifference(array $left, array $right): string
+    {
+        $rightPriority = self::priority($right);
+        foreach (self::priority($left) as $criterion => $value) {
+            if ($value !== $rightPriority[$criterion]) return $criterion;
+        }
+
+        return 'code';
     }
 
     private static function priority(array $score): array
     {
         return [
-            $score['verified'] ? 0 : 1,
-            $score['same_product'] ? 0 : 1,
-            $score['remaining_pallet_slots'] ?? PHP_INT_MAX,
-            $score['remaining_weight_grams'] ?? PHP_INT_MAX,
-            $score['volume_cm3'] ?? PHP_INT_MAX,
-            $score['nominal_weight_grams'],
+            'verified' => $score['verified'] ? 0 : 1,
+            'same_product' => $score['same_product'] ? 0 : 1,
+            'remaining_pallet_slots' => $score['remaining_pallet_slots'] ?? PHP_INT_MAX,
+            'remaining_weight_grams' => $score['remaining_weight_grams'] ?? PHP_INT_MAX,
+            'volume_cm3' => $score['volume_cm3'] ?? PHP_INT_MAX,
+            'nominal_weight_grams' => $score['nominal_weight_grams'],
         ];
     }
 }

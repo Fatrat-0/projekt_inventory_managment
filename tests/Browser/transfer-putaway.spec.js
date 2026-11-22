@@ -210,8 +210,12 @@ test('standalone transfer recommends locations and preserves manual selection', 
     await destination.fill('PUT-RACK szint 3 rekesz');
     await expect(page.getByRole('option', { name: /PUT-RACK-01-03 · PUT · Ajánlási próbaállvány · 1. szint · 3. rekesz.*szabad/ })).toBeVisible();
     await expect(page.getByRole('listbox', { name: 'Tárhelytalálatok' }).getByRole('option')).toHaveCount(1);
-    await destination.press('ArrowDown');
-    await destination.press('Enter');
+    // Selecting immediately can remove the picker before its pending scroll runs.
+    await destination.evaluate(input => {
+        for (const key of ['ArrowDown', 'Enter']) {
+            input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+        }
+    });
     await expect(summary).toContainText('PUT-RACK-01-03');
     await expect(summary).toContainText('Kézzel kiválasztva');
     await expect(page.locator('input[name="putaway_selection_mode"]')).toHaveValue('manual');

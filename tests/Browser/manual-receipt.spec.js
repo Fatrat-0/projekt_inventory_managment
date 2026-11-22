@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { shipmentCommand as command } from './shipment-fixtures';
+import { verifyPutawayDialogIsolation } from './putaway-dialog-regression';
 
 const button = (page, name) => page.getByRole('button', { name, exact: true });
 const fixture = key => JSON.parse(execFileSync('php', ['tests/Browser/manual-receipt-fixture.php', key], { encoding: 'utf8' }));
@@ -98,19 +99,23 @@ test('manual receipt from zero moves through the common queue, partial and compl
 
     await cargo(page, 120, null);
     await page.getByLabel(/A részlet egész, bontatlan csomagokból áll/).check();
-    await button(page, 'Ajánlások keresése').click();
     const first = page.locator('[data-putaway-location="A-01"]');
     await expect(first).toContainText('Feltételes');
-    await expect(first.locator('[data-putaway-stock="bin"]')).toHaveText('Rekeszkészlet: 0 → 120 db');
+    await expect(first.locator('[data-putaway-stock="bin"]')).toHaveText('Ebből a termékből a rekeszben: 0 → 120 db');
+    await expect(first.locator('[data-putaway-rank-summary]')).toBeHidden();
     await first.getByText('Részletek', { exact: true }).click();
+    await expect(first.locator('[data-putaway-rank-detail]')).toContainText('a rekeszkód szerinti sorrend döntött');
     await expect(first.getByRole('link', { name: /Megtekintés az alaprajzon/ })).toBeVisible();
     await expect(first.getByRole('link', { name: /Megtekintés az alaprajzon/ })).toHaveAttribute('href', /\/alaprajz\/\d+$/);
     await button(first, 'Kiválasztás').click();
+    await expect(button(first, 'Kiválasztva')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-putaway-selection]')).toBeHidden();
+    await expect(page.locator('[data-putaway-target-stock]')).toHaveText('Ebből a termékből a célrekeszben 0 → 120 db');
     await page.getByText('Külső méretek (cm)', { exact: true }).click();
     await page.getByLabel('Szélesség (cm)').fill('101');
-    await button(page, 'Betárolás ellenőrzése').click();
+    await expect(button(page, 'Betárolás ellenőrzése')).toBeDisabled();
     await expect(page.getByText(/meghaladja a tárhely méretét/).filter({ visible: true })).toBeVisible();
-    await expect(page.getByText('Kiválasztott rekesz A-01')).toBeVisible();
+    await expect(page.getByText('Kiválasztott célrekesz: A-01')).toBeVisible();
     await page.getByLabel('Szélesség (cm)').fill('25');
     await button(page, 'Betárolás ellenőrzése').click();
     await confirmPutaway(page, true, true);
@@ -118,9 +123,9 @@ test('manual receipt from zero moves through the common queue, partial and compl
     await expect.poll(() => stock(page, data)).toMatchObject({ physical_quantity: 200, assigned_quantity: 120, pending_putaway_quantity: 80 });
     await button(page, 'További betárolás').click();
     await cargo(page, 80, 8);
+    await expect(page.locator('[data-putaway-location="A-02"]')).toContainText('Ebből a termékből a rekeszben: 0 → 80 db');
     await button(page, 'Kézi rekeszkeresés').click();
     await page.getByRole('searchbox', { name: 'Rekesz keresése' }).fill('A-02');
-    await button(page, 'Keresés').click();
     const second = page.locator('[data-putaway-location="A-02"]');
     await expect(second.locator('[data-putaway-stock="bin"] strong')).toHaveText('0 → 80 db');
     await button(second, 'Kiválasztás').click();
@@ -167,7 +172,7 @@ test('receipt retry books once and a stale putaway draft refreshes without silen
     await expect(resume).toHaveAttribute('href', /\/raktari-feladatok\/betarolas\/kezi\/\d+$/);
     await resume.click();
     await cargo(page, 5, 1);
-    await button(page, 'Ajánlások keresése').click();
+    await button(page, 'Ajánlások frissítése').click();
     await button(page.locator('[data-putaway-location="A-01"]'), 'Kiválasztás').click();
     const id = new URL(page.url()).pathname.split('/').at(-1);
     await command(page, 'POST', '/movements/in/receipts/' + id + '/putaway', {
@@ -177,7 +182,28 @@ test('receipt retry books once and a stale putaway draft refreshes without silen
     await button(page, 'Betárolás ellenőrzése').click();
     await button(page, 'Tétel frissítése').click();
     await expect(page.locator('[data-putaway-remaining]')).toHaveText('15 db');
-    await expect(page.getByText('Kiválasztott rekesz A-01')).toBeVisible();
+    await expect(page.getByText('Kiválasztott célrekesz: A-01')).toBeVisible();
     await expect(page.getByRole('dialog', { name: 'Betárolás megerősítése' })).toBeHidden();
     await expect.poll(() => stock(page, data)).toMatchObject({ physical_quantity: 70, assigned_quantity: 5, pending_putaway_quantity: 15 });
+});
+
+test('a late manual search preserves the manual receipt review and both confirmations', async ({ page }) => {
+    const data = fixture('ABLAK');
+    await open(page, data);
+    const received = await command(page, 'POST', '/movements', {
+        product_id: data.product_id, warehouse_id: data.warehouse_id, type: 'in',
+        quantity: 20, confirmed: true, request_key: randomUUID(),
+    }, 201);
+    const id = (await received.json()).batch.id;
+    await page.goto(list + '/kezi/' + id);
+    await cargo(page, 5, 1);
+    await button(page.locator('[data-putaway-location="A-01"]'), 'Kiválasztás').click();
+    const dialog = page.getByRole('dialog', { name: 'Betárolás megerősítése' });
+    await verifyPutawayDialogIsolation(page, {
+        routePattern: '**/movements/in/receipts/' + id + '/locations', code: 'A-01',
+        review: button(page, 'Betárolás ellenőrzése'), dialog,
+        save: button(dialog, 'Betárolás rögzítése'), site: dialog.locator('[data-putaway-site-check]'),
+        physical: dialog.getByRole('checkbox', { name: /ténylegesen ebbe a rekeszbe/ }),
+    });
+    await expect.poll(() => stock(page, data)).toMatchObject({ pending_putaway_quantity: 20 });
 });

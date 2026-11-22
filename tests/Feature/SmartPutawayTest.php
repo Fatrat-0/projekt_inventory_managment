@@ -43,6 +43,8 @@ class SmartPutawayTest extends TestCase
         $this->assertSame($this->warehouse->getKey(), $result['warehouse_id']);
         $this->assertSame(2, $result['quantity']);
         $this->assertSame([$target->id], array_column($result['recommendations'], 'location_id'));
+        $this->assertArrayNotHasKey('ranking_explanation', $result['recommendations'][0]);
+        $this->assertSame(['width' => 100, 'depth' => 100, 'height' => 100], $result['recommendations'][0]['location_dimensions_cm']);
         $this->assertSame('verified', $result['recommendations'][0]['status']);
         $this->assertContains('dimensions_fit', $result['recommendations'][0]['checks']['passed']);
         $this->assertSame(80000, $result['recommendations'][0]['score']['remaining_weight_grams']);
@@ -103,6 +105,10 @@ class SmartPutawayTest extends TestCase
         $recommendations = $this->recommend(['dimensions_cm' => null])['recommendations'];
 
         $this->assertSame(['Z-01', 'A', 'B', 'C', 'D'], array_column($recommendations, 'code'));
+        $this->assertSame('Ezen a tárhelyen már van azonos termék.', $recommendations[0]['first_rank_reason']);
+        $this->assertSame('same_product', $recommendations[0]['ranking_explanation']['criterion']);
+        $this->assertSame('Itt már tárolunk ebből a termékből.', $recommendations[0]['ranking_explanation']['summary']);
+        $this->assertArrayNotHasKey('first_rank_reason', $recommendations[1]);
         $this->assertTrue($recommendations[0]['score']['same_product']);
         $this->assertSame('conditional', $recommendations[0]['status']);
         $this->assertArrayHasKey('remaining_physical_space', $recommendations[0]['checks']['missing']);
@@ -120,6 +126,9 @@ class SmartPutawayTest extends TestCase
         $result = $this->recommend();
         [$verified, $withStock, $withReservation] = $result['recommendations'];
         $this->assertSame(['Z', 'A', 'B'], array_column($result['recommendations'], 'code'));
+        $this->assertSame('A megadott adatokkal ellenőrizhető az elférés.', $verified['first_rank_reason']);
+        $this->assertSame('verified', $verified['ranking_explanation']['criterion']);
+        $this->assertNull($verified['ranking_explanation']['summary']);
         $this->assertSame('verified', $verified['status']);
         $this->assertSame(['C'], array_column($result['rejected'], 'code'));
 
@@ -128,6 +137,66 @@ class SmartPutawayTest extends TestCase
             $this->assertArrayHasKey('remaining_physical_space', $candidate['checks']['missing']);
             $this->assertNotContains('dimensions_fit', $candidate['checks']['passed']);
         }
+    }
+
+    public function test_explains_the_capacity_that_actually_decided_the_order(): void
+    {
+        $a = $this->location('A', ['max_weight_grams' => 100000]);
+        $b = $this->location('B', ['max_weight_grams' => 60000]);
+        [$winner] = $this->recommend()['recommendations'];
+        $this->assertSame($b->id, $winner['location_id']);
+        $this->assertSame('remaining_weight_grams', $winner['ranking_explanation']['criterion']);
+        $this->assertSame('Az áru elhelyezése után itt kevesebb teherbírás marad kihasználatlanul.', $winner['ranking_explanation']['summary']);
+
+        $a->update(['kind' => 'pallet', 'max_pallet_slots' => 2]);
+        $b->update(['kind' => 'pallet', 'max_pallet_slots' => 4]);
+        [$winner] = $this->recommend(['pallet_slots' => 1])['recommendations'];
+        $this->assertSame($a->id, $winner['location_id']);
+        $this->assertSame('remaining_pallet_slots', $winner['ranking_explanation']['criterion']);
+        $this->assertSame('Az áru elhelyezése után itt kevesebb raklaphely marad üresen.', $winner['ranking_explanation']['summary']);
+    }
+
+    public function test_explains_a_smaller_bin_only_when_both_volumes_are_known(): void
+    {
+        $a = $this->location('A');
+        $b = $this->location('B', dimensions: ['width_cm' => 45, 'depth_cm' => 50, 'height_cm' => 50]);
+
+        [$winner] = $this->recommend()['recommendations'];
+        $this->assertSame($b->id, $winner['location_id']);
+        $this->assertSame('verified', $winner['status']);
+        $this->assertSame('volume_cm3', $winner['ranking_explanation']['criterion']);
+        $this->assertSame('A rakomány kisebb rekeszben is elfér.', $winner['ranking_explanation']['summary']);
+        [$conditional] = $this->recommend(['dimensions_cm' => null])['recommendations'];
+        $this->assertSame('conditional', $conditional['status']);
+        $this->assertSame('Ez a rekesz kisebb térfogatú.', $conditional['ranking_explanation']['summary']);
+        $this->assertSame('A kisebb rekesztérfogat döntött.', $conditional['first_rank_reason']);
+        $this->assertArrayHasKey('cargo_dimensions', $conditional['checks']['missing']);
+
+        $a->forceFill(['width_cm' => null])->save();
+        [$onlyKnownVolume] = $this->recommend(['dimensions_cm' => null])['recommendations'];
+        $this->assertSame('volume_cm3', $onlyKnownVolume['ranking_explanation']['criterion']);
+        $this->assertNull($onlyKnownVolume['ranking_explanation']['summary']);
+        $this->assertStringContainsString('hiányzik legalább egy méretadat', $onlyKnownVolume['ranking_explanation']['detail']);
+    }
+
+    public function test_keeps_ties_and_nominal_weight_only_in_rank_details(): void
+    {
+        $this->location('C');
+        $this->location('B');
+        $a = $this->location('A');
+        $equal = $this->recommend()['recommendations'];
+        $this->assertSame(['A', 'B', 'C'], array_column($equal, 'code'));
+        $this->assertSame(['verified', 'verified', 'verified'], array_column($equal, 'status'));
+        $this->assertSame($equal, $this->recommend()['recommendations']);
+        [$winner] = $equal;
+        $this->assertSame('code', $winner['ranking_explanation']['criterion']);
+        $this->assertNull($winner['ranking_explanation']['summary']);
+        $this->assertStringContainsString('rekeszkód szerinti', $winner['ranking_explanation']['detail']);
+
+        $a->update(['max_weight_grams' => 60000]);
+        [$nominal] = $this->recommend(['cargo_weight_kg' => null])['recommendations'];
+        $this->assertSame('nominal_weight_grams', $nominal['ranking_explanation']['criterion']);
+        $this->assertNull($nominal['ranking_explanation']['summary']);
     }
 
     public function test_unknown_weight_and_unknown_pallet_need_independently_prevent_verification(): void
@@ -148,6 +217,22 @@ class SmartPutawayTest extends TestCase
             $this->assertContains('location_weight', $candidate['checks']['passed']);
             $this->assertContains('dimensions_fit', $candidate['checks']['passed']);
         }
+    }
+
+    public function test_floor_positions_do_not_treat_an_unknown_pallet_requirement_as_zero(): void
+    {
+        $floor = $this->location('PAD-01', ['kind' => 'floor', 'max_pallet_slots' => 1]);
+
+        $unknown = $this->recommend(['pallet_slots' => null])['recommendations'][0];
+        $this->assertSame('conditional', $unknown['status']);
+        $this->assertArrayHasKey('pallet_space', $unknown['checks']['missing']);
+        $this->assertNotContains('pallet_space', $unknown['checks']['passed']);
+
+        $nonPallet = $this->recommend(['pallet_slots' => 0])['recommendations'][0];
+        $this->assertSame('verified', $nonPallet['status']);
+        $this->assertContains('pallet_space', $nonPallet['checks']['passed']);
+        $this->assertSame(1, $nonPallet['score']['remaining_pallet_slots']);
+        $this->assertArrayHasKey('pallet_space', $this->rejected($this->recommend(['pallet_slots' => 2]), $floor)['checks']['failed']);
     }
 
     public function test_dimensions_apply_to_the_entire_line_and_quantity_counts_units(): void
@@ -261,6 +346,10 @@ class SmartPutawayTest extends TestCase
             $first = collect($this->recommend()['recommendations'])->keyBy('location_id');
             $smallQueryCount = count(DB::getQueryLog());
             $this->assertSame('conditional', $first[$target->id]['status']);
+            $this->assertSame('conditional', $first[$mixed->id]['status']);
+            $this->assertFalse($first[$mixed->id]['score']['same_product']);
+            $this->assertArrayHasKey('remaining_physical_space', $first[$mixed->id]['checks']['missing']);
+            $this->assertNotContains('dimensions_fit', $first[$mixed->id]['checks']['passed']);
             $this->assertSame([
                 'bin' => ['before' => 1, 'after' => 3],
                 'level' => ['before' => 2, 'after' => 4],
@@ -278,6 +367,9 @@ class SmartPutawayTest extends TestCase
         } finally {
             DB::disableQueryLog();
         }
+
+        $oversize = $this->recommend(['dimensions_cm' => ['width' => 101, 'depth' => 20, 'height' => 20]]);
+        $this->assertArrayHasKey('dimensions_fit', $this->rejected($oversize, $mixed)['checks']['failed']);
     }
 
     public function test_contradictory_stock_is_unknown_rather_than_an_empty_bin(): void

@@ -122,10 +122,11 @@
                 </section>
 
                 @include('warehouse-putaway.locations', [
-                    'locationPrompt' => 'A rakomány alapján válassz célrekeszt.',
                     'floorPlanField' => 'floor_plan_url',
                     'statusExpression' => 'targetStatus(location)',
+                    'selectedStatusExpression' => 'targetStatus(selected)',
                     'showStockInSideSummary' => true,
+                    'allowSourceRefresh' => true,
                 ])
 
                 <section class="{{ $panel }}" aria-labelledby="relocation-notes-title">
@@ -146,10 +147,10 @@
                     <div><dt class="text-xs text-gray-600">Termék</dt><dd x-text="chosenProduct?.label ?? '—'"></dd></div>
                     <div class="grid grid-cols-2 gap-2 border-y border-gray-100 py-2">
                         <div><dt class="text-xs text-gray-600">Forrásrekesz</dt><dd class="font-semibold" x-text="source?.code ?? '—'"></dd></div>
-                        <div><dt class="text-xs text-gray-600">Célrekesz</dt><dd class="font-semibold" x-text="selected?.code ?? '—'"></dd></div>
+                        <div><dt class="text-xs text-gray-600">Célrekesz</dt><dd class="font-semibold [overflow-wrap:anywhere]" x-text="selected?.code ?? '—'"></dd></div>
                         <div><dt class="text-xs text-gray-600">Forrásban maradna</dt><dd x-text="pieces(amount === null ? null : source.stored_quantity - amount)"></dd></div>
                         <div x-show="showTargetStock" data-relocation-target-stock aria-live="polite">
-                            <dt class="text-xs text-gray-600">Célrekesz készlete</dt>
+                            <dt class="text-xs text-gray-600">Ebből a termékből a célrekeszben</dt>
                             <dd class="font-semibold" x-text="targetStockCaption"></dd>
                         </div>
                     </div>
@@ -168,10 +169,10 @@
                     <input type="checkbox" x-model="siteVerified" :disabled="draftLocked" class="mt-0.5 rounded border-gray-300 text-indigo-600">
                     A helyszínen ellenőriztem, hogy a rakomány elfér a célrekeszben.
                 </label>
-                <button type="button" x-show="requiresRefresh && !pendingCommand" @click="refresh()" :disabled="refreshing" class="{{ $secondary }} w-full">Forrás és cél frissítése</button>
+                <button type="button" x-show="requiresRefresh && !lookupError && !pendingCommand" @click="refresh()" :disabled="refreshing" class="{{ $secondary }} w-full">Forrás és cél frissítése</button>
                 <button type="button" x-show="!pendingCommand" x-ref="reviewButton" @click="review()" :disabled="!canReview" aria-haspopup="dialog" class="{{ $primary }} w-full"
                         x-text="requests.preview ? 'Ellenőrzés folyamatban…' : 'Áthelyezés ellenőrzése'"></button>
-                <button type="button" x-show="pendingCommand" x-ref="retryButton" @click="$refs.confirmation.showModal()" class="{{ $primary }} w-full">Mentés újrapróbálása</button>
+                <button type="button" x-show="pendingCommand" x-ref="retryButton" @click="openReviewedDialog()" class="{{ $primary }} w-full">Mentés újrapróbálása</button>
             </aside>
         </div>
 

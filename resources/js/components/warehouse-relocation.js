@@ -2,6 +2,8 @@ import intentSubmission from './transfer-intent-submission';
 import transferQuantity, { positiveInteger } from './transfer-quantity';
 import readJson from './warehouse-json';
 import stockCaption from './putaway-stock-caption';
+import queueAdvice from './putaway-advice';
+import putawayResultRows, { hasHiddenPutawayRows } from './putaway-result-rows';
 
 const number = new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 3 });
 const axes = ['width', 'depth', 'height'];
@@ -27,6 +29,9 @@ export default config => Object.defineProperties({
     requests: {},
     productTimer: null,
     cargoTimer: null,
+    adviceTimer: null,
+    lastAdviceKey: '',
+    selectedError: '',
     allWarehouses: config.warehouses.map(warehouseOption),
     warehouseOptions: config.warehouses.map(warehouseOption),
     productMatches: [],
@@ -61,20 +66,23 @@ export default config => Object.defineProperties({
     notice: '',
     reviewError: '',
     requiresRefresh: false,
+    refreshingDraft: false,
     blockers: [],
     reviewed: null,
+    confirmationOpen: false,
     pendingCommand: null,
     confirmed: false,
     success: null,
 
     init() {
+        this.$watch('adviceKey', () => this.queueAdvice());
         this.loadProducts();
         if (this.productId) this.loadSource();
         this.$watch('cargoBasis', () => {
             this.sourceVerified = false;
             this.siteVerified = false;
             this.invalidateLocations();
-            this.queueCargo();
+            if (!this.refreshingDraft) this.queueCargo();
         });
         this.$watch('signature', () => {
             this.cancel('preview');
@@ -87,6 +95,7 @@ export default config => Object.defineProperties({
     destroy() {
         clearTimeout(this.productTimer);
         clearTimeout(this.cargoTimer);
+        clearTimeout(this.adviceTimer);
         for (const field of fields) this.cancel(field);
     },
     cancel(key) {
@@ -158,12 +167,16 @@ export default config => Object.defineProperties({
         };
     },
     get signature() { return JSON.stringify(this.physicalRequest); },
-    get refreshing() { return Boolean(this.requests.sources); },
+    get refreshing() { return this.refreshingDraft || Boolean(this.requests.sources); },
     get loading() { return Boolean(this.requests.lookup); },
     get draftLocked() { return this.submitting || this.pendingCommand !== null; },
-    get canLookUp() { return Boolean(this.cargoBasis && this.cargo?.basis === this.cargoBasis && !this.physicalErrors && !this.refreshing && !this.requests.preview && !this.draftLocked); },
+    get canLookUp() {
+        return Boolean(this.cargoBasis && this.cargo?.basis === this.cargoBasis && !this.physicalErrors
+            && !this.refreshing && !this.requiresRefresh && !this.requests.preview && !this.draftLocked);
+    },
+    get canSearchLocations() { return this.canLookUp && !this.confirmationOpen; },
     get canReview() {
-        return this.canLookUp && !this.requiresRefresh && Boolean(this.selected) && !this.requests.preview
+        return this.canSearchLocations && this.selectedCurrent && this.selected.status !== 'rejected'
             && (!this.measured || (weight(this.weightValue) !== null && integer(this.pallets, 0, 1_000_000) !== null))
             && (!this.cargo?.cargo.source_verification_required || this.sourceVerified) && (!this.siteRequired || this.siteVerified);
     },
@@ -177,8 +190,29 @@ export default config => Object.defineProperties({
 
         return stockCaption(balance);
     },
-    get resultRows() { return this.results?.slice(0, this.showMore ? undefined : 6) ?? []; },
-    get canSeeMore() { return (this.results?.length ?? 0) > 6; },
+    get canSave() {
+        return this.confirmationOpen && !this.draftLocked && !this.requiresRefresh && this.confirmed
+            && this.reviewed?.allowed && JSON.stringify(this.reviewed.payload) === JSON.stringify(this.reviewPayload);
+    },
+    get adviceKey() {
+        if (!this.canSearchLocations || this.success) return '';
+        const search = this.mode === 'manual' ? this.search.trim() : '';
+        return JSON.stringify([this.mode, this.signature, search]);
+    },
+    queueAdvice,
+    get selectedCurrent() {
+        return Boolean(this.selected && !this.requiresRefresh && this.selectedSignature === this.signature);
+    },
+    get lookupHint() {
+        if (!this.warehouseId || !this.productId) return 'Válassz raktárat és terméket az ajánlásokhoz.';
+        if (!this.source || this.amount === null) return 'Válassz forrásrekeszt, majd adj meg áthelyezhető darabszámot.';
+        if (this.physicalErrors) return 'Ellenőrizd a megadott rakományadatokat.';
+        if (this.requiresRefresh) return 'Frissítsd a forrás és a cél adatait.';
+        return '';
+    },
+    get visibleLimit() { return this.mode === 'suggestions' ? 3 : 6; },
+    get resultRows() { return putawayResultRows(this); },
+    get canSeeMore() { return hasHiddenPutawayRows(this); },
     get emptyMessage() {
         return this.mode === 'manual' ? 'A keresésre nem található célrekesz ebben a raktárban.' : 'A megadott rakományhoz nincs ajánlható rekesz.';
     },
@@ -207,10 +241,10 @@ export default config => Object.defineProperties({
         const missing = location.checks?.missing ?? {};
         const geometry = ['cargo_dimensions', 'location_dimensions', 'remaining_physical_space'];
         return Object.keys(missing).some(key => !geometry.includes(key))
-            ? 'Rakományadatok szükségesek' : 'Helyszíni ellenőrzés szükséges';
+            ? 'Feltételes · Rakományadatok szükségesek' : 'Feltételes · Helyszíni ellenőrzés szükséges';
     },
     get targetCheck() {
-        if (this.selectedSignature !== this.signature) return 'unknown';
+        if (!this.selectedCurrent) return 'unknown';
         if (this.siteVerified && this.reviewed?.site_verification_required && this.reviewed.payload.site_verified
             && this.reviewed.location.status !== 'rejected') return 'site_verified';
         if (this.selected?.status === 'verified') return 'verified';
@@ -262,6 +296,7 @@ export default config => Object.defineProperties({
     warehouseChanged(value) {
         if (value === this.warehouseId) return;
         this.warehouseId = value;
+        this.selected = null;
         this.resetSource();
         this.productTerm = '';
         this.productMatches = [];
@@ -288,7 +323,10 @@ export default config => Object.defineProperties({
         this.sourceId = value;
         this.usePieces();
         this.editQuantity('');
-        this.selected = null;
+        if (String(this.selected?.location_id) === value) {
+            this.selected = null;
+            this.notice = 'A korábbi célrekesz most a forrás. Válassz másik célrekeszt.';
+        }
         this.weightValue = '';
         this.pallets = '';
         this.dimensions = { width: '', depth: '', height: '' };
@@ -351,51 +389,99 @@ export default config => Object.defineProperties({
         this.siteRequired = false;
         this.selectedSignature = '';
         this.stockSignature = '';
+        this.selectedError = '';
+        this.lastAdviceKey = '';
+        clearTimeout(this.adviceTimer);
+        this.$nextTick(() => this.queueAdvice());
     },
     setMode(mode) {
         if (mode === this.mode) return;
         this.mode = mode;
+        this.lastAdviceKey = '';
         this.changeSearch();
-        if (mode === 'manual') this.$nextTick(() => this.$refs.search?.focus());
+        this.queueAdvice();
+        if (mode === 'manual') this.$nextTick(() => {
+            const search = this.$refs.search;
+            if (this.mode === 'manual' && search?.isConnected) search.focus();
+        });
     },
     changeSearch() {
         this.cancel('lookup');
         this.results = null;
         this.rejected = [];
         this.lookupError = '';
+        if (this.mode === 'manual') this.lastAdviceKey = '';
+        this.queueAdvice();
     },
     async loadLocations(onlySelected = false) {
-        if (!this.canLookUp) return;
+        if (!this.canSearchLocations || this.loading) return;
+        clearTimeout(this.adviceTimer);
+        this.lastAdviceKey = this.adviceKey;
         this.lookupError = '';
+        const signature = this.signature;
+        const mode = this.mode;
+        const search = this.search.trim();
+        const targetId = this.selected?.location_id;
+        const cargo = this.physicalRequest;
+        const isCurrent = () => this.canSearchLocations && this.signature === signature && this.mode === mode
+            && (mode !== 'manual' || onlySelected || this.search.trim() === search);
+        const currentTarget = () => isCurrent() && this.selected?.location_id === targetId;
         if (!onlySelected) {
             this.results = null;
             this.rejected = [];
             this.showMore = false;
         }
-        const signature = this.signature;
-        const targetId = this.selected?.location_id;
-        const request = this.mode === 'manual' || onlySelected
-            ? { mode: 'search', ...(onlySelected ? { to_location_id: targetId } : { search: this.search.trim() }) }
-            : { mode: 'recommendations' };
+        if (targetId && (onlySelected || mode === 'suggestions')) {
+            this.selectedSignature = '';
+            this.stockSignature = '';
+            this.selectedError = '';
+        }
         try {
-            const data = await this.request('lookup', config.candidates, { ...this.physicalRequest, ...request });
-            if (!data || signature !== this.signature) return;
+            const query = onlySelected ? { mode: 'search', to_location_id: targetId }
+                : mode === 'manual' ? { mode: 'search', search } : { mode: 'recommendations' };
+            const data = await this.request('lookup', config.candidates, { ...cargo, ...query });
+            if (!data || !isCurrent()) return;
             const rows = data.recommendations ?? data.locations ?? [];
             if (!onlySelected) {
                 this.results = rows;
                 this.rejected = data.rejected ?? [];
             }
-            if (targetId !== undefined && this.selected?.location_id === targetId) {
-                const refreshed = rows.find(row => row.location_id === targetId);
-                if (onlySelected && refreshed) this.selected = refreshed;
-                this.selected.product_stock = refreshed?.product_stock;
-                this.stockSignature = refreshed?.product_stock ? signature : '';
+            if (!targetId || !currentTarget()) return;
+
+            let match = [...rows, ...(data.rejected ?? [])].find(row => row.location_id === targetId);
+            if (!match && !onlySelected && (mode === 'suggestions' || !this.selectedCurrent)) {
+                const result = await this.request('lookup', config.candidates, { ...cargo, mode: 'search', to_location_id: targetId });
+                if (!result || !currentTarget()) return;
+                match = result.locations?.find(row => row.location_id === targetId);
             }
-        } catch (error) { this.handleReadError(error, 'lookupError'); }
+            if (match) this.applyLocationCheck(match, signature);
+            else if (!this.selectedCurrent) this.selectedError = 'A kiválasztott rekesz már nem érhető el.';
+        } catch (error) {
+            if (!isCurrent()) return;
+            this.handleReadError(error, 'lookupError');
+            if (targetId && currentTarget() && !this.selectedCurrent) {
+                this.selectedError = this.lookupError;
+            }
+        }
+    },
+    applyLocationCheck(location, signature) {
+        if (location.status !== this.selected?.status || location.free_weight_grams !== this.selected.free_weight_grams
+            || location.free_pallet_slots !== this.selected.free_pallet_slots
+            || JSON.stringify(location.checks) !== JSON.stringify(this.selected.checks)) {
+            this.siteVerified = false;
+            this.siteRequired = false;
+            this.blockers = [];
+        }
+        const planLink = this.selected?.floor_plan_url;
+        this.selected = { ...location, floor_plan_url: location.floor_plan_url ?? planLink };
+        this.selectedSignature = signature;
+        this.stockSignature = signature;
+        this.selectedError = '';
     },
     selectLocation(location) {
         if (location.status === 'rejected' || String(location.location_id) === this.sourceId) return;
         this.selected = location;
+        this.selectedError = '';
         this.reviewed = null;
         this.blockers = [];
         this.reviewError = '';
@@ -404,7 +490,6 @@ export default config => Object.defineProperties({
         this.selectedSignature = this.signature;
         this.stockSignature = this.signature;
         this.cancel('preview');
-        this.$nextTick(() => this.$refs.selection?.focus({ preventScroll: true }));
     },
     handleReadError(error, field) {
         this[field] = this.checks(error.errors).flat().join(' ') || error.message;
@@ -422,6 +507,8 @@ export default config => Object.defineProperties({
         this.clearIntentFeedback();
         this.confirmed = false;
         this.stockSignature = '';
+        clearTimeout(this.adviceTimer);
+        if (this.loading) this.lastAdviceKey = '';
         this.cancel('lookup');
         const payload = this.reviewPayload;
         const basis = JSON.stringify(payload);
@@ -433,12 +520,26 @@ export default config => Object.defineProperties({
             this.stockSignature = this.signature;
             this.siteRequired = result.site_verification_required;
             this.blockers = this.checks(result.blocking_reasons);
-            this.reviewed = { ...result, payload, allowed: result.can_relocate };
+            this.reviewed = {
+                ...result, payload, allowed: result.can_relocate,
+                warehouseName: this.warehouseName, productLabel: this.chosenProduct?.label,
+                targetCheck: this.targetCheckForReview(result, payload),
+                sourceCheck: result.source_allocations.some(row => row.remaining_load_requires_verification),
+            };
             if (result.can_relocate) {
-                this.$refs.confirmation.showModal();
+                this.openReviewedDialog();
                 this.$nextTick(() => this.$refs.reviewTitle?.focus({ preventScroll: true }));
             }
         } catch (error) { this.handleReadError(error, 'reviewError'); }
+    },
+    targetCheckForReview(result, payload) {
+        if (result.location.status === 'verified') return 'verified';
+        if (result.location.status === 'rejected') return 'blocked';
+        return result.site_verification_required && payload.site_verified ? 'site_verified' : 'unknown';
+    },
+    openReviewedDialog() {
+        this.confirmationOpen = true;
+        this.$refs.confirmation.showModal();
     },
     closeReview() {
         if (this.submitting) return;
@@ -447,7 +548,7 @@ export default config => Object.defineProperties({
     },
     async save() {
         if (this.submitting) return;
-        const command = this.pendingCommand ?? (this.confirmed && this.reviewed?.allowed ? {
+        const command = this.pendingCommand ?? (this.canSave ? {
             ...this.reviewed.payload, target_revision: this.reviewed.target_revision, confirmed: true,
         } : null);
         if (!command) return;
@@ -476,15 +577,21 @@ export default config => Object.defineProperties({
     },
     async refresh() {
         if (!this.productId || !this.warehouseId || this.refreshing) return;
-        this.invalidateLocations();
-        this.sourceVerified = false;
-        this.reviewed = null;
-        this.confirmed = false;
-        if (!await this.loadSource()) return;
-        this.requiresRefresh = false;
-        if (this.cargoBasis) {
-            await this.loadCargo();
-            if (this.selected && this.source && this.canLookUp) await this.loadLocations(true);
+        this.refreshingDraft = true;
+        try {
+            this.invalidateLocations();
+            this.sourceVerified = false;
+            this.reviewed = null;
+            this.confirmed = false;
+            if (!await this.loadSource()) return;
+            if (this.cargoBasis) {
+                await this.loadCargo();
+                if (this.cargo?.basis !== this.cargoBasis) return;
+            }
+            this.requiresRefresh = false;
+        } finally {
+            this.refreshingDraft = false;
         }
+        if (this.canSearchLocations) await this.loadLocations();
     },
 }, Object.getOwnPropertyDescriptors(transferQuantity({ pieces: '', boxFieldId: 'relocation-quantity' })));

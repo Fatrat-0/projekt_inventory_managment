@@ -7,6 +7,7 @@ $paths = [
     'box' => 'M21 8l-9-5-9 5v9l9 5 9-5V8z M3 8l9 5 9-5 M12 13v9 M7.5 5.5l9 5',
     'search' => 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
     'filter' => 'M4 6h16 M7 12h10 M10 18h4',
+    'refresh' => 'M20 11a8 8 0 1 0-2 6 M20 4v7h-7',
     'document' => 'M14 2H5v20h14V7l-5-5z M14 2v5h5 M8 12h8 M8 16h8',
     'list' => 'M4 6h16 M4 12h16 M4 18h16',
     'grid' => 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',

@@ -183,6 +183,16 @@ class WarehouseRelocationTest extends TestCase
 
         $this->assertSame($baseline, $this->totals());
         $this->assertDatabaseCount('warehouse_relocations', 0);
+
+        $this->postJson($this->url('store'), $this->command(4, $source, $sameLevel) + [
+            'cargo_weight_kg' => 4, 'pallet_slots' => 0, 'site_verified' => true,
+        ])->assertCreated()
+            ->assertJsonPath('relocation.geometry_status', 'site_verified')
+            ->assertJsonPath('relocation.source_allocations.0.remaining_load_requires_verification', true);
+        $this->assertSame(6, $source->placements()->sole()->quantity);
+        $this->assertSame(10, (int) $sameLevel->placements()->sum('quantity'));
+        $this->assertSame(10000, $source->placements()->sole()->cargo_weight_grams);
+        $this->assertSame($baseline, $this->totals());
     }
 
     public function test_location_status_identity_capacity_quantity_and_source_revision_are_rechecked(): void
@@ -236,7 +246,8 @@ class WarehouseRelocationTest extends TestCase
         $expected = ['physical_quantity' => 130, 'quarantined_quantity' => 5, 'staged_quantity' => 20,
             'pending_putaway_quantity' => 30, 'source_reserved_quantity' => 55, 'pickable_quantity' => 20];
         $this->assertSame($expected, $this->totals());
-        $this->getJson($this->url('sources', $this->identity()))->assertOk()->assertJsonPath('sources.0.movable_quantity', 20);
+        $this->getJson($this->url('sources', $this->identity()))->assertOk()
+            ->assertJsonPath('sources.0.stored_quantity', 40)->assertJsonPath('sources.0.movable_quantity', 20);
         $this->postJson($this->url('store'), $this->command(21) + ['cargo_weight_kg' => 4, 'pallet_slots' => 0])->assertConflict();
         $this->postJson($this->url('store'), $this->command(20) + ['cargo_weight_kg' => 4, 'pallet_slots' => 0])->assertCreated();
         $this->assertSame($expected, $this->totals());
@@ -356,8 +367,8 @@ class WarehouseRelocationTest extends TestCase
         $location = route('warehouses.locations.show', [$warehouse, $this->from]);
         $this->get($location)->assertOk()->assertSee($source)->assertSeeText('Áthelyezés innen');
         $this->get($create)->assertOk()->assertViewHas('warehouse', fn ($bound) => $bound->is($warehouse))
-            ->assertSeeText('Célrekesz készlete')->assertSeeText('Raktári készletváltozás')
-            ->assertSeeText('Rekeszkészlet:')->assertSeeText('Szint összesen:');
+            ->assertSeeText('Ebből a termékből a célrekeszben')->assertSeeText('Raktári készletváltozás')
+            ->assertSeeText('Ebből a termékből a rekeszben:')->assertSeeText('Ezen a polcszinten:');
         $this->get(route('warehouse-relocation-pages.create', ['warehouse_id' => $warehouse->getKey(), 'from_location_id' => $this->from->id]))
             ->assertRedirect($source);
         $this->get($source)->assertOk()->assertViewHas('from', fn ($bound) => $bound->is($this->from))

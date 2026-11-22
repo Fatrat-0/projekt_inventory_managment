@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { shipmentCommand as command } from './shipment-fixtures';
+import { verifyPutawayDialogIsolation } from './putaway-dialog-regression';
 
 const workUrl = '/raktari-feladatok';
 const receivingUrl = workUrl + '/atvetel';
@@ -98,7 +99,6 @@ async function putawayCargo(page, { quantity, weight, size }) {
 
 async function searchLocation(page, value) {
     await page.locator('[data-putaway-search]').fill(value);
-    await button(page, 'Keresés').click();
 }
 
 async function selectLocation(page, code) {
@@ -217,19 +217,24 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
         await expect(desk).toHaveURL(putawayUrl + '/' + screwItem.id);
         await expect(desk.locator('[data-putaway-workspace]')).toBeVisible();
         await putawayCargo(desk, { quantity: 120, weight: 12 });
-        await button(desk, 'Ajánlások keresése').click();
+        await button(desk, 'Ajánlások frissítése').click();
         await expect(location(desk, 'A-01')).toContainText('Feltételes');
-        await expect(location(desk, 'A-01').locator('[data-putaway-stock="bin"]')).toHaveText('Rekeszkészlet: 0 → 120 db');
+        await expect(location(desk, 'A-01').locator('[data-putaway-stock="bin"]')).toHaveText('Ebből a termékből a rekeszben: 0 → 120 db');
         expect(state(shipment).placements).toEqual([]);
         await putawayCargo(desk, { quantity: 120, weight: 12, size: 20 });
         await expect(location(desk, 'A-01')).toHaveCount(0);
-        await button(desk, 'Ajánlások keresése').click();
+        await button(desk, 'Ajánlások frissítése').click();
         await expect(location(desk, 'A-01')).toContainText('Ellenőrzött');
         await proveResponsive(desk, 'Smart Putaway ajánlások');
         await capture(desk, '07-smart-putaway-ajanlasok-1440');
         await selectLocation(desk, 'A-01');
 
+        await expect(button(location(desk, 'A-01'), 'Kiválasztva')).toHaveAttribute('aria-pressed', 'true');
+        await expect(desk.locator('[data-putaway-selection]')).toBeHidden();
+        await expect(desk.locator('[data-putaway-target-stock]')).toHaveText('Ebből a termékből a célrekeszben 0 → 120 db');
+        await expect(location(desk, 'A-01').locator('[data-putaway-rank-summary]')).toBeHidden();
         await location(desk, 'A-01').getByText('Részletek', { exact: true }).click();
+        await expect(location(desk, 'A-01').locator('[data-putaway-rank-detail]')).toContainText('a rekeszkód szerinti sorrend döntött');
         const mapLink = location(desk, 'A-01').getByRole('link', { name: /^Megtekintés az alaprajzon/ });
         const ownUrl = desk.url();
         const [map] = await Promise.all([desk.waitForEvent('popup'), mapLink.click()]);
@@ -285,7 +290,7 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
         await desk.goto(putawayUrl);
         await link(task(desk, products.machine), products.machine.name).click();
         await putawayCargo(desk, { quantity: 40, weight: 400, size: 50 });
-        await button(desk, 'Ajánlások keresése').click();
+        await button(desk, 'Ajánlások frissítése').click();
         await selectLocation(desk, 'GEP-01');
         await bookPutaway(desk);
         let current = assertBalances(shipment, [[0, 200], [0, 40], [24, 0]]);
@@ -333,8 +338,13 @@ test('a valóban feladott kétmegállós fuvar teljes átvétele és rekeszes be
             await control.pressSequentially(value);
             await expect(control).toHaveValue(value);
         }
-        await button(mobile, 'Ajánlások keresése').tap();
+        await button(mobile, 'Ajánlások frissítése').tap();
         await expect(location(mobile, 'GY-01')).toContainText('Feltételes');
+        const details = location(mobile, 'GY-01').locator('details');
+        await details.locator('summary').tap();
+        await expect(details).toHaveJSProperty('open', true);
+        await details.locator('summary').tap();
+        await expect(details).toHaveJSProperty('open', false);
         await capture(mobile, '12c-mobilos-betarolas-375');
         await selectLocation(mobile, 'GY-01');
         await expect(touchWeight).toHaveValue('48');
@@ -485,10 +495,8 @@ test('fogadási jogosultság és rekeszkapacitás hibái a tényleges munkalapho
         });
         try {
             await putawayCargo(desk, { quantity: 150, weight: 2, size: 20 });
-            await button(desk, 'Ajánlások keresése').click();
             await lookupHeld;
             await putawayCargo(desk, { quantity: 150, weight: 600, size: 20 });
-            await button(desk, 'Ajánlások keresése').click();
             await expect(desk.getByText(/nincs ajánlható (rekesz|tárhely)|nem találtunk alkalmas/i)).toBeVisible();
             await expect(button(desk, 'Kiválasztás')).toBeHidden();
         } finally {
@@ -500,15 +508,15 @@ test('fogadási jogosultság és rekeszkapacitás hibái a tényleges munkalapho
         await putawayCargo(desk, { quantity: 150, weight: 15, size: 20 });
         const note = 'Megerősítve a próbaműszakban.';
         await desk.getByLabel('Megjegyzés (opcionális)').fill(note);
-        await button(desk, 'Ajánlások keresése').click();
+        await button(desk, 'Ajánlások frissítése').click();
         await selectLocation(desk, 'A-01');
         const api = putawayApi(item);
+        const dialog = await openPutawayReview(desk);
         const competing = await command(desk, 'POST', api, {
             operation_key: randomUUID(), version: 1, confirmed: true, quantity: 10, cargo_weight_kg: 1,
             pallet_slots: 0, to_location_id: shipment.slots['A-02'], dimensions_cm: { width: 20, depth: 20, height: 20 },
         }, 201);
         expect((await competing.json()).item.pending_putaway_quantity).toBe(190);
-        const dialog = await openPutawayReview(desk);
         const conflictResponse = desk.waitForResponse(response => response.url().endsWith(api) && response.status() === 409);
         await button(dialog, 'Betárolás rögzítése').click();
         await conflictResponse;
@@ -518,11 +526,14 @@ test('fogadási jogosultság és rekeszkapacitás hibái a tényleges munkalapho
         await expect(desk.locator('[data-putaway-quantity]')).toHaveValue('150');
         await expect(desk.locator('[data-putaway-weight]')).toHaveValue('15');
         await expect(desk.getByLabel('Megjegyzés (opcionális)')).toHaveValue(note);
+        const selected = desk.getByText('Kiválasztott célrekesz: A-01', { exact: true });
+        await expect(selected).toBeVisible();
+        await expect(desk.locator('[data-putaway-selection]').getByText('Új ellenőrzés szükséges', { exact: true })).toBeVisible();
         await button(desk, 'Tétel frissítése').click();
         await expect(desk.locator('[data-putaway-remaining]')).toHaveText('190 db');
-        await expect(button(desk, 'Betárolás ellenőrzése')).toBeDisabled();
-        await button(desk, 'Ajánlások keresése').click();
-        await selectLocation(desk, 'A-01');
+        await expect(button(location(desk, 'A-01'), 'Kiválasztva')).toBeVisible();
+        await expect(selected).toBeHidden();
+        await expect(button(desk, 'Betárolás ellenőrzése')).toBeEnabled();
         const retryKeys = [];
         await desk.route('**' + api, async route => {
             if (route.request().method() !== 'POST') return route.continue();
@@ -552,6 +563,88 @@ test('fogadási jogosultság és rekeszkapacitás hibái a tényleges munkalapho
     } finally {
         await context.close();
     }
+});
+
+test('részátvett 200 db két külön tételre bomlik, a rekesz kapacitása újraellenőrizhető', async ({ page }) => {
+    test.setTimeout(90_000);
+    const shipment = fixture();
+    const { pecs, products } = shipment;
+    await login(page, pecs.email);
+    const [screw, machine] = state(shipment).transit;
+    const receiveUrl = receiptApi(shipment, pecs) + '/receipts';
+    const first = await command(page, 'POST', receiveUrl, {
+        operation_key: randomUUID(), version: 1, confirmed: true, items: [{ transit_item_id: screw.id, quantity: 120 }],
+    }, 201);
+    const firstId = (await first.json()).items[0].id;
+    assertBalances(shipment, [[80, 120], [40, 0], [24, 0]]);
+    await page.goto(putawayUrl + '/' + firstId);
+
+    const firstAdvice = page.waitForResponse(response => response.url().endsWith('/putaway/recommendations')
+        && response.request().postDataJSON().dimensions_cm?.height === 20);
+    await putawayCargo(page, { quantity: 70, weight: 7, size: 20 });
+    expect((await firstAdvice).request().postDataJSON()).toMatchObject({
+        quantity: 70, cargo_weight_kg: 7, pallet_slots: 0, dimensions_cm: { width: 20, depth: 20, height: 20 },
+    });
+    await expect(location(page, 'A-01')).toContainText('Ellenőrzött');
+    await selectLocation(page, 'A-01');
+    await bookPutaway(page);
+    const afterFirst = assertBalances(shipment, [[80, 120], [40, 0], [24, 0]]);
+    expect(afterFirst.receiptItems[0].pending_putaway_quantity).toBe(50);
+
+    await putawayCargo(page, { quantity: 50, weight: 5, size: 25 });
+    await expect(location(page, 'A-01')).toContainText('Feltételes');
+    const details = location(page, 'A-01').getByText('Részletek', { exact: true });
+    await details.focus();
+    await details.press('Enter');
+    await expect(location(page, 'A-01').locator('[data-putaway-fit-warnings]')).toContainText('egybefüggő szabad hely');
+    await expect(location(page, 'A-02').locator('[data-putaway-stock="level"]')).toHaveText('Ezen a polcszinten: 70 → 120 db');
+    await selectLocation(page, 'A-02');
+    await bookPutaway(page);
+    const afterSecond = assertBalances(shipment, [[80, 120], [40, 0], [24, 0]]);
+    expect(afterSecond.receiptItems[0].pending_putaway_quantity).toBe(0);
+    expect(afterSecond.placements.map(row => [row.item_id, row.location_code, row.quantity])).toEqual([
+        [firstId, 'A-01', 70], [firstId, 'A-02', 50],
+    ]);
+
+    const later = await command(page, 'POST', receiveUrl, {
+        operation_key: randomUUID(), version: 2, confirmed: true,
+        items: [{ transit_item_id: screw.id, quantity: 80 }, { transit_item_id: machine.id, quantity: 1 }],
+    }, 201);
+    const arrived = (await later.json()).items;
+    const laterId = arrived.find(row => row.product_id === screw.product_id).id;
+    const machineId = arrived.find(row => row.product_id === machine.product_id).id;
+    expect(laterId).not.toBe(firstId);
+    const beforeThird = assertBalances(shipment, [[0, 200], [39, 1], [24, 0]]);
+    expect(beforeThird.receiptItems.find(row => row.id === laterId).pending_putaway_quantity).toBe(80);
+    expect(beforeThird.inMovements.filter(row => row.product_id === screw.product_id)
+        .map(row => [row.shipment_receipt_item_id, row.quantity])).toEqual([[firstId, 120], [laterId, 80]]);
+
+    await page.goto(putawayUrl);
+    const nextTask = task(page, products.screw);
+    await expect(nextTask).toHaveCount(1);
+    await expect(nextTask).toContainText('80 db');
+    await link(nextTask, products.screw.name).click();
+    await expect(page).toHaveURL(putawayUrl + '/' + laterId);
+    await putawayCargo(page, { quantity: 80, weight: 8, size: 30 });
+    await expect(location(page, 'A-02')).toContainText('Feltételes');
+    await expect(location(page, 'A-02').locator('[data-putaway-stock="bin"]')).toHaveText('Ebből a termékből a rekeszben: 50 → 130 db');
+    await selectLocation(page, 'A-02');
+    await command(page, 'POST', putawayApi(machineId), {
+        operation_key: randomUUID(), version: 1, confirmed: true, site_verified: true, quantity: 1,
+        cargo_weight_kg: 90, pallet_slots: 0, to_location_id: shipment.slots['A-02'],
+        dimensions_cm: { width: 10, depth: 10, height: 10 },
+    }, 201);
+
+    await button(page, 'Betárolás ellenőrzése').press('Enter');
+    await expect(putawayReview(page)).toBeHidden();
+    await expect(page.getByText('Kiválasztott célrekesz: A-02', { exact: true })).toBeVisible();
+    await expect(page.getByText('Nem alkalmas', { exact: true }).filter({ visible: true })).toBeVisible();
+    await expect(page.getByText('A-02 tárhelyen 5 kg szabad teherbírás maradt.', { exact: true }).first()).toBeVisible();
+    await expect(button(page, 'Betárolás ellenőrzése')).toBeDisabled();
+    const final = assertBalances(shipment, [[0, 200], [39, 1], [24, 0]]);
+    expect(final.receiptItems.find(row => row.id === laterId).pending_putaway_quantity).toBe(80);
+    expect(final.placements).toHaveLength(3);
+    expect(final.placements.some(row => row.item_id === laterId)).toBe(false);
 });
 
 const taskTabs = page => page.locator('[data-warehouse-task-tabs]');
@@ -670,7 +763,7 @@ test('élő feladatszámok, tételenkénti átvétel és a legutóbbi sikeres re
     await expectTaskCounts(page, 0, 1, 1);
     await page.evaluate(value => { window.receivingTestNavigationMarker = value; }, navigationMarker);
     await putawayCargo(page, { quantity: 40, weight: 4, size: 20 });
-    await button(page, 'Ajánlások keresése').click();
+    await button(page, 'Ajánlások frissítése').click();
     await selectLocation(page, 'A-01');
     await expect(lastLocation(page)).toBeHidden();
     await bookPutaway(page);
@@ -736,3 +829,25 @@ test('élő feladatszámok, tételenkénti átvétel és a legutóbbi sikeres re
     }
 });
 
+
+test('fuvaros betárolásnál a késői kézi keresés érintetlenül hagyja a nyitott megerősítést', async ({ page }) => {
+    const shipment = fixture();
+    const { pecs } = shipment;
+    await login(page, pecs.email);
+    const screw = state(shipment).transit[0];
+    const received = await command(page, 'POST', receiptApi(shipment, pecs) + '/receipts', {
+        operation_key: randomUUID(), version: 1, confirmed: true, items: [{ transit_item_id: screw.id, quantity: 20 }],
+    }, 201);
+    const id = (await received.json()).items[0].id;
+    await page.goto(putawayUrl + '/' + id);
+    await putawayCargo(page, { quantity: 5, weight: 1 });
+    await selectLocation(page, 'A-01');
+    const dialog = putawayReview(page);
+    await verifyPutawayDialogIsolation(page, {
+        routePattern: '**' + putawayApi(id) + '/locations', code: 'A-01',
+        review: button(page, 'Betárolás ellenőrzése'), dialog,
+        save: button(dialog, 'Betárolás rögzítése'), site: dialog.getByRole('checkbox', { name: siteConfirmation }),
+        physical: dialog.getByRole('checkbox', { name: putawayConfirmation }),
+    });
+    expect(state(shipment).receiptItems[0].pending_putaway_quantity).toBe(20);
+});

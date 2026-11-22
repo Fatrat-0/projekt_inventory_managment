@@ -28,6 +28,8 @@ final class SmartPutaway
      * of conditional candidates. Each includes its score, explanations and physical
      * stock snapshots (before/projected after) for the location and applicable hierarchy.
      * A null quantity means the corresponding figure could not be confirmed.
+     * When there is a runner-up, ranking_explanation describes the decisive comparison.
+     * Its compact summary is null if the comparison offers no useful standalone message.
      * Rejected locations are reported separately, within the requested warehouse only.
      *
      * @param array{quantity: int, cargo_weight_kg?: numeric|null, pallet_slots?: int|null, dimensions_cm?: array{width?: int|null, depth?: int|null, height?: int|null}|null} $cargo
@@ -40,6 +42,9 @@ final class SmartPutaway
         $recommendations = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] !== 'rejected'));
         $rejected = array_values(array_filter($candidates, fn (array $candidate) => $candidate['status'] === 'rejected'));
         usort($recommendations, fn (array $a, array $b) => PutawayRanking::compare($a['score'], $b['score'], $a['code'], $b['code']));
+        if (isset($recommendations[1])) {
+            $recommendations[0] += $this->firstRankExplanation($recommendations[0]['score'], $recommendations[1]['score']);
+        }
 
         return ['warehouse_id' => (int) $warehouse->getKey(), 'product_id' => (int) $product->getKey(), 'quantity' => (int) $data['quantity'],
             'recommendations' => array_slice($recommendations, 0, 5), 'rejected' => $rejected];
@@ -194,6 +199,7 @@ final class SmartPutaway
                 'missing' => array_map(fn ($check) => $check['message'], $missing),
                 'failed' => array_map(fn ($check) => $check['message'], $failed)],
             'free_weight_grams' => max(0, $free), 'free_pallet_slots' => $limits['slots'],
+            'location_dimensions_cm' => $binDimensions ?: null,
         ];
         if ($failed) return $result;
 
@@ -210,6 +216,65 @@ final class SmartPutaway
 
         return $result + ['score' => $score, 'reasons' => array_values($reasons),
             'ranking_notes' => array_values(array_diff_key($reasons, array_flip(['weight_capacity', 'pallet_capacity'])))];
+    }
+
+    private function firstRankExplanation(array $winner, array $runnerUp): array
+    {
+        $criterion = PutawayRanking::firstDifference($winner, $runnerUp);
+        [$legacy, $summary, $detail] = match ($criterion) {
+            'verified' => [
+                'A megadott adatokkal ellenőrizhető az elférés.',
+                null,
+                'Az ellenőrzött alkalmasságú rekeszek előrébb kerülnek a feltételes ajánlásoknál.',
+            ],
+            'same_product' => [
+                'Ezen a tárhelyen már van azonos termék.',
+                'Itt már tárolunk ebből a termékből.',
+                'Azonos alkalmassági állapot mellett előrébb kerül az a rekesz, ahol a termék már megtalálható.',
+            ],
+            'remaining_pallet_slots' => $runnerUp['remaining_pallet_slots'] === null ? [
+                'Az elhelyezés utáni szabad raklaphely számítható.',
+                null,
+                'Itt kiszámítható, hány raklaphely marad szabadon az elhelyezés után. A következő ajánlásnál ez az adat hiányzik.',
+            ] : [
+                'Kevesebb raklaphely marad kihasználatlanul.',
+                'Az áru elhelyezése után itt kevesebb raklaphely marad üresen.',
+                'A rangsorban az elhelyezés után fennmaradó raklaphelyek száma döntött.',
+            ],
+            'remaining_weight_grams' => $runnerUp['remaining_weight_grams'] === null ? [
+                'Az elhelyezés utáni szabad teherbírás számítható.',
+                null,
+                'Itt kiszámítható az elhelyezés után fennmaradó teherbírás. A következő ajánlásnál ez az adat hiányzik.',
+            ] : [
+                'Kevesebb szabad teherbírás marad kihasználatlanul.',
+                'Az áru elhelyezése után itt kevesebb teherbírás marad kihasználatlanul.',
+                'A rangsorban az elhelyezés után fennmaradó teherbírás döntött.',
+            ],
+            'volume_cm3' => $runnerUp['volume_cm3'] === null ? [
+                'A rekesz térfogata a méretekből megállapítható.',
+                null,
+                'Ennek a rekesznek ismert a térfogata. A következő ajánlásnál hiányzik legalább egy méretadat.',
+            ] : [
+                $winner['verified'] ? 'Kisebb térfogatú rekesz is megfelel.' : 'A kisebb rekesztérfogat döntött.',
+                $winner['verified'] ? 'A rakomány kisebb rekeszben is elfér.' : 'Ez a rekesz kisebb térfogatú.',
+                'A kapacitási szempontok egyeztek, ezért a kisebb rekesztérfogat döntött.',
+            ],
+            'nominal_weight_grams' => [
+                'A rekesz névleges teherbírása kisebb.',
+                null,
+                'A korábbi rangsorolási szempontok egyeztek, ezért a kisebb névleges teherbírás döntött.',
+            ],
+            'code' => [
+                'Azonos rangsorolási értékek mellett a rekeszkód döntött.',
+                null,
+                'A rangsorolási szempontok egyeztek, ezért a rekeszkód szerinti sorrend döntött.',
+            ],
+        };
+
+        return [
+            'first_rank_reason' => $legacy,
+            'ranking_explanation' => ['criterion' => $criterion, 'summary' => $summary, 'detail' => $detail],
+        ];
     }
 
     private function rankingReasons(array $score): array

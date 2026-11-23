@@ -3,7 +3,7 @@
     $floor = $record->kind === 'floor';
     $title = $floor ? 'Tárolóterület' : 'Állvány elölnézete';
     $kg = \App\Models\WarehouseLocation::formatWeight(...);
-    $tones = ['available' => 'border-emerald-300 bg-emerald-50 text-emerald-900', 'near' => 'border-amber-300 bg-amber-50 text-amber-900',
+    $tones = ['critical' => 'border-rose-300 bg-rose-50 text-rose-900', 'discrepancy' => 'border-amber-300 bg-amber-50 text-amber-950', 'available' => 'border-emerald-300 bg-emerald-50 text-emerald-900', 'near' => 'border-amber-300 bg-amber-50 text-amber-900',
         'full' => 'border-rose-300 bg-rose-50 text-rose-900', 'blocked' => 'border-slate-300 bg-slate-100 text-slate-800'];
 @endphp
 @inject('relocationPolicy', \App\Policies\WarehouseRelocationPolicy::class)
@@ -31,7 +31,7 @@
                         @foreach($overview['levels']->reverse() as $level)
                             <section data-rack-level aria-label="{{ $level['name'] }}" class="rounded-md border border-slate-300 bg-white p-2">
                                 <h3 class="text-xs font-semibold text-gray-800">{{ $level['name'] }}</h3>
-                                <p class="mb-2 text-xs text-gray-600">{{ $kg($level['occupied']) }} kg tárolt · {{ $kg($level['reserved']) }} kg lefoglalt · {{ $kg($level['free']) }} kg szabad / {{ $kg($level['limit']) }} kg</p>
+                                <p class="mb-2 text-xs text-gray-600">{{ $kg($level['occupied']) }} kg tárolt · {{ $kg($level['reserved']) }} kg lefoglalt · {{ $kg($level['free']) }} kg {{ $level['loadDiscrepancy'] ? 'új elhelyezésre használható' : 'szabad' }} / {{ $kg($level['limit']) }} kg</p>
                                 <div class="grid gap-2" style="grid-template-columns: repeat({{ max(1, $level['bins']->count()) }}, minmax(4.75rem, 1fr))">
                                     @foreach($level['bins'] as $cell)
                                         @php
@@ -42,7 +42,10 @@
                                             @class(['min-h-16 rounded border p-2 text-left text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-700', $tones[$tone],
                                                 'ring-2 ring-indigo-600' => $bin?->id === $cell['id']])>
                                             <strong class="block break-all">{{ $cell['code'] }}</strong>
-                                            <span class="block">{{ Storage::STATES[$tone] }}</span>
+                                            <span class="flex items-start gap-1">
+                                                @if($cell['loadDiscrepancy'])<x-icon name="warning" />@endif
+                                                {{ Storage::STATES[$tone] }}
+                                            </span>
                                         </a>
                                     @endforeach
                                 </div>

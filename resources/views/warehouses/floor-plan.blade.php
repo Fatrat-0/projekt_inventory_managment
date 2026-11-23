@@ -95,10 +95,14 @@
                                     'outline outline-2 -outline-offset-2 outline-rose-700': placementOverlaps(position),
                                     'border-slate-400 bg-slate-200 text-slate-800': pickingPreview || capacityTone(location) === 'blocked',
                                     'border-rose-400 bg-rose-100 text-rose-900': !pickingPreview && capacityTone(location) === 'full',
-                                    'border-amber-400 bg-amber-100 text-amber-900': !pickingPreview && capacityTone(location) === 'near',
+                                    'border-rose-700 bg-rose-100 text-rose-950': !pickingPreview && capacityTone(location) === 'critical',
+                                    'border-amber-400 bg-amber-100 text-amber-900': !pickingPreview && ['near', 'discrepancy'].includes(capacityTone(location)),
                                     'border-emerald-400 bg-emerald-100 text-emerald-900': !pickingPreview && capacityTone(location) === 'available',
                                 }">
-                                <strong class="block truncate" x-text="location.code"></strong>
+                                <span class="flex min-w-0 items-center gap-1">
+                                    <x-icon name="warning" x-show="!pickingPreview && location.loadDiscrepancy" />
+                                    <strong class="truncate" x-text="location.code"></strong>
+                                </span>
                                 <span class="block truncate" x-text="location.name"></span>
                             </button>
                         </template>
@@ -126,6 +130,8 @@
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-emerald-300" aria-hidden="true"></span>Van szabad kapacitás</li>
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-amber-300" aria-hidden="true"></span>Közel telített</li>
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-rose-300" aria-hidden="true"></span>Betelt</li>
+                        <li class="flex items-center gap-1 text-rose-900"><x-icon name="warning" />Kritikus terhelési eltérés</li>
+                        <li class="flex items-center gap-1 text-amber-950"><x-icon name="warning" />Terhelési korlátozás</li>
                         <li><span class="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-slate-300" aria-hidden="true"></span>Zárolt vagy kikapcsolt</li>
                     </ul>
                 @endunless

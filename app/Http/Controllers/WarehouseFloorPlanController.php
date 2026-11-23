@@ -149,15 +149,15 @@ class WarehouseFloorPlanController extends Controller
             'minSize' => WarehouseFloorPlan::MIN_SIZE, 'maxSize' => WarehouseFloorPlan::MAX_SIZE,
             'locations' => $locations->map(function (WarehouseLocation $location) use ($params, $products) {
                 $stored = $products->get($location->id, collect());
-                $weight = (int) $location->occupied_weight + (int) $location->reserved_weight;
-                $slots = (int) $location->occupied_slots + (int) $location->reserved_slots;
+                $weight = $location->effectiveOccupiedWeight() + (int) $location->reserved_weight;
+                $slots = $location->effectiveOccupiedSlots() + (int) $location->reserved_slots;
 
                 return WarehouseStorageOverview::location($location, $stored) + [
                     'kind' => $location->kind, 'kindLabel' => WarehouseLocation::KINDS[$location->kind],
                     'x' => $location->floor_x, 'y' => $location->floor_y, 'width' => $location->floor_width, 'height' => $location->floor_height,
                     'url' => route('warehouses.locations.show', $params + ['warehouseLocation' => $location]),
                     'usage' => max($weight / $location->max_weight_grams, $location->max_pallet_slots ? $slots / $location->max_pallet_slots : 0),
-                    'freeWeight' => WarehouseLocation::formatWeight($location->freeWeight()),
+                    'freeWeight' => WarehouseLocation::formatWeight(max(0, $location->freeWeight())),
                     'reservedWeight' => WarehouseLocation::formatWeight((int) $location->reserved_weight),
                     'maxWeight' => WarehouseLocation::formatWeight($location->max_weight_grams),
                 ] + $this->inventorySummary($stored);

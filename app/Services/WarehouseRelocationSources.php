@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{InventoryTransfer, WarehouseLocation, WarehousePlacement};
+use App\Support\WarehouseLoadDiscrepancies;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -53,6 +54,7 @@ class WarehouseRelocationSources
         $placements = WarehousePlacement::whereIn('warehouse_location_id', $binIds)->orderBy('id')
             ->when($locked, fn ($query) => $query->lockForUpdate())
             ->get(['id', 'warehouse_location_id', 'stock_id', 'quantity', 'cargo_weight_grams', 'pallet_slots']);
+        $discrepancies = WarehouseLoadDiscrepancies::read($binIds, $locked);
         $reservations = InventoryTransfer::whereIn('to_location_id', $binIds)->where('status', 'pending')->orderBy('id')
             ->when($locked, fn ($query) => $query->lockForUpdate())
             ->get(['id', 'to_location_id', 'cargo_weight_grams', 'pallet_slots']);
@@ -63,7 +65,7 @@ class WarehouseRelocationSources
 
         return hash('sha256', json_encode([
             $target->only(['id', 'active', 'kind', 'max_weight_grams', 'max_pallet_slots', 'width_cm', 'depth_cm', 'height_cm']),
-            $system, $level, $categories, $placements, $reservations,
+            $system, $level, $categories, $placements, $reservations, $discrepancies->modelKeys(),
         ], JSON_THROW_ON_ERROR));
     }
 

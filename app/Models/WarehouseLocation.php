@@ -46,24 +46,55 @@ class WarehouseLocation extends Model
         return $this->hasMany(InventoryTransfer::class, 'to_location_id')->where('status', 'pending');
     }
 
+    public function openLoadDiscrepancies()
+    {
+        return $this->hasMany(WarehouseLoadVerification::class, 'location_id')->openDiscrepancies();
+    }
+
     public function scopeWithCapacityUsage(Builder $query): Builder
     {
         return $query->withSum('placements as occupied_weight', 'cargo_weight_grams')
             ->withSum('placements as occupied_slots', 'pallet_slots')
             ->withSum('reservations as reserved_weight', 'cargo_weight_grams')
-            ->withSum('reservations as reserved_slots', 'pallet_slots');
+            ->withSum('reservations as reserved_slots', 'pallet_slots')
+            ->with('openLoadDiscrepancies.placement');
     }
 
     public function freeWeight(): int
     {
-        return $this->max_weight_grams - (int) $this->occupied_weight - (int) $this->reserved_weight;
+        $free = $this->remainingWeight();
+
+        return $this->openLoadDiscrepancies->isEmpty() ? $free : min(0, $free);
     }
 
     public function freeSlots(): ?int
     {
-        if ($this->max_pallet_slots === null) return null;
+        $free = $this->remainingSlots();
 
-        return $this->max_pallet_slots - (int) $this->occupied_slots - (int) $this->reserved_slots;
+        return $free === null || $this->openLoadDiscrepancies->isEmpty() ? $free : min(0, $free);
+    }
+
+    public function remainingWeight(): int
+    {
+        return $this->max_weight_grams - $this->effectiveOccupiedWeight() - (int) $this->reserved_weight;
+    }
+
+    public function remainingSlots(): ?int
+    {
+        return $this->max_pallet_slots === null ? null
+            : $this->max_pallet_slots - $this->effectiveOccupiedSlots() - (int) $this->reserved_slots;
+    }
+
+    public function effectiveOccupiedWeight(): int
+    {
+        return (int) $this->occupied_weight + (int) $this->openLoadDiscrepancies->sum(fn ($event) => $event->placement
+            ? max(0, $event->measured_weight_grams - $event->placement->cargo_weight_grams) : 0);
+    }
+
+    public function effectiveOccupiedSlots(): int
+    {
+        return (int) $this->occupied_slots + (int) $this->openLoadDiscrepancies->sum(fn ($event) => $event->placement
+            ? max(0, $event->measured_pallet_slots - $event->placement->pallet_slots) : 0);
     }
 
     public static function pickerOptions(?callable $details = null): array
@@ -71,18 +102,19 @@ class WarehouseLocation extends Model
         $query = self::withCapacityUsage()->orderBy('code');
         if ($details) $query->with(['system.zone', 'level']);
         $locations = $query->get();
-        $free = WarehouseStorageOverview::locationFreeWeights($locations, allBinsLoaded: true);
+        $free = WarehouseStorageOverview::locationAvailability($locations, allBinsLoaded: true);
 
         return $locations->groupBy('warehouse_id')
             ->map(fn ($locations) => $locations->where('active', true)->map(function (self $location) use ($details, $free) {
                 $extra = $details ? $details($location) : [];
+                $capacity = $free[$location->id];
+                $label = $capacity['discrepancies'] ? 'terhelési eltérés' : self::formatWeight($capacity['weight']).' kg'
+                    .($capacity['slots'] === null ? '' : ', '.$capacity['slots'].' raklaphely').' szabad';
 
                 return [
                     'id' => (string) $location->id,
                     'kind' => $location->kind,
-                    'label' => $location->code.' · '.($extra['position_label'] ?? $location->name).' ('
-                        .self::formatWeight($free[$location->id] ?? $location->freeWeight()).' kg'
-                        .($location->freeSlots() === null ? '' : ', '.$location->freeSlots().' raklaphely').' szabad)',
+                    'label' => $location->code.' · '.($extra['position_label'] ?? $location->name).' ('.$label.')',
                 ] + $extra;
             })->values()->all())->all();
     }

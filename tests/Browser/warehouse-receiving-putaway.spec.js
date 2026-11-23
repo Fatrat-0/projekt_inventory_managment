@@ -639,7 +639,7 @@ test('részátvett 200 db két külön tételre bomlik, a rekesz kapacitása új
     await expect(putawayReview(page)).toBeHidden();
     await expect(page.getByText('Kiválasztott célrekesz: A-02', { exact: true })).toBeVisible();
     await expect(page.getByText('Nem alkalmas', { exact: true }).filter({ visible: true })).toBeVisible();
-    await expect(page.getByText('A-02 tárhelyen 5 kg szabad teherbírás maradt.', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Rekesz teherbírása túllépve. Túllépés: 3 kg.', { exact: true }).first()).toBeVisible();
     await expect(button(page, 'Betárolás ellenőrzése')).toBeDisabled();
     const final = assertBalances(shipment, [[0, 200], [39, 1], [24, 0]]);
     expect(final.receiptItems.find(row => row.id === laterId).pending_putaway_quantity).toBe(80);

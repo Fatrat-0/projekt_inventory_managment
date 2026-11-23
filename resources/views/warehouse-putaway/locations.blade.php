@@ -25,7 +25,11 @@
             <p x-show="selected && !selectedCurrent" class="text-sm font-medium text-amber-900" role="status">Új ellenőrzés szükséges</p>
             <p x-show="selectedCurrent" class="text-sm" x-text="selected ? {{ $selectedStatusExpression ?? 'locationStatus(selected.status)' }} : ''"></p>
             <p x-show="selectedError && selectedError !== lookupError" x-text="selectedError" class="text-sm text-red-800" role="alert"></p>
-            <ul x-show="selectedCurrent && selected?.status === 'rejected'" class="list-disc space-y-0.5 ps-4 text-sm text-red-800">
+            <div x-show="selectedCurrent">
+                @include('warehouse-putaway.capacity-hold', ['putawayLocation' => 'selected'])
+            </div>
+            <ul x-show="selectedCurrent && selected?.status === 'rejected'" class="list-disc space-y-0.5 ps-4 text-sm"
+                :class="selected?.discrepancy_severity === 'warning' ? 'text-amber-950' : 'text-rose-900'">
                 <template x-for="warning in checks(selected?.checks?.failed)" :key="warning"><li x-text="warning"></li></template>
             </ul>
             <div x-show="selectedCurrent && !loading && !refreshing" @class(['lg:hidden' => $showStockInSideSummary ?? false])>
@@ -68,7 +72,11 @@
         <summary class="min-h-11 cursor-pointer rounded-md px-3 py-2.5 text-sm font-medium text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-indigo-600">Elutasított rekeszek és indokok</summary>
         <ul tabindex="0" aria-label="Elutasított rekeszek" class="max-h-72 divide-y divide-gray-100 overflow-y-auto border-t border-gray-100 px-3 text-sm">
             <template x-for="location in rejected.filter(row => row.location_id !== selected?.location_id)" :key="location.location_id">
-                <li class="py-2"><strong x-text="location.code"></strong><p class="mt-0.5 text-xs text-red-800" x-text="checks(location.checks?.failed).join(' ')"></p></li>
+                <li class="py-2">
+                    <strong x-text="location.code"></strong>
+                    @include('warehouse-putaway.capacity-hold', ['putawayLocation' => 'location'])
+                    <p class="mt-0.5 text-xs text-gray-800" x-text="checks(location.checks?.failed).join(' ')"></p>
+                </li>
             </template>
         </ul>
     </details>

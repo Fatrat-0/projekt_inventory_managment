@@ -35,7 +35,7 @@ class WarehouseRelocationService
                 'source' => $source, 'cargo' => $this->cargoSummary($plan, $data), 'source_allocations' => $plan['allocations']];
             if ($data['mode'] === 'cargo') return $result;
 
-            $release = ['location_id' => $source['location_id'], 'weight_grams' => $plan['released_weight_grams']];
+            $release = $this->sourceRelease($source, $plan);
             $cargo = $this->assessmentInput($data, $plan);
             $results = $data['mode'] === 'recommendations'
                 ? $this->putaway->recommend($warehouse, $product, $cargo, $release)
@@ -55,8 +55,7 @@ class WarehouseRelocationService
             ['warehouse' => $warehouse, 'product' => $product, 'source' => $source, 'plan' => $plan,
                 'target' => $target, 'stock' => $stock] = $this->evaluateSource($actor, $data);
             $location = $this->putaway->assessLocations($warehouse, $product, $this->assessmentInput($data, $plan),
-                $data['to_location_id'], sourceRelease: ['location_id' => $source['location_id'],
-                    'weight_grams' => $plan['released_weight_grams']])[0] ?? null;
+                $data['to_location_id'], sourceRelease: $this->sourceRelease($source, $plan))[0] ?? null;
             if ($location === null) $this->invalidTarget();
 
             $missing = $location['checks']['missing'];
@@ -136,6 +135,12 @@ class WarehouseRelocationService
             if ($prior) return $this->replay($prior, $hash);
             throw $error;
         }
+    }
+
+    private function sourceRelease(array $source, array $plan): array
+    {
+        return ['location_id' => $source['location_id'], 'weight_grams' => $plan['released_weight_grams'],
+            'changed_placements' => array_column($plan['allocations'], 'placement_id')];
     }
 
     private function replay(WarehouseRelocation $prior, string $hash): array

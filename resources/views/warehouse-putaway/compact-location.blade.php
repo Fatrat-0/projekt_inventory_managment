@@ -1,6 +1,9 @@
 <li :data-putaway-location="location.code" class="min-w-0 rounded-md border px-3 py-2 [overflow-wrap:anywhere]"
     x-data="{ get cardSelected() { return selected?.location_id === location.location_id }, get cardCurrent() { return !this.cardSelected || selectedCurrent } }"
     :class="cardSelected ? 'border-indigo-400 bg-indigo-50/40' : 'border-gray-200'">
+    <div x-show="cardCurrent">
+        @include('warehouse-putaway.capacity-hold', ['putawayLocation' => 'location'])
+    </div>
     <div class="grid min-w-0 items-center gap-x-3 gap-y-2 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
         <div class="min-w-0">
             <p class="font-semibold text-gray-900" x-text="location.code"></p>
@@ -13,7 +16,9 @@
         <div class="min-w-0">
             <span x-show="!cardCurrent" role="status" class="inline-block rounded-md bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900">Új ellenőrzés szükséges</span>
             <span x-show="cardCurrent" class="inline-block rounded-md px-2 py-1 text-xs font-semibold"
-                  :class="{ 'bg-emerald-50 text-emerald-900': location.status === 'verified', 'bg-amber-50 text-amber-900': location.status === 'conditional', 'bg-red-50 text-red-900': location.status === 'rejected' }"
+                  :class="location.status === 'verified' ? 'bg-emerald-50 text-emerald-900'
+                      : (location.status === 'conditional' || location.discrepancy_severity === 'warning'
+                          ? 'bg-amber-50 text-amber-950' : 'bg-rose-50 text-rose-950')"
                   x-text="{{ $statusExpression ?? 'locationStatus(location.status)' }}"></span>
             <p x-show="cardCurrent && location.status !== 'rejected'" data-putaway-weight-capacity class="mt-1 text-sm text-gray-700">
                 <span x-text="location.score?.remaining_weight_grams != null ? 'Szabad teherbírás utána:' : 'Jelenlegi szabad teherbírás:'"></span>

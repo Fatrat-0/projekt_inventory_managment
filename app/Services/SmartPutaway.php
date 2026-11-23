@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{Product, Warehouse, WarehouseLocation};
+use App\Support\WarehouseLoadDiscrepancies;
 use Illuminate\Support\Facades\{DB, Validator};
 use Illuminate\Support\{Collection, Str};
 
@@ -93,7 +94,8 @@ final class SmartPutaway
                 ->withExists(['placements', 'reservations', 'placements as stores_product' => fn ($query) => $query
                     ->whereHas('stock', fn ($stock) => $stock->where('product_id', $product->getKey()))])
                 ->orderBy('code')->get();
-            $committed = fn ($bins) => $bins->sum(fn ($bin) => (int) $bin->occupied_weight + (int) $bin->reserved_weight);
+            $discrepancies = WarehouseLoadDiscrepancies::summarize($locations, changedPlacements: $sourceRelease['changed_placements'] ?? []);
+            $committed = fn ($bins) => $bins->sum(fn ($bin) => $bin->effectiveOccupiedWeight() + (int) $bin->reserved_weight);
             $bySystem = $locations->whereNotNull('system_id')->groupBy('system_id')->map($committed);
             $byLevel = $locations->whereNotNull('level_id')->groupBy('level_id')->map($committed);
             $source = $sourceRelease === null ? null : $locations->find($sourceRelease['location_id']);
@@ -113,10 +115,11 @@ final class SmartPutaway
                 if ($locationId !== null && (int) $location->id !== $locationId) continue;
                 if ($needle !== '' && !$this->matchesLocation($location, $needle)) continue;
 
-                $limits = ['location_grams' => $location->freeWeight(), 'slots' => $location->freeSlots()];
+                $limits = ['location_grams' => $location->remainingWeight(), 'slots' => $location->remainingSlots(),
+                    'discrepancies' => WarehouseLoadDiscrepancies::blockers($location, $discrepancies),
+                    'discrepancy_severity' => WarehouseLoadDiscrepancies::severity($location, $discrepancies)];
                 if ($location->system !== null) {
                     $limits['system_grams'] = $location->system->max_weight_grams - $bySystem[$location->system_id];
-                    $limits['system_name'] = $location->system->name;
                 }
                 if ($location->level !== null) {
                     $limits['level_grams'] = $location->level->max_weight_grams - $byLevel[$location->level_id];
@@ -189,6 +192,14 @@ final class SmartPutaway
         $checks += $this->capacity->dimensionChecks($dimensions, $binDimensions,
             $location->placements_exists || $location->reservations_exists);
         $failed = array_filter($checks, fn ($check) => $check['passed'] === false);
+        // If a reading is historical, the conservative load remains binding, without asserting a measured excess.
+        if ($limits['discrepancy_severity'] === 'warning') {
+            foreach (['location_weight', 'level_weight', 'system_weight', 'pallet_space'] as $key) {
+                if (isset($failed[$key])) {
+                    $failed[$key]['message'] = 'A számított kapacitás nem elegendő. A jelenlegi terheléshez új mérés szükséges.';
+                }
+            }
+        }
         $missing = array_filter($checks, fn ($check) => $check['passed'] === null);
         $passed = array_filter($checks, fn ($check) => $check['passed'] === true);
         $free = min($limits['location_grams'], $limits['level_grams'] ?? PHP_INT_MAX, $limits['system_grams'] ?? PHP_INT_MAX);
@@ -198,7 +209,9 @@ final class SmartPutaway
             'checks' => ['passed' => ['warehouse', ...array_keys($passed)],
                 'missing' => array_map(fn ($check) => $check['message'], $missing),
                 'failed' => array_map(fn ($check) => $check['message'], $failed)],
-            'free_weight_grams' => max(0, $free), 'free_pallet_slots' => $limits['slots'],
+            'discrepancy_severity' => $limits['discrepancy_severity'],
+            'free_weight_grams' => $limits['discrepancies'] ? 0 : max(0, $free),
+            'free_pallet_slots' => $limits['discrepancies'] && $limits['slots'] !== null ? 0 : $limits['slots'],
             'location_dimensions_cm' => $binDimensions ?: null,
         ];
         if ($failed) return $result;

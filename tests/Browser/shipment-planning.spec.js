@@ -75,12 +75,30 @@ const stops = page => page.locator('[data-plan-stop]');
 const loading = page => page.locator('[data-plan-loading-stop]');
 
 async function createPlanThroughUi(page, reference, originName) {
-    await page.getByRole('link', { name: 'Új fuvar tervezése', exact: true }).first().click();
-    await byHeading(page, 'Új fuvar tervezése').waitFor();
-    await page.getByLabel('Szállítmányhivatkozás', { exact: true }).fill(reference);
+    let signalBundle;
+    let releaseBundle;
+    const requested = new Promise(resolve => { signalBundle = resolve; });
+    const held = new Promise(resolve => { releaseBundle = resolve; });
+    await page.route('**/build/assets/app-*.js', async route => {
+        signalBundle();
+        await held;
+        await route.continue();
+    }, { times: 1 });
+    const open = page.getByRole('link', { name: 'Új fuvar tervezése', exact: true }).first().click();
+    const referenceField = page.getByLabel('Szállítmányhivatkozás', { exact: true });
+    try {
+        await requested;
+        await byHeading(page, 'Új fuvar tervezése').waitFor();
+        await referenceField.fill(reference);
+        await expect(referenceField).toHaveValue(reference);
+    } finally {
+        releaseBundle();
+    }
+    await open;
     const origin = page.getByRole('combobox', { name: 'Induló raktár', exact: true });
     await origin.fill(originName);
     await page.getByRole('option', { name: originName, exact: false }).click();
+    await expect(referenceField).toHaveValue(reference);
     await page.getByLabel(/Jármű vagy rendszám/).fill('E2E-200');
     await page.getByLabel(/Tervezett indulás/).fill('2026-12-07T08:30');
     await button(page, 'Fuvar létrehozása').click();

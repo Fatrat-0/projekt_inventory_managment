@@ -16,6 +16,7 @@
                 <x-topbar-action :href="route('warehouses.locations.index', $params)" label="Tárhelyek és kapacitás" short-label="Tárhelyek" icon="layers" :current="request()->routeIs('warehouses.locations.*', 'warehouses.storage-systems.*')" />
                 <x-topbar-action :href="route('warehouses.floor-plan.show', $params)" label="Raktári tervrajz" short-label="Tervrajz" icon="grid" :current="request()->routeIs('warehouses.floor-plan.*')" />
                 @if($relocationPolicy->canAccessWarehouse(auth()->user(), (int) $warehouse->getKey()))
+                    <x-topbar-action :href="route('warehouses.load-checks.index', $params)" label="Terhelésellenőrzések" short-label="Mérések" icon="document" :current="request()->routeIs('warehouses.load-checks.*')" />
                     <x-topbar-action :href="route('warehouses.relocations.index', $params)" label="Áthelyezési előzmények" short-label="Áthelyezés" icon="activity" :current="request()->routeIs('warehouses.relocations.*')" />
                 @endif
                 @if($canManage)

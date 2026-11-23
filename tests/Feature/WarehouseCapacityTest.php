@@ -77,7 +77,7 @@ class WarehouseCapacityTest extends TestCase
         $location = $this->location();
         $data = $this->transferData(['quantity' => 200, 'to_location_id' => $location->id, 'cargo_weight_kg' => 100, 'pallet_slots' => 200]);
         $this->postJson(route('transfers.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('pallet_slots')
-            ->assertJsonPath('errors.pallet_slots.0', 'A-01 tárhelyen 80 szabad raklaphely van. Hiányzik 120 hely.');
+            ->assertJsonPath('errors.pallet_slots.0', 'Rekesz raklapférőhelye túllépve. Túllépés: 120 raklaphely.');
         $this->assertDatabaseCount('inventory_transfer_requests', 0);
         $this->assertSame(300, $this->stock($this->source)->quantity);
 

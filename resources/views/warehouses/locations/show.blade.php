@@ -13,6 +13,12 @@
         <x-operation-feedback />
         <section aria-label="Tárhelykapacitás" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
             @include('warehouses.locations.capacity')
+            @if($loadChecks && array_sum($loadChecks))
+                <a href="{{ route('warehouses.load-checks.index', $params + ['location_id' => $location->id]) }}"
+                   class="inline-flex min-h-10 flex-wrap items-center gap-x-2 text-sm font-semibold text-indigo-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">
+                    Terhelés ellenőrzése <span class="font-normal text-gray-700">({{ $loadChecks['pending'] }} függő, {{ $loadChecks['discrepancy_open'] }} nyitott eltérés)</span>
+                </a>
+            @endif
         </section>
         @if($canManage)
             <details @if($errors->hasAny(['code', 'name', 'kind', 'max_weight_kg', 'max_pallet_slots', 'active', 'lock_version'])) open @endif class="rounded-lg border border-gray-200 bg-white p-4">
@@ -73,6 +79,10 @@
                                 <p class="text-xs font-medium text-amber-800">Korábbi terhelés fenntartva a fennmaradó tétel ellenőrzéséig.</p>
                             @endif
                         </div>
+                        @if($loadChecks && ($placement->load_requires_verification || $location->openLoadDiscrepancies->contains('placement_id', $placement->id)))
+                            <a href="{{ route('warehouses.load-checks.show', $params + ['placement' => $placement->id]) }}"
+                               class="inline-flex min-h-10 items-center text-sm font-semibold text-indigo-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">Tétel terhelésének ellenőrzése</a>
+                        @endif
                         <form method="POST" action="{{ route('warehouses.locations.release', $locationParams + ['placement' => $placement]) }}" onsubmit="return confirm('A teljes tétel kikerüljön a tárhelyről?')">
                             @csrf @method('DELETE')
                             <button class="min-h-10 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50">Kivétel a tárhelyről</button>

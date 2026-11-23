@@ -80,7 +80,7 @@ class WarehouseStorageDesignerTest extends TestCase
             'from_warehouse_id' => $source->warehouse_id, 'to_warehouse_id' => $this->warehouse->warehouse_id,
             'to_location_id' => $bins[2]->id, 'cargo_weight_kg' => 30];
         $this->postJson(route('transfers.store'), $transferData)->assertRedirect();
-        $place(3, 1)->assertUnprocessable()->assertJsonPath('errors.cargo_weight_kg.0', 'A tétel meghaladná az állványszint szabad teherbírását.');
+        $place(3, 1)->assertUnprocessable()->assertJsonPath('errors.cargo_weight_kg.0', 'Polcszint teherbírása túllépve. Túllépés: 1 kg.');
         $place(4, 50)->assertRedirect();
         $place(5, 50)->assertRedirect();
         $place(8, 30)->assertRedirect();

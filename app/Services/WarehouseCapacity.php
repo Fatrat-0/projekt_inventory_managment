@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{Category, InventoryTransfer, InventoryTransferSourceAllocation, Product, Stock, Warehouse, WarehouseLocation, WarehousePlacement};
+use App\Support\WarehouseLoadDiscrepancies;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -78,6 +79,19 @@ class WarehouseCapacity
                 }
                 if ($usedWeight > $weight || ($slots !== null && $usedSlots > $slots)) {
                     throw ValidationException::withMessages(['max_weight_kg' => 'Az új határ nem lehet kisebb a tényleges és lefoglalt terhelésnél vagy raklaphelynél.']);
+                }
+
+                $reducesWeight = $weight < $current->max_weight_grams;
+                $reducesSlots = $slots !== null && ($current->max_pallet_slots === null || $slots < $current->max_pallet_slots);
+                if ($reducesWeight || $reducesSlots) {
+                    $events = WarehouseLoadDiscrepancies::read([$current->id], locked: true);
+                    $adjustment = WarehouseLoadDiscrepancies::summarize(collect([$current]), $events)['locations'][$current->id] ?? [];
+                    if ($reducesWeight && $usedWeight + ($adjustment['weight'] ?? 0) > $weight) {
+                        throw ValidationException::withMessages(['max_weight_kg' => 'Az új teherbírás nem lehet kisebb a nyitott eltérésnél figyelembe vett terhelésnél.']);
+                    }
+                    if ($reducesSlots && $usedSlots + ($adjustment['slots'] ?? 0) > $slots) {
+                        throw ValidationException::withMessages(['max_pallet_slots' => 'Az új férőhely nem lehet kisebb a nyitott eltérésnél figyelembe vett raklaphelyigénynél.']);
+                    }
                 }
                 $current->lock_version++;
             }
@@ -192,6 +206,15 @@ class WarehouseCapacity
     {
         if ($transfer->to_location_id === null) return;
 
+        $location = WarehouseLocation::where('warehouse_id', $transfer->to_warehouse_id)
+            ->whereKey($transfer->to_location_id)->lockForUpdate()->firstOrFail();
+        [$limits, , $hasDiscrepancies] = $this->capacityLimits($location, null, locked: true, reservation: $transfer);
+        if ($hasDiscrepancies) {
+            $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
+            $this->assertChecks($this->fitChecks($location, (int) $stock->product->category_id,
+                $transfer->cargo_weight_grams, $transfer->pallet_slots, $categories, $limits));
+        }
+
         $stock->placements()->create([
             'warehouse_location_id' => $transfer->to_location_id,
             'quantity' => $transfer->quantity,
@@ -231,28 +254,84 @@ class WarehouseCapacity
     private function assertFits(WarehouseLocation $location, int $weight, int $slots, int $categoryId, ?WarehousePlacement $replaced = null): bool
     {
         $categories = $location->system_id === null ? [] : $this->lockedCategoryIds($location);
-        [$usedWeight, $usedSlots, $occupied] = $this->usage($location);
-        $usedWeight -= $replaced?->cargo_weight_grams ?? 0;
-        $usedSlots -= $replaced?->pallet_slots ?? 0;
-        $limits = ['location_grams' => $location->max_weight_grams - $usedWeight,
-            'slots' => $location->max_pallet_slots === null ? null : $location->max_pallet_slots - $usedSlots];
+        [$limits, $occupied] = $this->capacityLimits($location, $replaced, locked: true);
         $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
-        if ($location->system_id !== null) {
-            $system = $location->system()->lockForUpdate()->firstOrFail();
-            $level = $location->level_id === null ? null : $location->level()->lockForUpdate()->firstOrFail();
-            $bins = $system->locations()->lockForUpdate()->get(['id', 'level_id']);
-            $committed = $this->committedWeights($bins->modelKeys());
-            if ($replaced) $committed[$location->id] -= $replaced->cargo_weight_grams;
+
+        return $occupied;
+    }
+
+    /** Re-evaluate a replacement load without counting the placement twice. */
+    public function verifyPlacementLoad(
+        WarehouseLocation $location, ?WarehousePlacement $placement, Product $product, int $weight, int $slots, bool $locked = false,
+    ): array {
+        $categories = $location->system_id === null ? [] : ($locked ? $this->lockedCategoryIds($location)
+            : array_map('intval', $location->allowedCategories()->pluck('categories.category_id')->all()));
+        [$limits] = $this->capacityLimits($location, $placement, $locked, remeasuring: true);
+        // A remeasurement can resolve its own block. Other placements still contribute their effective load.
+        $otherDiscrepancies = $limits['discrepancies'];
+        unset($limits['discrepancies']);
+
+        return [
+            'checks' => $this->fitChecks($location, (int) $product->category_id, $weight, $slots, $categories, $limits),
+            'other_discrepancies' => $otherDiscrepancies,
+            'available' => [
+                'location_weight_grams' => $limits['location_grams'],
+                'level_weight_grams' => $limits['level_grams'] ?? null,
+                'system_weight_grams' => $limits['system_grams'] ?? null,
+                'pallet_slots' => $limits['slots'],
+            ],
+        ];
+    }
+
+    public function loadSafety(WarehouseLocation $location): array
+    {
+        [$limits] = $this->capacityLimits($location, null, locked: false);
+        $scopes = [];
+        foreach ($limits['nominal'] as $key => $maximum) {
+            if ($maximum === null) continue;
+            $remaining = (int) $limits[$key];
+            $scopes[$key] = ['limit' => $maximum, 'committed' => $maximum - $remaining,
+                'remaining' => max(0, $remaining),
+                'free' => $location->active && !$limits['discrepancies'] ? max(0, $remaining) : 0,
+                'excess' => max(0, -$remaining)];
+        }
+
+        return ['scopes' => $scopes, 'blocks' => $limits['discrepancies']];
+    }
+
+    private function capacityLimits(
+        WarehouseLocation $location, ?WarehousePlacement $replaced, bool $locked, ?InventoryTransfer $reservation = null, bool $remeasuring = false,
+    ): array {
+        [$usedWeight, $usedSlots, $occupied] = $this->usage($location, $locked);
+        $system = $location->system_id === null ? null : $location->system()->when($locked, fn ($q) => $q->lockForUpdate())->firstOrFail();
+        $level = $location->level_id === null ? null : $location->level()->when($locked, fn ($q) => $q->lockForUpdate())->firstOrFail();
+        $bins = $system === null ? collect([$location]) : $system->locations()->orderBy('id')
+            ->when($locked, fn ($q) => $q->lockForUpdate())->get(['id', 'system_id', 'level_id']);
+        $ids = $bins->pluck('id')->all();
+        $events = WarehouseLoadDiscrepancies::read($ids, $locked);
+        $usage = WarehouseLoadDiscrepancies::summarize($bins, $events, $remeasuring ? $replaced?->id : null);
+        $adjustment = $usage['locations'][$location->id] ?? [];
+        $relievedWeight = ($replaced?->cargo_weight_grams ?? 0) + ($reservation?->cargo_weight_grams ?? 0);
+        $relievedSlots = ($replaced?->pallet_slots ?? 0) + ($reservation?->pallet_slots ?? 0);
+        $limits = [
+            'location_grams' => $location->max_weight_grams - $usedWeight - ($adjustment['weight'] ?? 0) + $relievedWeight,
+            'slots' => $location->max_pallet_slots === null ? null
+                : $location->max_pallet_slots - $usedSlots - ($adjustment['slots'] ?? 0) + $relievedSlots,
+            'discrepancies' => WarehouseLoadDiscrepancies::blockers($location, $usage),
+            'nominal' => ['location_grams' => $location->max_weight_grams, 'slots' => $location->max_pallet_slots,
+                'level_grams' => $level?->max_weight_grams, 'system_grams' => $system?->max_weight_grams],
+        ];
+
+        if ($system !== null) {
+            $committed = $this->committedWeights($ids, $locked, $usage['locations']);
+            $committed[$location->id] = ($committed[$location->id] ?? 0) - $relievedWeight;
             $limits['system_grams'] = $system->max_weight_grams - array_sum($committed);
-            $limits['system_name'] = $system->name;
             if ($level) {
                 $limits['level_grams'] = $level->max_weight_grams - $bins->where('level_id', $level->id)->sum(fn ($bin) => $committed[$bin->id] ?? 0);
             }
-
-            $this->assertChecks($this->fitChecks($location, $categoryId, $weight, $slots, $categories, $limits));
         }
 
-        return $occupied;
+        return [$limits, $occupied, $events->isNotEmpty()];
     }
 
     /**
@@ -260,12 +339,11 @@ class WarehouseCapacity
      * A null result marks an unknown input, not a passed check.
      *
      * @param list<int> $allowedCategories
-     * @param array{location_grams: int, slots: ?int, level_grams?: int, system_grams?: int, system_name?: string} $limits
-     * @return array<string, array{passed: ?bool, field: string, message: string}>
+     * @param array{location_grams: int, slots: ?int, level_grams?: int, system_grams?: int, nominal?: array<string, ?int>, discrepancies?: array<string, string>} $limits
+     * @return array<string, array{passed: ?bool, field: string, message: string, capacity?: array}>
      */
     public function fitChecks(WarehouseLocation $location, int $categoryId, ?int $weight, ?int $slots, array $allowedCategories, array $limits): array
     {
-        $weightFits = fn (int $free) => $weight === null ? ($free <= 0 ? false : null) : $weight <= $free;
         $check = fn (?bool $passed, string $field, string $message) => compact('passed', 'field', 'message');
         $pallet = $location->kind === 'pallet';
         $checks = [
@@ -276,25 +354,47 @@ class WarehouseCapacity
                 'cargo_weight_kg', 'Add meg a tétel teljes tömegét kilogrammban.'),
             'pallet_kind' => $check($slots === null ? null : ($pallet ? $slots >= 1 : ($location->kind !== 'shelf' || $slots === 0)),
                 'pallet_slots', 'Add meg a raklaphelyigényt. A raklapos tárhely legalább egy raklapot, a polcos tárhely raklap nélküli rakományt fogad.'),
-            'location_weight' => $check($weightFits($limits['location_grams']), 'cargo_weight_kg', $location->code.' tárhelyen '
-                .WarehouseLocation::formatWeight($limits['location_grams']).' kg szabad teherbírás maradt.'),
+            'location_weight' => $this->capacityCheck($limits, 'location_grams', $weight, 'Rekesz teherbírása'),
         ];
+        foreach ($limits['discrepancies'] ?? [] as $scope => $message) {
+            $checks[$scope] = $check(false, 'to_location_id', $message);
+        }
         if ($limits['slots'] !== null) {
-            $free = $limits['slots'];
-            $fits = $slots === null ? ($free < ($pallet ? 1 : 0) ? false : null) : $slots <= $free;
-            $checks['pallet_space'] = $check($fits,
-                'pallet_slots', $location->code.' tárhelyen '.$free.' szabad raklaphely van.'
-                    .($slots === null ? '' : ' Hiányzik '.($slots - $free).' hely.'));
+            $checks['pallet_space'] = $this->capacityCheck($limits, 'slots', $slots, 'Rekesz raklapférőhelye', $pallet ? 1 : 0);
         }
         if (isset($limits['level_grams'])) {
-            $checks['level_weight'] = $check($weightFits($limits['level_grams']), 'cargo_weight_kg', 'A tétel meghaladná az állványszint szabad teherbírását.');
+            $checks['level_weight'] = $this->capacityCheck($limits, 'level_grams', $weight, 'Polcszint teherbírása');
         }
         if (isset($limits['system_grams'])) {
-            $checks['system_weight'] = $check($weightFits($limits['system_grams']), 'cargo_weight_kg',
-                'A tétel meghaladná a(z) '.$limits['system_name'].' szabad teherbírását.');
+            $checks['system_weight'] = $this->capacityCheck($limits, 'system_grams', $weight, 'Tárolórendszer teherbírása');
         }
 
         return $checks;
+    }
+
+    private function capacityCheck(array $limits, string $scope, ?int $requested, string $label, int $minimumSlots = 0): array
+    {
+        $remaining = $limits[$scope];
+        $limit = $limits['nominal'][$scope] ?? null;
+        $slots = $scope === 'slots';
+        $field = $slots ? 'pallet_slots' : 'cargo_weight_kg';
+        $passed = $requested !== null ? $requested <= $remaining
+            : (($slots ? $remaining < $minimumSlots : $remaining <= 0) ? false : null);
+        $excess = $requested === null ? null : max(0, $requested - $remaining);
+        $format = $slots ? fn (int $amount) => $amount.' raklaphely'
+            : fn (int $amount) => WarehouseLocation::formatWeight($amount).' kg';
+        $message = match ($passed) {
+            true => $label.' megfelel. Marad: '.$format($remaining - $requested).'.',
+            false => $excess === null ? $label.': nincs elegendő szabad kapacitás.'
+                : $label.' túllépve. Túllépés: '.$format($excess).'.',
+            null => $slots ? 'Add meg a szükséges raklaphelyek számát.' : 'Add meg a tétel teljes tömegét kilogrammban.',
+        };
+
+        return ['passed' => $passed, 'field' => $field, 'message' => $message, 'capacity' => [
+            'scope' => $scope, 'unit' => $slots ? 'pallet_slots' : 'grams', 'limit' => $limit,
+            'projected' => $limit === null || $requested === null ? null : $limit - $remaining + $requested,
+            'excess' => $excess,
+        ]];
     }
 
     public function locationDimensions(WarehouseLocation $location): array
@@ -329,7 +429,7 @@ class WarehouseCapacity
 
     private function assertChecks(array $checks): void
     {
-        foreach ([['active'], ['category'], ['weight_input'], ['pallet_kind'], ['location_weight', 'pallet_space'], ['level_weight'], ['system_weight']] as $group) {
+        foreach ([['location_discrepancy'], ['level_discrepancy'], ['system_discrepancy'], ['active'], ['category'], ['weight_input'], ['pallet_kind'], ['location_weight', 'pallet_space'], ['level_weight'], ['system_weight']] as $group) {
             $errors = [];
             foreach ($group as $key) {
                 if (isset($checks[$key]) && $checks[$key]['passed'] !== true) {
@@ -392,26 +492,37 @@ class WarehouseCapacity
         return 'A(z) '.$location->code.' tárhelyen ez a termékkategória nem engedélyezett.';
     }
 
-    public function committedWeights(array $locationIds): array
+    public function committedWeights(array $locationIds, bool $locked = true, ?array $adjustments = null): array
     {
         $weights = [];
-        foreach (WarehousePlacement::whereIn('warehouse_location_id', $locationIds)->lockForUpdate()->get(['warehouse_location_id', 'cargo_weight_grams']) as $placement) {
+        foreach (WarehousePlacement::whereIn('warehouse_location_id', $locationIds)->when($locked, fn ($query) => $query->lockForUpdate())
+            ->get(['warehouse_location_id', 'cargo_weight_grams']) as $placement) {
             $id = $placement->warehouse_location_id;
             $weights[$id] = ($weights[$id] ?? 0) + (int) $placement->cargo_weight_grams;
         }
-        foreach (InventoryTransfer::whereIn('to_location_id', $locationIds)->where('status', 'pending')->lockForUpdate()->get(['to_location_id', 'cargo_weight_grams']) as $transfer) {
+        foreach (InventoryTransfer::whereIn('to_location_id', $locationIds)->where('status', 'pending')->when($locked, fn ($query) => $query->lockForUpdate())
+            ->get(['to_location_id', 'cargo_weight_grams']) as $transfer) {
             $id = $transfer->to_location_id;
             $weights[$id] = ($weights[$id] ?? 0) + (int) $transfer->cargo_weight_grams;
+        }
+
+        if ($adjustments === null) {
+            $bins = WarehouseLocation::whereIntegerInRaw('id', $locationIds)->get(['id', 'level_id', 'system_id']);
+            $adjustments = WarehouseLoadDiscrepancies::summarize($bins,
+                WarehouseLoadDiscrepancies::read($locationIds, $locked))['locations'];
+        }
+        foreach ($adjustments as $id => $adjustment) {
+            $weights[$id] = ($weights[$id] ?? 0) + $adjustment['weight'];
         }
 
         return $weights;
     }
 
-    private function usage(WarehouseLocation $location): array
+    private function usage(WarehouseLocation $location, bool $locked = true): array
     {
         $columns = ['cargo_weight_grams', 'pallet_slots'];
-        $occupied = $location->placements()->lockForUpdate()->get($columns);
-        $reserved = $location->reservations()->lockForUpdate()->get($columns);
+        $occupied = $location->placements()->when($locked, fn ($query) => $query->lockForUpdate())->get($columns);
+        $reserved = $location->reservations()->when($locked, fn ($query) => $query->lockForUpdate())->get($columns);
 
         return [
             (int) $occupied->sum('cargo_weight_grams') + (int) $reserved->sum('cargo_weight_grams'),

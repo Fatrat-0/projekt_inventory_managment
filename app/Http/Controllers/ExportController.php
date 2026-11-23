@@ -27,7 +27,7 @@ class ExportController extends Controller
         }
 
         $warehouseId = $options['warehouse_id'] ?? null;
-        $rows = WarehouseStatistics::query()->when($warehouseId, fn ($query) => $query->whereKey($warehouseId))->get();
+        $rows = WarehouseStatistics::reportRows($warehouseId);
         if ($warehouseId !== null && $rows->isEmpty()) abort(404);
 
         $report = new WarehouseStatisticsReport($rows, $warehouseId !== null);

@@ -162,7 +162,7 @@ class TransferCargoWeightTest extends TestCase
         $data = ['cargo_weight_source' => 'calculated', 'cargo_weight_kg' => '11.002'];
         $this->getJson($this->recommendationUrl(['pallet_slots' => 1] + $data))->assertOk()->assertJsonPath('recommendations', []);
         $this->postJson(route('transfers.store'), $this->transfer($location) + $data)
-            ->assertUnprocessable()->assertJsonPath('errors.cargo_weight_kg.0', 'P-01 tárhelyen 11,001 kg szabad teherbírás maradt.');
+            ->assertUnprocessable()->assertJsonPath('errors.cargo_weight_kg.0', 'Rekesz teherbírása túllépve. Túllépés: 0,001 kg.');
         $this->assertSame(500, $this->sourceStock->fresh()->quantity);
         $this->assertDatabaseCount('inventory_transfer_requests', 0);
         $this->assertDatabaseCount('inventory_transfers', 0);

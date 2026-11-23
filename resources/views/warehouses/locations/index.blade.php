@@ -2,7 +2,7 @@
 <x-warehouse-layout :$warehouse :context="$params['context'] ?? ''" :detail-context="$params['detail_context'] ?? ''">
     @php
         $kg = \App\Models\WarehouseLocation::formatWeight(...);
-        $tones = ['available' => 'bg-emerald-100 text-emerald-900', 'near' => 'bg-amber-100 text-amber-900',
+        $tones = ['critical' => 'bg-rose-100 text-rose-900', 'discrepancy' => 'bg-amber-100 text-amber-950', 'available' => 'bg-emerald-100 text-emerald-900', 'near' => 'bg-amber-100 text-amber-900',
             'full' => 'bg-rose-100 text-rose-900', 'blocked' => 'bg-slate-100 text-slate-800'];
     @endphp
     <div class="app-page space-y-4 py-4">
@@ -31,14 +31,17 @@
                                 <details x-data="warehouseCapacityTree" @toggle.self="if ($el.open && !failed) load()" data-capacity-url="{{ route('warehouses.storage-systems.capacity', $systemParams) }}" class="min-w-0 flex-1 basis-full sm:basis-0">
                                     <summary class="cursor-pointer break-words p-3 text-sm">
                                         <strong>{{ $system->displayCode() }} · {{ $system->name }}</strong>
-                                        <span class="ml-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium {{ $tones[$capacity['tone']] }}">{{ \App\Support\WarehouseStorageOverview::STATES[$capacity['tone']] }}</span>
+                                        <span class="ml-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium {{ $tones[$capacity['tone']] }}">
+                                            @if($capacity['loadDiscrepancy'])<x-icon name="warning" />@endif
+                                            {{ \App\Support\WarehouseStorageOverview::STATES[$capacity['tone']] }}
+                                        </span>
                                         <span class="mt-1 block text-xs text-gray-600">{{ $capacity['kindLabel'] }} · @if($system->levels->isNotEmpty()){{ $system->levels->count() }} szint · @endif{{ $system->locations_count }} tárhely</span>
                                         <span class="mt-1 block text-xs text-gray-800">
                                             Kihasználtság foglalásokkal · {{ round($capacity['utilization']['weight'] * 100) }}% teherbírás
                                             @if($capacity['maxSlots'] !== null) · {{ round($capacity['utilization']['slots'] * 100) }}% raklaphely @endif
                                         </span>
-                                        <span class="block text-xs font-medium text-gray-800">{{ $kg($capacity['free']) }} kg szabad teherbírás
-                                            @if($capacity['maxSlots'] !== null) · {{ $capacity['freeSlots'] }} szabad raklaphely @endif
+                                        <span class="block text-xs font-medium text-gray-800">{{ $kg($capacity['free']) }} kg {{ $capacity['loadDiscrepancy'] ? 'új elhelyezésre használható' : 'szabad teherbírás' }}
+                                            @if($capacity['maxSlots'] !== null) · {{ $capacity['freeSlots'] }} {{ $capacity['loadDiscrepancy'] ? 'használható' : 'szabad' }} raklaphely @endif
                                         </span>
                                         <span class="mt-1 inline-block text-xs font-medium text-indigo-700">Részletek</span>
                                     </summary>

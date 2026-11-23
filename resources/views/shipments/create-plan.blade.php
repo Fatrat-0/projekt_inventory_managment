@@ -24,7 +24,7 @@
                 <fieldset :disabled="submitting || submitted || !!pending" class="grid min-w-0 gap-4 sm:grid-cols-2 [&_[role=combobox]]:min-h-11">
                     <div class="min-w-0">
                         <label for="plan-reference" class="text-sm font-medium text-gray-900">Szállítmányhivatkozás</label>
-                        <input id="plan-reference" name="reference" x-model="reference" maxlength="100" required class="{{ $field }}"
+                        <input id="plan-reference" name="reference" x-model.fill="reference" maxlength="100" required class="{{ $field }}"
                                aria-describedby="plan-reference-error" :aria-invalid="!!fieldErrors.reference">
                         <p id="plan-reference-error" x-text="fieldErrors.reference?.[0]" class="empty:hidden mt-1 text-sm text-red-800"></p>
                     </div>
@@ -36,20 +36,20 @@
                     </div>
                     <div class="min-w-0">
                         <label for="plan-departure" class="text-sm font-medium text-gray-900">Tervezett indulás</label>
-                        <input id="plan-departure" type="datetime-local" name="planned_departure_at" x-model="departure" class="{{ $field }}"
+                        <input id="plan-departure" type="datetime-local" name="planned_departure_at" x-model.fill="departure" class="{{ $field }}"
                                aria-describedby="plan-departure-help plan-departure-error" :aria-invalid="!!fieldErrors.planned_departure_at">
                         <p id="plan-departure-help" class="mt-1 text-xs text-gray-600">Opcionális, budapesti idő szerint.</p>
                         <p id="plan-departure-error" x-text="fieldErrors.planned_departure_at?.[0]" class="empty:hidden mt-1 text-sm text-red-800"></p>
                     </div>
                     <div class="min-w-0">
                         <label for="plan-vehicle" class="text-sm font-medium text-gray-900">Jármű vagy rendszám</label>
-                        <input id="plan-vehicle" name="vehicle_label" x-model="vehicle" maxlength="100" class="{{ $field }}"
+                        <input id="plan-vehicle" name="vehicle_label" x-model.fill="vehicle" maxlength="100" class="{{ $field }}"
                                aria-describedby="plan-vehicle-error" :aria-invalid="!!fieldErrors.vehicle_label">
                         <p id="plan-vehicle-error" x-text="fieldErrors.vehicle_label?.[0]" class="empty:hidden mt-1 text-sm text-red-800"></p>
                     </div>
                     <div class="min-w-0 sm:col-span-2">
                         <label for="plan-note" class="text-sm font-medium text-gray-900">Megjegyzés</label>
-                        <textarea id="plan-note" name="note" rows="3" maxlength="1000" x-model="note" class="{{ $field }}"
+                        <textarea id="plan-note" name="note" rows="3" maxlength="1000" x-model.fill="note" class="{{ $field }}"
                                   aria-describedby="plan-note-error" :aria-invalid="!!fieldErrors.note"></textarea>
                         <p id="plan-note-error" x-text="fieldErrors.note?.[0]" class="empty:hidden mt-1 text-sm text-red-800"></p>
                     </div>

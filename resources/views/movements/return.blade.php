@@ -21,7 +21,7 @@
         @else
             @if($movement->type === 'out')<p class="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">A visszavett áru elkülönített készletbe kerül. Minősítés után felszabadítható vagy indoklással selejtezhető.</p>@endif
             <form method="POST" action="{{ route('movements.return.store', $movement) }}"
-                x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)$movement->product_id, 'warehouse' => (string)$movement->warehouse_id, 'type' => $movement->type === 'out' ? 'in' : 'out', 'quantity' => is_scalar(old('quantity', 1)) ? old('quantity', 1) : 1]) }})"
+                x-data="movementForm({{ Illuminate\Support\Js::from(['endpoint' => route('movements.stock'), 'product' => (string)$movement->product_id, 'warehouse' => (string)$movement->warehouse_id, 'type' => $movement->type === 'out' ? 'in' : 'out', 'quantity' => '']) }})"
                 @submit="submit($event)" @pageshow.window="restored($event)" class="space-y-5 rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
                 @csrf
                 <input type="hidden" name="request_key" value="{{ $requestKey }}"><input type="hidden" name="context" value="{{ $context }}">
@@ -29,7 +29,7 @@
                 @include('movements.availability')
                 <div>
                     <label for="return-quantity" class="mb-1 block text-sm font-medium text-gray-700">Visszáru mennyisége (db)</label>
-                    <input id="return-quantity" name="quantity" type="number" min="1" max="{{ $remaining }}" step="1" required x-model="quantity"
+                    <input id="return-quantity" name="quantity" type="number" min="1" max="{{ $remaining }}" step="1" required x-model.fill="quantity"
                         value="{{ is_scalar(old('quantity', 1)) ? old('quantity', 1) : '' }}" aria-describedby="return-quantity-help return-quantity-error"
                         @error('quantity') aria-invalid="true" @enderror class="w-full rounded-md border-gray-300">
                     <p id="return-quantity-help" class="mt-1 text-xs text-gray-500">A raktári készlet ennyivel {{ $movement->type === 'out' ? 'nő' : 'csökken' }}. Legfeljebb {{ number_format($remaining, 0, ',', ' ') }} db.</p>

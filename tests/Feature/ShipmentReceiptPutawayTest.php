@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{InventoryMovement, Shipment, ShipmentReceiptItem, User, WarehouseLocation};
+use App\Models\{InventoryMovement, Product, Shipment, ShipmentReceiptItem, Stock, User, WarehouseLocation};
 use App\Services\{WarehouseCapacity, WarehouseStockAvailability, WarehouseStorageDesigner};
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Database\QueryException;
@@ -38,6 +38,35 @@ class ShipmentReceiptPutawayTest extends TestCase
         }
         $this->screws = ShipmentReceiptItem::where('received_quantity', 200)->sole();
         $this->remote = ShipmentReceiptItem::where('received_quantity', 24)->sole();
+    }
+
+    public function test_both_putaway_paths_reject_a_documented_overload_even_after_site_confirmation(): void
+    {
+        $warehouse = $this->screws->warehouse;
+        $product = Product::factory()->create();
+        $stock = Stock::create(['product_id' => $product->getKey(), 'warehouse_id' => $warehouse->getKey(), 'quantity' => 10]);
+        $bin = $this->bin('OVERLOAD', attributes: ['max_weight_grams' => 12000]);
+        $placement = $bin->placements()->create(['stock_id' => $stock->id, 'quantity' => 10, 'cargo_weight_grams' => 10000,
+            'pallet_slots' => 0, 'load_requires_verification' => true]);
+        $parameters = ['warehouse' => $warehouse, 'placement' => $placement->id];
+        $revision = $this->getJson(route('warehouse-load-verifications.show', $parameters))->assertOk()->json('placement.revision');
+        $this->postJson(route('warehouse-load-verifications.store', $parameters), [
+            'revision' => $revision, 'operation_key' => (string) Str::uuid(), 'measurement_confirmed' => true,
+            'cargo_weight_kg' => 14, 'pallet_slots' => 0,
+        ])->assertUnprocessable()->assertJsonPath('discrepancy_open', true);
+
+        $batch = $this->postJson(route('movements.store'), [
+            'type' => 'in', 'product_id' => $this->screws->product_id, 'warehouse_id' => $warehouse->getKey(),
+            'quantity' => 10, 'confirmed' => true, 'request_key' => (string) Str::uuid(),
+        ])->assertCreated()->json('batch.id');
+        $before = $this->stock($this->screws);
+        $command = $this->command($bin, 2, 1) + ['site_verified' => true];
+        $this->postJson(route('movements.in.receipts.putaway', $batch), $command)
+            ->assertUnprocessable()->assertJsonValidationErrors('to_location_id');
+        $this->postJson($this->url('store'), $command)->assertUnprocessable()->assertJsonValidationErrors('to_location_id');
+        $this->assertSame($before, $this->stock($this->screws));
+        $this->assertSame(1, $bin->placements()->count());
+        $this->assertDatabaseHas('manual_receipt_batches', ['id' => $batch, 'pending_putaway_quantity' => 10]);
     }
 
     public function test_manual_and_shipment_tasks_share_filters_order_pagination_and_warehouse_permissions(): void
@@ -344,7 +373,7 @@ class ShipmentReceiptPutawayTest extends TestCase
         $tooManyPallets = array_replace($this->command($pallet, 10, 3), ['pallet_slots' => 2, 'site_verified' => true]);
         $this->postJson($this->url('locations'), $tooManyPallets)->assertOk()
             ->assertJsonPath('locations.0.status', 'rejected')
-            ->assertJsonPath('locations.0.checks.failed.pallet_space', 'PAL tárhelyen 1 szabad raklaphely van. Hiányzik 1 hely.');
+            ->assertJsonPath('locations.0.checks.failed.pallet_space', 'Rekesz raklapférőhelye túllépve. Túllépés: 1 raklaphely.');
         $this->postJson($this->url(), $tooManyPallets)->assertUnprocessable()->assertJsonValidationErrors('pallet_slots');
         $this->postJson($this->url(), array_replace($tooManyPallets, ['pallet_slots' => 1]))->assertCreated();
         $this->assertSame(1, $pallet->placements()->sole()->pallet_slots);
@@ -363,7 +392,7 @@ class ShipmentReceiptPutawayTest extends TestCase
             ->assertUnprocessable()->assertJsonValidationErrors('cargo_weight_kg');
         $this->postJson($this->url('locations'), $this->command($sameLevel, 10, 11, 3))->assertOk()
             ->assertJsonPath('locations.0.free_weight_grams', 10000)
-            ->assertJsonPath('locations.0.checks.failed.level_weight', 'A tétel meghaladná az állványszint szabad teherbírását.');
+            ->assertJsonPath('locations.0.checks.failed.level_weight', 'Polcszint teherbírása túllépve. Túllépés: 1 kg.');
         $this->postJson($this->url(), $this->command($otherLevel, 10, 16, 3) + ['site_verified' => true])
             ->assertUnprocessable()->assertJsonValidationErrors('cargo_weight_kg');
         $this->postJson($this->url('locations'), $this->command($otherLevel, 10, 16, 3))->assertOk()

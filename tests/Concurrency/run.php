@@ -2,8 +2,8 @@
 
 // Standalone MySQL integration runner. Never migrates or clears the application's database.
 // Run: php tests/Concurrency/run.php
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentCargoConfirmation, ShipmentDispatch, ShipmentIntentAssignment, ShipmentPlanOperation, ShipmentReceiptItem, ShipmentStop, ShipmentTransitItem, Stock, TransferIntent, TransferWorkflowEvent, User, Vehicle, Warehouse, WarehouseLocation};
-use App\Services\{InventoryService, MasterDataEditor, ShipmentCargoPreparation, ShipmentDispatchBlocked, ShipmentDispatchService, ShipmentPlanReadiness, ShipmentPlanningService, ShipmentReceiptPutawayService, ShipmentReceiving, ShipmentService, TransferIntentService, TransferStockReservationService, VehicleRegistry, WarehouseCapacity, WarehouseFloorPlan, WarehouseStockAvailability, WarehouseStorageDesigner, WarehouseTransferTaskService};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Partner, Product, ReturnQualityAction, Shipment, ShipmentCargoConfirmation, ShipmentDispatch, ShipmentIntentAssignment, ShipmentPlanOperation, ShipmentReceiptItem, ShipmentStop, ShipmentTransitItem, Stock, TransferIntent, TransferWorkflowEvent, User, Vehicle, Warehouse, WarehouseLoadVerification, WarehouseLocation};
+use App\Services\{InventoryService, MasterDataEditor, ShipmentCargoPreparation, ShipmentDispatchBlocked, ShipmentDispatchService, ShipmentPlanReadiness, ShipmentPlanningService, ShipmentReceiptPutawayService, ShipmentReceiving, ShipmentService, TransferIntentService, TransferStockReservationService, VehicleRegistry, WarehouseCapacity, WarehouseFloorPlan, WarehouseLoadVerificationService, WarehouseRelocationSources, WarehouseStockAvailability, WarehouseStorageDesigner, WarehouseTransferTaskService};
 use App\Queries\{DashboardOverview, ProductListing, ReturnQualityListing};
 use App\Support\DashboardLayout;
 use Illuminate\Contracts\Console\Kernel;
@@ -137,6 +137,9 @@ if (($argv[1] ?? '') === '--worker') {
     try {
         $service = app(InventoryService::class);
         match ($job['action']) {
+            'verify_load' => app(WarehouseLoadVerificationService::class)->confirm(
+                User::findOrFail($job['actor']), Warehouse::findOrFail($job['warehouse']), $job['id'], $job['data'],
+            ),
             'movement' => $service->recordMovement($job['data'], $job['requestKey'] ?? null),
             'manual_receipt' => $service->receiveManual($job['data'], $job['requestKey']),
             'relocate' => app(\App\Services\WarehouseRelocationService::class)->relocate(
@@ -2151,8 +2154,169 @@ try {
         echo 'PASS: warehouse relocation source, UUID and target capacity'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
     }
 
+    $verificationRaceCount = 0;
+    $verifier = User::factory()->create(['role' => 'admin']);
+    $verifications = app(WarehouseLoadVerificationService::class);
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['relocation', 'issue', 'duplicate', 'late audit failure', 'reserve', 'putaway', 'confirm empty'] as $scenario) {
+            $warehouse = Warehouse::factory()->create();
+            $product = Product::factory()->create();
+            $stock = Stock::create(['warehouse_id' => $warehouse->getKey(), 'product_id' => $product->getKey(), 'quantity' => 10]);
+            $source = $warehouse->storageLocations()->create(['code' => 'VERIFY-SOURCE', 'name' => 'Polc',
+                'kind' => 'shelf', 'active' => true, 'max_weight_grams' => 20000]);
+            $placement = $source->placements()->create(['stock_id' => $stock->id, 'quantity' => 10, 'cargo_weight_grams' => 10000,
+                'pallet_slots' => 0, 'load_requires_verification' => true]);
+            $command = ['action' => 'verify_load', 'actor' => $verifier->id, 'warehouse' => $warehouse->getKey(),
+                'id' => $placement->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                    'revision' => $verifications->show($verifier, $warehouse, $placement->id)['placement']['revision'],
+                    'cargo_weight_kg' => 8, 'pallet_slots' => 0, 'operation_key' => (string) Str::uuid(),
+                ]];
+            $events = WarehouseLoadVerification::where('placement_id', $placement->id);
+
+            if ($scenario === 'relocation') {
+                $target = $warehouse->storageLocations()->create(['code' => 'VERIFY-TARGET', 'name' => 'Polc',
+                    'kind' => 'shelf', 'active' => true, 'max_weight_grams' => 20000]);
+                $snapshot = $availability->snapshot($warehouse->getKey(), $product->getKey());
+                $sourceState = app(WarehouseRelocationSources::class)->describe($source, $snapshot, collect([$placement]));
+                $relocate = ['action' => 'relocate', 'actor' => $manualReceiver->id, 'outerSnapshot' => $outerSnapshot, 'data' => [
+                    'warehouse_id' => $warehouse->getKey(), 'product_id' => $product->getKey(),
+                    'from_location_id' => $source->id, 'to_location_id' => $target->id, 'quantity' => 4,
+                    'cargo_weight_kg' => 4, 'pallet_slots' => 0, 'source_load_verified' => true,
+                    'source_revision' => $sourceState['source_revision'], 'site_verified' => true, 'confirmed' => true,
+                    'operation_key' => (string) Str::uuid(),
+                ]];
+                check(race($database, $product->getKey(), [$command, $relocate]) === ['OK', 'REJECTED'],
+                    'A relocation and a verification confirmed the same outdated placement.');
+                $verified = $events->exists();
+                $placement->refresh();
+                check([$placement->quantity, $placement->cargo_weight_grams, $placement->load_requires_verification]
+                        === ($verified ? [10, 8000, false] : [6, 10000, true])
+                    && (int) $target->placements()->sum('quantity') === ($verified ? 0 : 4)
+                    && $events->count() === ($verified ? 1 : 0)
+                    && $stock->fresh()->quantity === 10 && InventoryMovement::where('product_id', $product->getKey())->doesntExist(),
+                    'Concurrent verification and relocation left inconsistent quantities, loads or audits.');
+            }
+
+            if ($scenario === 'issue') {
+                $issue = ['action' => 'movement', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(), 'data' => [
+                    'warehouse_id' => $warehouse->getKey(), 'product_id' => $product->getKey(), 'user_id' => $manualReceiver->id,
+                    'type' => 'out', 'quantity' => 4, 'source_allocations' => [
+                        ['source_type' => 'location', 'location_id' => $source->id, 'quantity' => 4],
+                    ],
+                ]];
+                $result = race($database, $product->getKey(), [$command, $issue]);
+                $event = $events->first();
+                $placement->refresh();
+                check($result === ($event ? ['OK', 'OK'] : ['OK', 'REJECTED'])
+                    && $placement->quantity === 6 && $placement->load_requires_verification
+                    && $placement->cargo_weight_grams === ($event ? 8000 : 10000)
+                    && (!$event || $event->quantity === 10)
+                    && $stock->fresh()->quantity === 6
+                    && InventoryMovement::where('product_id', $product->getKey())->sole()->quantity === 4,
+                    'A measured pre-issue load incorrectly closed the post-issue placement.');
+            }
+
+            if ($scenario === 'duplicate') {
+                check(race($database, $product->getKey(), [$command, $command]) === ['OK', 'OK'],
+                    'A duplicate verification command did not replay.');
+                check($events->sole()->operation_key === $command['data']['operation_key']
+                    && $placement->fresh()->cargo_weight_grams === 8000 && !$placement->fresh()->load_requires_verification,
+                    'A duplicate operation created an additional audit or changed the load twice.');
+            }
+
+            if ($scenario === 'late audit failure') {
+                DB::unprepared("CREATE TRIGGER reject_load_audit_test BEFORE INSERT ON warehouse_load_verifications
+                    FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Injected load audit failure'");
+                try {
+                    $verifications->confirm($verifier, $warehouse, $placement->id, $command['data']);
+                    throw new RuntimeException('The failing audit unexpectedly committed.');
+                } catch (\Illuminate\Database\QueryException $error) {
+                    check(str_contains($error->getMessage(), 'Injected load audit failure'), 'An unexpected error prevented the audit.');
+                    $placement->refresh();
+                    check($placement->quantity === 10 && $placement->cargo_weight_grams === 10000
+                        && $placement->load_requires_verification && $events->doesntExist(),
+                        'An audit failure did not roll back the measured load.');
+                } finally {
+                    DB::unprepared('DROP TRIGGER reject_load_audit_test');
+                }
+                check($verifications->confirm($verifier, $warehouse, $placement->id, $command['data'])->result === 'verified'
+                    && $events->count() === 1, 'A rolled-back UUID could not be retried.');
+            }
+            if (in_array($scenario, ['reserve', 'putaway'], true)) {
+                $incoming = Product::factory()->create();
+                $origin = Warehouse::factory()->create();
+                Stock::create(['warehouse_id' => $origin->getKey(), 'product_id' => $incoming->getKey(), 'quantity' => 3]);
+                $source->update(['max_weight_grams' => 12000]);
+                $command['data'] = array_replace($command['data'], ['cargo_weight_kg' => 14, 'measurement_confirmed' => true]);
+                $putaway = null;
+                if ($scenario === 'reserve') {
+                    $other = ['action' => 'start', 'outerSnapshot' => $outerSnapshot, 'requestKey' => (string) Str::uuid(), 'data' => [
+                        'from_warehouse_id' => $origin->getKey(), 'to_warehouse_id' => $warehouse->getKey(), 'product_id' => $incoming->getKey(),
+                        'user_id' => $verifier->id, 'quantity' => 1, 'to_location_id' => $source->id, 'cargo_weight_kg' => 1,
+                    ]];
+                } else {
+                    $receipt = app(InventoryService::class)->receiveManual([
+                        'product_id' => $incoming->getKey(), 'warehouse_id' => $warehouse->getKey(), 'user_id' => $verifier->id, 'quantity' => 3,
+                    ], (string) Str::uuid());
+                    $putaway = $receipt->manualReceiptBatch;
+                    $other = ['action' => 'manual_putaway', 'id' => $putaway->id, 'actor' => $verifier->id, 'outerSnapshot' => $outerSnapshot,
+                        'data' => ['operation_key' => (string) Str::uuid(), 'version' => 1, 'to_location_id' => $source->id,
+                            'quantity' => 1, 'cargo_weight_kg' => 1, 'pallet_slots' => 0, 'confirmed' => true, 'site_verified' => true]];
+                }
+
+                $outcomes = race($database, [], [$command, $other], recordBarrier: $warehouse);
+                $committed = $outcomes === ['OK', 'OK'];
+                check($committed || $outcomes === ['OK', 'REJECTED'], 'The concurrent load write returned unexpected results.');
+                $audit = $events->sole();
+                check($audit->result === 'rejected' && $audit->capacity_violations === ['location_weight']
+                    && $audit->measured_weight_grams === 14000 && $placement->fresh()->cargo_weight_grams === 10000
+                    && $placement->fresh()->load_requires_verification
+                    && WarehouseLocation::withCapacityUsage()->findOrFail($source->id)->freeWeight() <= 0,
+                    'The measured overload was lost or exposed false headroom.');
+                if ($putaway) {
+                    check($putaway->fresh()->pending_putaway_quantity === ($committed ? 2 : 3)
+                        && $source->placements()->count() === ($committed ? 2 : 1), 'Blocked putaway did not preserve its staging balance.');
+                } else {
+                    check($source->reservations()->count() === ($committed ? 1 : 0), 'Blocked reservation changed destination capacity.');
+                }
+            }
+
+            if ($scenario === 'confirm empty') {
+                $source->update(['max_weight_grams' => 12000]);
+                $input = array_replace($command['data'], ['cargo_weight_kg' => 14, 'measurement_confirmed' => true]);
+                DB::unprepared("CREATE TRIGGER reject_open_load_audit_test BEFORE INSERT ON warehouse_load_verifications
+                    FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Injected discrepancy audit failure'");
+                try {
+                    $verifications->confirm($verifier, $warehouse, $placement->id, $input);
+                    throw new RuntimeException('The failing discrepancy audit unexpectedly committed.');
+                } catch (\Illuminate\Database\QueryException $error) {
+                    check(str_contains($error->getMessage(), 'Injected discrepancy audit failure')
+                        && $events->doesntExist() && $placement->fresh()->cargo_weight_grams === 10000
+                        && WarehouseLocation::withCapacityUsage()->findOrFail($source->id)->freeWeight() === 2000,
+                        'A rollback left a phantom discrepancy or changed the recorded load.');
+                } finally {
+                    DB::unprepared('DROP TRIGGER reject_open_load_audit_test');
+                }
+                $event = $verifications->confirm($verifier, $warehouse, $placement->id, $input);
+                app(WarehouseCapacity::class)->release($source, $placement);
+                check($verifications->show($verifier, $warehouse, $placement->id)['placement']['status'] === 'discrepancy_open',
+                    'Removing the placement silently closed the discrepancy.');
+                $empty = ['revision' => $verifications->show($verifier, $warehouse, $placement->id)['placement']['revision'],
+                    'operation_key' => (string) Str::uuid(), 'cargo_weight_kg' => 0, 'pallet_slots' => 0, 'measurement_confirmed' => true];
+                $closed = $verifications->confirm($verifier, $warehouse, $placement->id, $empty);
+                check($closed->result === 'verified' && $closed->quantity === 0 && $closed->resolves_verification_id === $event->id
+                    && WarehouseLocation::withCapacityUsage()->findOrFail($source->id)->freeWeight() === 12000
+                    && $verifications->confirm($verifier, $warehouse, $placement->id, $empty)->id === $closed->id,
+                    'The explicit empty observation did not close and replay correctly.');
+            }
+
+            $verificationRaceCount++;
+        }
+        echo 'PASS: load verification, relief, reservation and putaway races, UUID and rollback'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+
     echo (69 + $intentRaceCount + $reservationRaceCount + $pickingRaceCount + $planningRaceCount + $cargoRaceCount
-        + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount + $manualIssueRaceCount + $manualReceiptRaceCount + $relocationRaceCount)." MySQL concurrency checks passed.\n";
+        + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount + $manualIssueRaceCount + $manualReceiptRaceCount + $relocationRaceCount + $verificationRaceCount)." MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);
     $exitCode = 1;

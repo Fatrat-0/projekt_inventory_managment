@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { seedUsableStock } from './movement-fixtures';
 
 test.beforeEach(async ({ page }, { tags }) => {
     await page.goto('/login');
@@ -192,6 +193,13 @@ test('changing a selected partner role in another tab is checked again at save',
 for (const path of ['/movements/create', '/transfers/create']) {
     test('restoring '+path+' unlocks submitting, refreshes stock and preserves the request key', async ({ page }) => {
         const transfer = path.includes('transfers');
+        if (transfer) {
+            // The real source picker needs stock before the stubbed stock refresh can run.
+            const response = await page.request.get('/movements/stock?product_id=1&warehouse_id=1&details=1');
+            expect(response.ok()).toBe(true);
+            const { pickable_quantity: available } = await response.json();
+            if (available < 3) seedUsableStock({ product_id: 1, warehouse_id: 1, quantity: 3 - available });
+        }
         let stockRequests = 0;
         await page.route(transfer ? '**/transfers/picking-sources?**' : '**/movements/stock?**', route => {
             const quantity = ++stockRequests === 1 ? 20 : 7;

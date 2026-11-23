@@ -88,6 +88,8 @@ export default initial => {
             return { left: pixels(x), top: pixels(y), width: pixels(width || 1), height: pixels(height || 1) };
         },
         capacityTone(location) {
+            if (location.loadCritical) return 'critical';
+            if (location.loadDiscrepancy) return 'discrepancy';
             if (!location.active) return 'blocked';
             if (location.free <= 0 || location.freeSlots === 0) return 'full';
             const committed = location.occupied + location.reserved;
@@ -96,9 +98,13 @@ export default initial => {
             return Math.max(weight, slots) >= 0.8 ? 'near' : 'available';
         },
         capacityState(location) {
-            return { blocked: 'Zárolt vagy kikapcsolt', full: 'Betelt', near: 'Közel telített', available: 'Van szabad kapacitás' }[this.capacityTone(location)];
+            return {
+                critical: 'Kritikus terhelési eltérés', discrepancy: 'Terhelési korlátozás', blocked: 'Zárolt vagy kikapcsolt',
+                full: 'Betelt', near: 'Közel telített', available: 'Van szabad kapacitás',
+            }[this.capacityTone(location)];
         },
         capacityReason(location) {
+            if (location.loadDiscrepancy) return 'További elhelyezésre nem használható – nyitott terhelési eltérés miatt.';
             if (!location.active) return 'Nincs aktív tárolóhely.';
             const reasons = [];
             if (location.free <= 0) reasons.push('Elfogyott a szabad teherbírás a helyen vagy a felette lévő szinten.');

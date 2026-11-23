@@ -10,6 +10,12 @@ test.beforeEach(async ({ page }) => {
     await expect(page).toHaveURL(/dashboard/);
 });
 
+function promiseGate() {
+    let resolve;
+    const pending = new Promise(done => { resolve = done; });
+    return [pending, resolve];
+}
+
 const csrf = page => page.locator('meta[name="csrf-token"]').getAttribute('content');
 async function stock(page) { return (await (await page.request.get('/movements/stock?product_id=1&warehouse_id=1')).json()).physical_quantity; }
 async function original(page, type = 'out', quantity = 5, partner = '') {
@@ -93,8 +99,30 @@ test('supplier return supports an archived partner and appears in filtered histo
 
 test('a stale open form cannot exceed the remaining quantity and preserves entered data', async ({ page }) => {
     const source = await original(page);
-    await openReturn(page);
-    await fillReturn(page, 3, 'Megőrzendő indok');
+    const returnUrl = await page.getByRole('link', { name: 'Visszáru rögzítése', exact: true }).getAttribute('href');
+    const [held, release] = promiseGate();
+    const [requested, markRequested] = promiseGate();
+    await page.route('**/build/assets/app-*.js', async route => {
+        markRequested();
+        await held;
+        await route.continue();
+    }, { times: 1 });
+
+    try {
+        await page.goto(returnUrl, { waitUntil: 'commit' });
+        await requested;
+        await fillReturn(page, 3, 'Megőrzendő indok');
+        await expect(page.locator('#return-quantity')).toHaveValue('3');
+        const ready = page.waitForResponse(response => {
+            const url = new URL(response.url());
+            return url.pathname === '/movements/stock' && url.searchParams.get('details') === '1';
+        });
+        release();
+        await ready;
+        await expect(page.locator('#return-quantity')).toHaveValue('3');
+    } finally {
+        release();
+    }
     const key = await page.locator('input[name="request_key"]').inputValue();
     const other = await page.request.post('/movements/'+source.id+'/return', { headers: { 'X-CSRF-TOKEN': await csrf(page) },
         form: { request_key: randomUUID(), quantity: '4', return_reason: 'Másik raktáros már visszavette' }, maxRedirects: 0 });

@@ -62,7 +62,7 @@ test('pallet capacity is reserved and received, and shipment drafts retain the s
     await page.getByLabel('Szükséges raklaphelyek').fill('3');
     await page.getByLabel('Teljes tömeg (kg)').fill('60');
     await page.getByRole('button', { name: 'Átmozgatás indítása', exact: true }).click();
-    await expect(page.getByRole('alert')).toContainText('R-01 tárhelyen 2 szabad raklaphely van');
+    await expect(page.getByRole('alert')).toContainText('Rekesz raklapférőhelye túllépve. Túllépés: 1 raklaphely.');
     await expect(page.locator('input[name="to_location_id"]')).toHaveValue(location);
     await expect(page.getByRole('region', { name: /Átmozgatás összegzése/ })).toContainText('R-01 · Beérkező raklapok');
     await expect(page.getByLabel('Teljes tömeg (kg)')).toHaveValue('60');

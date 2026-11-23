@@ -23,6 +23,8 @@ use App\Http\Controllers\ShipmentPlanningController;
 use App\Http\Controllers\ShipmentReceivingController;
 use App\Http\Controllers\WarehouseReceivingPageController;
 use App\Http\Controllers\WarehouseRelocationController;
+use App\Http\Controllers\WarehouseLoadVerificationController;
+use App\Http\Controllers\WarehouseLoadVerificationPageController;
 use App\Http\Controllers\ShipmentReceiptPutawayController;
 use App\Http\Controllers\ShipmentPlanPageController;
 use App\Http\Controllers\VehicleController;
@@ -46,6 +48,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
 // Csak bejelentkezett felhasználóknak (auth), és beállítjuk a jogosultságokat (role)
 Route::middleware(['auth'])->group(function () {
+
+    Route::prefix('warehouses/{warehouse}/terhelesellenorzes')->name('warehouses.load-checks.')
+        ->where(['warehouse' => '[0-9]+', 'placement' => '[0-9]+'])->controller(WarehouseLoadVerificationPageController::class)->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::get('/{placement}', 'show')->name('show');
+        });
+
+    Route::prefix('warehouses/{warehouse}/load-verifications')->name('warehouse-load-verifications.')
+        ->where(['warehouse' => '[0-9]+', 'placement' => '[0-9]+'])->controller(WarehouseLoadVerificationController::class)->group(function () {
+            Route::get('/pending', 'index')->name('index');
+            Route::get('/pending/{placement}', 'show')->name('show');
+            Route::post('/pending/{placement}/preview', 'preview')->name('preview');
+            Route::post('/pending/{placement}', 'store')->name('store');
+            Route::get('/history', 'history')->name('history');
+        });
 
     Route::prefix('shipment-plans')->name('shipment-plans.')->controller(ShipmentPlanningController::class)->group(function () {
         Route::get('/', 'index')->name('index');

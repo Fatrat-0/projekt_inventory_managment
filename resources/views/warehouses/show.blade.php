@@ -13,6 +13,16 @@
             </div>
         </div>
         <x-operation-feedback />
+        @if($loadChecks)
+            <a href="{{ route('warehouses.load-checks.index', $baseParams + ['detail_context' => $detailContext]) }}"
+               class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm hover:border-indigo-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">
+                <span class="font-semibold text-indigo-700">Terhelésellenőrzések megnyitása</span>
+                <span class="flex flex-wrap gap-x-3 gap-y-1 text-gray-700">
+                    <span>{{ $loadChecks['pending'] }} ellenőrzésre vár</span>
+                    <span @class(['font-semibold text-amber-900' => $loadChecks['discrepancy_open'] > 0])>{{ $loadChecks['discrepancy_open'] }} nyitott eltérés</span>
+                </span>
+            </a>
+        @endif
         <section aria-label="Raktári összesítők" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div class="rounded-lg border border-gray-200 bg-white p-4"><p class="text-xs text-gray-500">Helyi készlet</p><p class="mt-2 text-2xl font-semibold tabular-nums text-gray-900" data-summary="local">{{ number_format($stockTotals->quantity, 0, ',', ' ') }} <span class="text-sm font-normal">db</span></p><p class="mt-1 text-xs text-gray-500">Jelenleg ebben a raktárban</p>@if($stockTotals->total_quarantined > 0)<p class="mt-1 text-xs text-gray-500">Kiadható: {{ number_format($stockTotals->total_available, 0, ',', ' ') }} db · <a href="{{ route('quality-returns.index', ['status' => 'open', 'warehouse_id' => $warehouse->warehouse_id]) }}" data-quality-link class="font-medium text-indigo-600 underline hover:text-indigo-800">Elkülönítve: {{ number_format($stockTotals->total_quarantined, 0, ',', ' ') }} db</a></p>@endif</div>
             <a href="{{ route('warehouses.show', $baseParams + ['stock' => 'positive']) }}#local-stock" class="rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300"><p class="text-xs text-gray-500">Készleten lévő termékfajták</p><p class="mt-2 text-2xl font-semibold tabular-nums text-indigo-600" data-summary="products">{{ number_format($stockTotals->products_count, 0, ',', ' ') }}</p><p class="mt-1 text-xs text-gray-500">Helyi terméklista megnyitása</p></a>

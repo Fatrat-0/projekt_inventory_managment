@@ -3,7 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\{Warehouse, WarehouseLocation, WarehousePlacement};
-use App\Services\WarehouseCapacity;
+use App\Policies\WarehouseRelocationPolicy;
+use App\Services\{WarehouseCapacity, WarehouseLoadVerificationService};
 use App\Support\{WarehouseListContext, WarehouseStockContext, WarehouseStorageOverview};
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -24,10 +25,12 @@ class WarehouseLocationController extends Controller
         return view('warehouses.locations.index', $this->viewData($request, $warehouse) + compact('locations', 'systems', 'summaries', 'products', 'unassignedIncoming'));
     }
 
-    public function show(Request $request, Warehouse $warehouse, WarehouseLocation $warehouseLocation)
-    {
+    public function show(
+        Request $request, Warehouse $warehouse, WarehouseLocation $warehouseLocation, WarehouseRelocationPolicy $access, WarehouseLoadVerificationService $checks,
+    ) {
         $location = $warehouse->storageLocations()->withCapacityUsage()->findOrFail($warehouseLocation->id);
-        $sharedFreeWeight = WarehouseStorageOverview::locationFreeWeights($location->newCollection([$location]));
+        $capacity = WarehouseStorageOverview::locationAvailability($location->newCollection([$location]))[$location->id];
+        $sharedFreeWeight = $location->system_id === null ? [] : [$location->id => $capacity['weight']];
         $placements = $location->placements()->with('stock.product')->latest('id')->paginate(20)->withQueryString();
         $allowed = $location->system_id === null ? collect() : $location->allowedCategories()->pluck('categories.category_id');
         $stocks = $warehouse->stocks()->with('product')->withPendingPutaway()->withSum('placements as assigned_quantity', 'quantity')
@@ -39,7 +42,11 @@ class WarehouseLocationController extends Controller
             ->filter(fn ($stock) => $stock->available_quantity > $stock->assigned_quantity + $stock->staged_quantity)
             ->sortBy('product.product_name');
 
-        return view('warehouses.locations.show', $this->viewData($request, $warehouse) + compact('location', 'placements', 'stocks', 'sharedFreeWeight'));
+        $loadChecks = $access->canAccessWarehouse($request->user(), (int) $warehouse->getKey())
+            ? $checks->counts($request->user(), $warehouse, $location->id) : null;
+
+        return view('warehouses.locations.show', $this->viewData($request, $warehouse)
+            + compact('location', 'placements', 'stocks', 'capacity', 'sharedFreeWeight', 'loadChecks'));
     }
 
     public function store(Request $request, Warehouse $warehouse, WarehouseCapacity $capacity)

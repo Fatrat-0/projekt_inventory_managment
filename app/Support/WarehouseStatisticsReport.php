@@ -47,7 +47,11 @@ class WarehouseStatisticsReport
         $used = (int) $rows->sum('occupied_'.$metric);
         $reserved = (int) $rows->sum('reserved_'.$metric);
         $limit = 'max_'.$metric;
-        $parts = [$used, $reserved, max(0, (int) $rows->sum($limit) - $used - $reserved)];
+        $affected = $rows->where('open_load_discrepancy', 1);
+        $regular = $rows->diff($affected);
+        $free = max(0, (int) $regular->sum($limit) - (int) $regular->sum('occupied_'.$metric) - (int) $regular->sum('reserved_'.$metric))
+            + (int) $affected->sum('usable_free_'.$metric);
+        $parts = [$used, $reserved, $free];
         $total = array_sum($parts);
         $share = $total > 0 ? 100 * ($used + $reserved) / $total : 0;
 

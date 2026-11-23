@@ -1,6 +1,8 @@
 @props(['name'])
 @php
 $paths = [
+    'warning' => 'M12 3 2 20h20L12 3z M12 9v5 M12 17h.01',
+    'check-circle' => 'M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z M7 12l3 3 7-7',
     'tasks' => 'M9 4H5v18h14V4h-4 M9 2h6v4H9z M8 12l2 2 5-5 M8 18h8',
     'tray-out' => 'M12 13V3 M8 7l4-4 4 4 M4 14v6h16v-6',
     'tray-in' => 'M12 3v10 M8 9l4 4 4-4 M4 14v6h16v-6',

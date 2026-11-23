@@ -22,7 +22,7 @@
     <dd class="font-semibold" x-text="numberValue(location.score?.remaining_pallet_slots ?? location.free_pallet_slots)"></dd>
 </dl>
 <div x-show="location.status === 'rejected' || location.status === 'conditional'" data-putaway-fit-warnings class="text-sm"
-     :class="location.status === 'rejected' ? 'text-red-900' : 'text-amber-900'">
+     :class="location.status === 'rejected' && location.discrepancy_severity !== 'warning' ? 'text-rose-900' : 'text-amber-950'">
     <p class="font-medium" x-text="location.status === 'rejected' ? 'Kizáró okok' : 'Ellenőrizendő adatok'"></p>
     <ul class="list-disc space-y-0.5 ps-4">
         <template x-for="(reason, index) in checks(location.status === 'rejected' ? location.checks?.failed : location.checks?.missing)" :key="index">

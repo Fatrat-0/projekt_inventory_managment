@@ -8,6 +8,7 @@
                 @foreach($level['bins'] as $cell)
                     <details class="rounded border border-gray-200">
                         <summary class="cursor-pointer p-3 text-sm">
+                            @if($cell['loadDiscrepancy'])<x-icon name="warning" class="inline" />@endif
                             <strong>{{ $cell['code'] }}</strong> · {{ $cell['name'] }} · {{ \App\Support\WarehouseStorageOverview::STATES[\App\Support\WarehouseStorageOverview::tone($cell)] }}
                         </summary>
                         <div class="space-y-2 border-t border-gray-200 p-3">

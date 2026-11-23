@@ -4,17 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\WarehouseRequest;
 use App\Models\Warehouse;
+use App\Policies\WarehouseRelocationPolicy;
 use App\Queries\WarehouseListing;
 use App\Queries\WarehouseStatistics;
 use App\Queries\WarehouseStockListing;
 use App\Services\MasterDataEditor;
+use App\Services\WarehouseLoadVerificationService;
 use App\Services\WarehouseStockAvailability;
 use App\Support\WarehouseListContext;
 use App\Support\WarehouseStockContext;
 use App\Support\WarehouseStatisticsReport;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\{DB, Schema};
 use Illuminate\Validation\ValidationException;
 
 class WarehouseController extends Controller
@@ -54,14 +56,14 @@ class WarehouseController extends Controller
 
         $warehouseId = isset($filter['warehouse_id']) ? (int) $filter['warehouse_id'] : null;
         $options = Warehouse::orderBy('warehouse_name')->orderBy('warehouse_id')->get(['warehouse_id', 'warehouse_name']);
-        $rows = WarehouseStatistics::query()->when($warehouseId, fn ($query) => $query->whereKey($warehouseId))->get();
+        $rows = WarehouseStatistics::reportRows($warehouseId);
 
         $report = new WarehouseStatisticsReport($rows, $warehouseId !== null);
 
         return view('warehouses.statistics', compact('context', 'warehouseId', 'options', 'rows', 'report'));
     }
 
-    public function show(Request $request, Warehouse $warehouse)
+    public function show(Request $request, Warehouse $warehouse, WarehouseRelocationPolicy $access, WarehouseLoadVerificationService $checks)
     {
         $context = WarehouseListContext::token($request->query('context', ''));
         try {
@@ -86,8 +88,12 @@ class WarehouseController extends Controller
         $transferTotals = fn($query) => (clone $query)->selectRaw('COUNT(*) AS transfer_count, COALESCE(SUM(quantity), 0) AS quantity')->first();
         $preview = fn($query) => (clone $query)->with(['product', 'fromWarehouse', 'toWarehouse', 'shipmentItem.stop.shipment'])->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get();
         $suggestions = $warehouse->stocks()->with('product')->get();
+        $loadChecks = $access->canAccessWarehouse($request->user(), (int) $warehouse->getKey())
+            && Schema::hasColumn('warehouse_load_verifications', 'capacity_violation_mask')
+            ? $checks->counts($request->user(), $warehouse) : null;
+
         return view('warehouses.show', [
-            'warehouse' => $warehouse, 'context' => $context, 'returnUrl' => WarehouseListContext::url($context),
+            'loadChecks' => $loadChecks, 'warehouse' => $warehouse, 'context' => $context, 'returnUrl' => WarehouseListContext::url($context),
             'filters' => $filters, 'stocks' => $stocks,
             'detailContext' => WarehouseStockContext::encode($filters + ['page' => $request->integer('page', 1)]),
             'stockTotals' => $stockTotals, 'incomingTotals' => $transferTotals($incomingQuery), 'outgoingTotals' => $transferTotals($outgoingQuery),

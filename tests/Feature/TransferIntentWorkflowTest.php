@@ -66,6 +66,104 @@ class TransferIntentWorkflowTest extends TestCase
         $this->assertDatabaseCount('stocks', 0);
     }
 
+    public function test_deadline_checks_the_budapest_day_or_minute_and_keeps_successful_replays(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-22T23:00:37Z'));
+        $this->actingAs($this->requester);
+        $url = route('transfer-intents.store');
+
+        foreach (['2026-11-22', '2026-11-22T23:59:00+01:00'] as $past) {
+            $this->postJson($url, $this->input(['requested_arrival_at' => $past]))->assertUnprocessable()
+                ->assertJsonPath('errors.requested_arrival_at.0', 'A kért érkezési határidő nem lehet múltbeli.');
+        }
+
+        $this->assertDatabaseCount('transfer_intents', 0);
+        $this->assertDatabaseCount('transfer_workflow_events', 0);
+        foreach (['2026-11-23', '2026-11-24', '2026-11-23T00:00:00+01:00', '2026-11-23T08:00:00+01:00'] as $accepted) {
+            $data = $this->input(['requested_arrival_at' => $accepted]);
+            $result = $this->postJson($url, $data)->assertCreated();
+        }
+        $intent = TransferIntent::findOrFail($result->json('intent.id'));
+        $this->assertSame('2026-11-23 07:00:00', $intent->requested_arrival_at->toDateTimeString());
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-25T10:00:00Z'));
+        $this->postJson($url, $data)->assertCreated()->assertExactJson($result->json());
+        $this->get(route('transfer-intent-pages.show', $intent))->assertOk()->assertSee('2026. 11. 23. 08:00');
+        $this->assertDatabaseCount('transfer_intents', 4);
+        $this->assertDatabaseCount('transfer_workflow_events', 4);
+    }
+
+    public function test_date_only_deadline_spans_the_budapest_day_and_is_displayed_without_a_time(): void
+    {
+        $this->actingAs($this->requester);
+        $url = route('transfer-intents.store');
+        foreach ([
+            ['2026-11-23', '2026-11-23T14:30:00Z', '2026-11-23T22:59:59.000000Z', '2026. 11. 23.'],
+            ['2026-07-02', '2026-07-02T15:30:00Z', '2026-07-02T21:59:59.000000Z', '2026. 07. 02.'],
+            ['2026-03-29', '2026-03-29T15:30:00Z', '2026-03-29T21:59:59.000000Z', '2026. 03. 29.'],
+            ['2026-10-25', '2026-10-25T15:30:00Z', '2026-10-25T22:59:59.000000Z', '2026. 10. 25.'],
+        ] as [$day, $clock, $end, $label]) {
+            $this->travelTo(\Illuminate\Support\Carbon::parse($clock));
+            $data = $this->input(['requested_arrival_at' => $day]);
+            $created = $this->postJson($url, $data)->assertCreated()
+                ->assertJsonPath('intent.requested_arrival_date', $day)->assertJsonPath('intent.requested_arrival_at', $end);
+            $intent = TransferIntent::findOrFail($created->json('intent.id'));
+            $this->getJson(route('transfer-intents.show', $intent))->assertOk()
+                ->assertJsonPath('data.requested_arrival_date', $day)->assertJsonPath('data.requested_arrival_at', $end);
+            $this->get(route('transfer-intent-pages.show', $intent))->assertOk()
+                ->assertSee($label.'</dd>', false)->assertDontSee($label.' 23:59');
+            $this->travelTo(\Illuminate\Support\Carbon::parse($end));
+            $this->postJson($url, $this->input(['requested_arrival_at' => $day]))->assertCreated();
+            $this->travel(1)->second();
+            $this->postJson($url, $this->input(['requested_arrival_at' => $day]))->assertUnprocessable()
+                ->assertJsonValidationErrors('requested_arrival_at');
+            $this->postJson($url, $data)->assertCreated()->assertExactJson($created->json());
+            $this->postJson($url, array_replace($data, ['requested_arrival_at' => substr($end, 0, 19).'Z']))->assertConflict();
+        }
+    }
+
+    public function test_existing_explicit_midnight_and_historical_create_fingerprint_keep_their_meaning(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-22T22:30:00Z'));
+        $this->actingAs($this->requester);
+        $url = route('transfer-intents.store');
+        $data = $this->input(['requested_arrival_at' => '2026-11-23T00:00:00Z']);
+        $created = $this->postJson($url, $data)->assertCreated()
+            ->assertJsonPath('intent.requested_arrival_at', '2026-11-23T00:00:00.000000Z');
+        $intent = TransferIntent::findOrFail($created->json('intent.id'));
+        $this->assertNull($intent->getAttribute('requested_arrival_date'));
+        $this->get(route('transfer-intent-pages.show', $intent))->assertOk()->assertSee('2026. 11. 23. 01:00</dd>', false);
+        $localMidnight = $this->postJson($url, $this->input(['requested_arrival_at' => '2026-11-23T00:00:00+01:00']))
+            ->assertCreated()->assertJsonPath('intent.requested_arrival_at', '2026-11-22T23:00:00.000000Z');
+        $this->get(route('transfer-intent-pages.show', $localMidnight->json('intent.id')))->assertOk()->assertSee('2026. 11. 23. 00:00</dd>', false);
+        $this->postJson($url, array_replace($data, ['requested_arrival_at' => '2026-11-23']))->assertConflict();
+
+        // Record a historical operation using the original fingerprint and stored UTC midnight.
+        $legacyPayload = [
+            'product_id' => $this->product->getKey(), 'from_warehouse_id' => $this->source->getKey(),
+            'to_warehouse_id' => $this->destination->getKey(), 'quantity' => 200,
+            'requested_by' => $this->requester->id, 'requested_arrival_at' => '2026-11-23 00:00:00',
+            'reason' => null, 'note' => null, 'priority' => 'normal', 'shipping_preference' => 'groupable',
+        ];
+        $legacy = TransferIntent::create($legacyPayload);
+        $operations = app(\App\Services\TransferWorkflowOperations::class);
+        $legacyRequest = $this->input(['requested_arrival_at' => '2026-11-23']);
+        $fingerprint = $operations->fingerprint('created', $this->requester, null, $legacyPayload);
+        $legacyResult = $operations->log($legacy, $this->requester, 'created', null, null, $legacyRequest['operation_key'], $fingerprint);
+        $this->travel(2)->days();
+        $this->postJson($url, $legacyRequest)->assertCreated()->assertExactJson($legacyResult);
+        $this->assertDatabaseCount('transfer_intents', 3);
+    }
+
+    public function test_two_independent_keys_can_create_identical_intents(): void
+    {
+        $this->actingAs($this->requester);
+        $first = $this->postJson(route('transfer-intents.store'), $this->input())->assertCreated()->json('intent.id');
+        $second = $this->postJson(route('transfer-intents.store'), $this->input())->assertCreated()->json('intent.id');
+        $this->assertNotSame($first, $second);
+        $this->assertDatabaseCount('transfer_intents', 2);
+        $this->assertDatabaseCount('transfer_workflow_events', 2);
+    }
+
     public function test_global_worker_and_manager_have_no_implicit_warehouse_permission(): void
     {
         $this->postJson(route('transfer-intents.store'), $this->input())->assertUnauthorized();
@@ -224,6 +322,7 @@ class TransferIntentWorkflowTest extends TestCase
 
     public function test_creation_replay_returns_the_original_intent_and_rejects_changed_payload_or_actor(): void
     {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-23T14:23:37Z'));
         $data = $this->input(['reason' => 'Utánpótlás', 'requested_arrival_at' => '2027-01-20 13:30:00']);
         $first = $this->actingAs($this->requester)->postJson(route('transfer-intents.store'), $data)->assertCreated();
         $intent = TransferIntent::findOrFail($first->json('intent.id'));

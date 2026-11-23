@@ -2,6 +2,7 @@ import { chromium, expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { plan, shipmentCommand as command } from './shipment-fixtures';
+import { setBrowserServerTime } from './browser-server-time';
 
 const moduleUrl = '/raktari-feladatok';
 const workUrl = moduleUrl + '/kitarolas';
@@ -294,6 +295,7 @@ test('az elsődleges és másodlagos rendezés teljes találati halmazon dönt, 
     test.setTimeout(90000);
     const shipment = fixture();
     await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
     const rows = [];
     for (const [priority, requested_arrival_at, quantity] of [
         ['normal', '2027-01-03T10:00:00+01:00', 100],

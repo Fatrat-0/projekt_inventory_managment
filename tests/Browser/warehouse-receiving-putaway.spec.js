@@ -122,7 +122,11 @@ async function openPutawayReview(page, site = false, touch = false) {
 
 async function bookPutaway(page, site = false) {
     const dialog = await openPutawayReview(page, site);
+    const saved = page.waitForResponse(response => response.request().method() === 'POST'
+        && /\/shipment-receipt-items\/\d+\/putaway$/.test(new URL(response.url()).pathname));
     await button(dialog, 'Betárolás rögzítése').click();
+    expect((await saved).status()).toBe(201);
+    await expect(dialog).toBeHidden();
     await expect(page.locator('[data-putaway-success]')).toBeVisible();
 }
 

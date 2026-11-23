@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Shipment;
+use App\Models\{Shipment, Vehicle};
 use App\Policies\ShipmentPolicy;
 use App\Support\{ListingSort, ListingSuggestions};
 use App\Services\{ShipmentPlanReader, ShipmentReceivingReader};
@@ -30,7 +30,7 @@ class ShipmentPlanPageController extends Controller
                 'key' => 'shipment-'.$plan['id'],
                 'value' => $plan['shipment_number'],
                 'name' => $plan['shipment_number'].' · '.$plan['reference'],
-                'detail' => $plan['origin_warehouse_name'].($plan['vehicle_label'] ? ' · '.$plan['vehicle_label'] : ''),
+                'detail' => $plan['origin_warehouse_name'].($plan['vehicle_display'] ? ' · '.$plan['vehicle_display'] : ''),
             ]);
         }
 
@@ -49,6 +49,8 @@ class ShipmentPlanPageController extends Controller
 
         return $this->page('shipments.create-plan', [
             'warehouses' => $policy->warehousesFor($request->user(), true)->get(['warehouse_id', 'warehouse_name']),
+            'vehicles' => Vehicle::where('active', true)->orderBy('name')->orderBy('id')->get()
+                ->map(fn (Vehicle $vehicle) => $vehicle->capacitySnapshot())->values(),
         ]);
     }
 

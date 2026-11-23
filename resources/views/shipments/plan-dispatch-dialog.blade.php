@@ -5,6 +5,7 @@
         <dl class="grid gap-x-4 gap-y-2 rounded-md bg-gray-50 p-3 text-sm sm:grid-cols-2">
             <div><dt class="text-xs text-gray-600">Fuvarazonosító</dt><dd class="font-medium" x-text="detail?.shipment.shipment_number"></dd></div>
             <div><dt class="text-xs text-gray-600">Induló raktár</dt><dd class="font-medium" x-text="detail?.shipment.origin_warehouse_name"></dd></div>
+            <div><dt class="text-xs text-gray-600">Tervezett indulás</dt><dd class="font-medium" x-text="formatPlannedDeparture(detail?.shipment.planned_departure_at)"></dd></div>
             <div><dt class="text-xs text-gray-600">Jármű</dt><dd class="font-medium" x-text="vehicleName(cargo?.vehicle)"></dd></div>
             <div><dt class="text-xs text-gray-600">Igények és megállók</dt><dd class="font-medium" x-text="`${assignments.length} igény · ${stops.length} megálló`"></dd></div>
             <div><dt class="text-xs text-gray-600">Bruttó rakománytömeg</dt><dd class="font-medium" x-text="formatMass(cargo?.confirmation?.gross_weight_grams)"></dd></div>
@@ -35,6 +36,7 @@
         </div>
         <div class="flex flex-wrap justify-end gap-2">
             <button type="button" @click="closeDialog($refs.dispatchDialog)" :disabled="saving" class="{{ $secondary }}" autofocus x-text="unconfirmed ? 'Bezárás' : 'Mégse'"></button>
+            <button type="button" x-show="departureBlocker && mayChange" @click="openDepartureEditor()" class="{{ $secondary }}">Tervezett indulás módosítása</button>
             <button type="button" x-show="needsRefresh && !unconfirmed" @click="refreshPlan()" :disabled="loading || saving" class="{{ $secondary }}">Fuvarterv frissítése</button>
             <button type="button" x-show="pendingCommand?.action === 'dispatch'" @click="retryCommand()" :disabled="saving" class="{{ $primary }}">Feladás újrapróbálása</button>
             <button type="submit" x-show="!unconfirmed" :disabled="!canDispatch || !dispatchConfirmed" class="{{ $primary }}" x-text="saving ? 'Feladás rögzítése…' : 'Feladás véglegesítése'"></button>

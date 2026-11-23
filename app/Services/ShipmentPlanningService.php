@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{Shipment, ShipmentIntentAssignment, ShipmentPlanOperation, ShipmentStop, TransferIntent, User, Vehicle, Warehouse};
+use App\Support\PlanningTime;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -26,21 +27,18 @@ class ShipmentPlanningService
         $data = $this->validate($data, [
             'origin_warehouse_id' => ['required', $this->positiveInteger()],
             'reference' => 'required|string|max:100',
-            'vehicle_label' => 'nullable|string|max:100',
+            'vehicle_label' => 'nullable|string|max:100|prohibits:vehicle_id',
+            'vehicle_id' => ['nullable', $this->positiveInteger()],
+            'vehicle_version' => ['nullable', $this->positiveInteger(self::MAX_VERSION)],
             'note' => 'nullable|string|max:1000',
             'planned_departure_at' => ['bail', 'nullable', 'string', 'date',
-                'regex:/^\d{4}-\d{2}-\d{2}(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)?$/D'],
+                PlanningTime::FORMAT],
             'intent_ids' => 'sometimes|array|list|max:1000',
             'intent_ids.*' => ['required', 'distinct', $this->positiveInteger()],
             'grouping_reason' => 'nullable|string|max:500',
         ]);
         $origin = (int) $data['origin_warehouse_id'];
-        $departure = isset($data['planned_departure_at'])
-            ? CarbonImmutable::parse($data['planned_departure_at'], config('app.timezone'))->utc()
-            : null;
-        if ($departure && ($departure->year < 1000 || $departure->year > 9999)) {
-            throw ValidationException::withMessages(['planned_departure_at' => 'A tervezett indulás éve 1000 és 9999 közötti legyen.']);
-        }
+        $departure = $this->parseDeparture($data['planned_departure_at'] ?? null);
         $attributes = [
             'origin_warehouse_id' => $origin,
             'reference' => $data['reference'],
@@ -48,16 +46,22 @@ class ShipmentPlanningService
             'note' => $data['note'] ?? null,
             'planned_departure_at' => $departure?->toDateTimeString(),
         ];
+        $vehicleId = isset($data['vehicle_id']) ? (int) $data['vehicle_id'] : null;
+        $vehicleVersion = isset($data['vehicle_version']) ? (int) $data['vehicle_version'] : null;
+        if ($vehicleId !== null) $attributes['vehicle_id'] = $vehicleId;
         $ids = $this->ids($data['intent_ids'] ?? []);
         $reason = $data['grouping_reason'] ?? null;
 
         return $this->run($actor, 'create', $data, null, $origin,
-            ['attributes' => $attributes, 'intent_ids' => $ids, 'grouping_reason' => $reason], $reason,
-            function (User $actor) use ($attributes, $ids, $origin, $reason) {
+            ['attributes' => $attributes, 'intent_ids' => $ids, 'grouping_reason' => $reason]
+                + ($vehicleVersion === null ? [] : ['vehicle_version' => $vehicleVersion]), $reason,
+            function (User $actor) use ($attributes, $ids, $origin, $reason, $vehicleId, $vehicleVersion, $departure) {
                 $intents = $this->lockIntents($ids);
                 if (!Warehouse::whereKey($origin)->sharedLock()->first(['warehouse_id'])) {
                     throw ValidationException::withMessages(['origin_warehouse_id' => 'Az induló raktár nem található.']);
                 }
+                $this->assertSelectableVehicle($vehicleId, $vehicleVersion);
+                $this->assertFutureDeparture($departure);
                 $shipment = Shipment::create($attributes + [
                     'planning_mode' => Shipment::MODE_TRANSFER_INTENT, 'user_id' => $actor->id, 'status' => 'draft', 'version' => 1,
                 ]);
@@ -65,6 +69,36 @@ class ShipmentPlanningService
 
                 return [$shipment, $stops, $assignments, $ids];
             });
+    }
+
+    public function updateDeparture(User $actor, Shipment $shipment, array $data): array
+    {
+        $data = $this->validate($data, [
+            'planned_departure_at' => ['bail', 'required', 'string', 'date', PlanningTime::FORMAT],
+        ], requireVersion: true);
+        $departure = $this->parseDeparture($data['planned_departure_at']);
+
+        return $this->run($actor, 'update_departure', $data, $shipment, null,
+            ['planned_departure_at' => $departure->toDateTimeString()], null,
+            function (User $actor, Shipment $current) use ($departure) {
+                $this->assertFutureDeparture($departure);
+                [$stops, $assignments] = $this->currentRoute($current);
+                $current->planned_departure_at = $departure;
+
+                return [$current, $stops, $assignments, []];
+            });
+    }
+
+    private function parseDeparture(?string $value): ?CarbonImmutable
+    {
+        return PlanningTime::parse($value, 'planned_departure_at', 'A tervezett indulás éve 1000 és 9999 közötti legyen.');
+    }
+
+    private function assertFutureDeparture(?CarbonImmutable $departure): void
+    {
+        if (PlanningTime::isPast($departure)) {
+            throw ValidationException::withMessages(['planned_departure_at' => PlanningTime::PAST_DEPARTURE]);
+        }
     }
 
     public function attach(User $actor, Shipment $shipment, array $data): array
@@ -127,19 +161,35 @@ class ShipmentPlanningService
 
     public function selectVehicle(User $actor, Shipment $shipment, array $data): array
     {
-        $data = $this->validate($data, ['vehicle_id' => ['present', 'nullable', $this->positiveInteger()]], requireVersion: true);
+        $data = $this->validate($data, [
+            'vehicle_id' => ['present', 'nullable', $this->positiveInteger()],
+            'vehicle_version' => ['nullable', $this->positiveInteger(self::MAX_VERSION)],
+        ], requireVersion: true);
         $vehicleId = isset($data['vehicle_id']) ? (int) $data['vehicle_id'] : null;
+        $vehicleVersion = isset($data['vehicle_version']) ? (int) $data['vehicle_version'] : null;
+        $payload = ['vehicle_id' => $vehicleId] + ($vehicleVersion === null ? [] : ['vehicle_version' => $vehicleVersion]);
 
-        return $this->changeCargo($actor, $shipment, 'select_vehicle', $data, ['vehicle_id' => $vehicleId], null,
-            function (User $actor, Shipment $current) use ($vehicleId): void {
-                if ($vehicleId !== null && !Vehicle::whereKey($vehicleId)->where('active', true)->sharedLock()->first(['id'])) {
-                    throw ValidationException::withMessages(['vehicle_id' => 'Válassz aktív, nyilvántartott járművet.']);
-                }
+        return $this->changeCargo($actor, $shipment, 'select_vehicle', $data, $payload, null,
+            function (User $actor, Shipment $current) use ($vehicleId, $vehicleVersion): void {
+                $this->assertSelectableVehicle($vehicleId, $vehicleVersion);
                 if ($current->vehicle_id !== $vehicleId) {
                     $current->vehicle_id = $vehicleId;
                     $current->cargo_revision++;
                 }
             });
+    }
+
+    private function assertSelectableVehicle(?int $id, ?int $version): void
+    {
+        if ($id === null) return;
+
+        $vehicle = Vehicle::whereKey($id)->sharedLock()->first(['id', 'active', 'version']);
+        if (!$vehicle?->active) {
+            throw ValidationException::withMessages(['vehicle_id' => 'A jármű már nem választható. Válassz aktív, nyilvántartott járművet.']);
+        }
+        if ($version !== null && $vehicle->version !== $version) {
+            throw ValidationException::withMessages(['vehicle_id' => 'A jármű adatai időközben megváltoztak. Ellenőrizd a friss kapacitást, majd válaszd ki újra a járművet.']);
+        }
     }
 
     public function saveCargoItem(User $actor, Shipment $shipment, int $assignmentId, array $data): array
@@ -478,7 +528,7 @@ class ShipmentPlanningService
 
     private function validate(array $data, array $rules, bool $requireVersion = false, array $messages = []): array
     {
-        foreach (['reference', 'vehicle_label', 'note', 'reason', 'grouping_reason', 'packaging_note'] as $field) {
+        foreach (['reference', 'vehicle_label', 'note', 'reason', 'grouping_reason', 'packaging_note', 'planned_departure_at'] as $field) {
             if (is_string($data[$field] ?? null)) {
                 $value = Str::trim($data[$field]);
                 $data[$field] = $value === '' ? null : $value;
@@ -492,7 +542,9 @@ class ShipmentPlanningService
             'version.*' => 'Add meg a fuvarterv aktuális verzióját.',
             'origin_warehouse_id.*' => 'Válassz érvényes induló raktárt.',
             'reference.*' => 'Adj meg legfeljebb 100 karakteres fuvarhivatkozást.',
+            'vehicle_label.prohibits' => 'Nyilvántartott járműhöz nem adható meg külön szabad szöveges megnevezés.',
             'vehicle_label.*' => 'A jármű megnevezése legfeljebb 100 karakteres szöveg lehet.',
+            'vehicle_version.*' => 'A kiválasztott jármű verziója érvénytelen.',
             'note.*' => 'A megjegyzés legfeljebb 1000 karakteres szöveg lehet.',
             'planned_departure_at.*' => 'Adj meg érvényes tervezett indulást ISO-formátumban.',
             'intent_ids.*' => 'Adj meg 1–1000 különböző átmozgatási igényazonosítót.',

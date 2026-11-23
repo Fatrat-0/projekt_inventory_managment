@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $config = [
             'shipmentId' => $shipment->id,
@@ -14,6 +14,7 @@
                 'stops' => route('shipment-plans.stops.update', $shipment),
                 'loading' => route('shipment-plans.loading-order', $shipment),
                 'readiness' => route('shipment-plans.readiness', $shipment),
+                'departure' => route('shipment-plans.departure.update', $shipment),
                 'cargo' => route('shipment-plans.cargo.show', $shipment),
                 'cargoItem' => route('shipment-plans.cargo.items.update', ['shipment' => $shipment, 'assignment' => '__assignment__']),
                 'dispatch' => route('shipment-plans.dispatch.show', $shipment),
@@ -36,7 +37,6 @@
         <x-page-toolbar :title="$shipment->reference">
             <a href="{{ route('shipments.index') }}" class="{{ $secondary }}">Vissza a fuvarokhoz</a>
         </x-page-toolbar>
-        @include('transfers.tabs')
 
         <header x-show="!accessLost" class="{{ $panel }} [overflow-wrap:anywhere]" x-ref="planHeading" tabindex="-1" aria-label="A fuvar adatai">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -50,12 +50,27 @@
             </div>
             <dl class="mt-3 grid min-w-0 gap-3 text-sm sm:grid-cols-3">
                 <div class="min-w-0"><dt class="text-xs text-gray-600">Induló raktár</dt><dd class="mt-0.5 font-medium text-gray-900">{{ $shipment->origin->warehouse_name }}</dd></div>
-                <div class="min-w-0"><dt class="text-xs text-gray-600">Tervezett indulás</dt><dd class="mt-0.5 font-medium text-gray-900">{{ $shipment->planned_departure_at?->timezone('Europe/Budapest')->format('Y. m. d. H:i') ?? 'Nincs megadva' }}</dd></div>
+                <div class="min-w-0">
+                    <dt class="text-xs text-gray-600">Tervezett indulás</dt>
+                    <dd class="mt-0.5 font-medium text-gray-900" x-text="detail ? formatPlannedDeparture(detail.shipment.planned_departure_at) : $el.textContent.trim()">{{ $shipment->planned_departure_at?->timezone(\App\Support\PlanningTime::ZONE)->format('Y. m. d. H:i') ?? 'Nincs megadva' }}</dd>
+                    @if ($canManage)
+                        <dd x-cloak x-show="canEdit && !departureEditing">
+                            <button type="button" x-ref="departureEditButton" @click="openDepartureEditor()" :disabled="!mayChange"
+                                    class="{{ $link }} text-sm disabled:opacity-50">Tervezett indulás módosítása</button>
+                        </dd>
+                    @endif
+                </div>
                 <div x-cloak x-show="dispatchRecord" class="min-w-0"><dt class="text-xs text-gray-600">Tényleges feladás</dt><dd class="mt-0.5 font-medium text-gray-900" x-text="formatDate(dispatchRecord?.dispatched_at)"></dd></div>
+                @if ($shipment->vehicle_label)
+                    <div class="min-w-0"><dt class="text-xs text-gray-600">Korábban megadott járműadat</dt><dd class="mt-0.5 font-medium text-gray-900">{{ $shipment->vehicle_label }}</dd></div>
+                @endif
                 @if ($shipment->note)
                     <div class="min-w-0 sm:col-span-3"><dt class="text-xs text-gray-600">Megjegyzés</dt><dd class="mt-0.5 whitespace-pre-wrap text-gray-900">{{ $shipment->note }}</dd></div>
                 @endif
             </dl>
+            @if ($canManage)
+                @include('shipments.plan-departure')
+            @endif
         </header>
 
         <p x-cloak x-show="notice" x-text="notice" role="status"
@@ -91,4 +106,4 @@
         @include('shipments.plan-vehicle-dialogs')
         @if ($canManage) @include('shipments.plan-dispatch-dialog') @endif
     </div>
-</x-app-layout>
+</x-transfer-layout>

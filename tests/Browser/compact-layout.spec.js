@@ -10,12 +10,12 @@ const search = page => page.getByRole('link', { name: 'Globális gyorskereső', 
 
 test('global search sits on the right and each list has a single page heading in a compact workspace', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 }); await login(page);
-    for (const path of ['dashboard', 'products', 'stock', 'movements', 'transfers', 'shipments', 'categories', 'warehouses', 'partners', 'users', 'quality-returns', 'search']) {
+    for (const path of ['dashboard', 'products', 'stock', 'movements', 'atmozgatasok', 'transfers', 'shipments', 'categories', 'warehouses', 'partners', 'users', 'quality-returns', 'search']) {
         await page.goto('/'+path);
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page.locator('main h1')).toBeVisible();
         const topbar = page.locator('[data-app-topbar]');
         await expect(topbar.getByRole('heading')).toHaveCount(0);
-        await expect(topbar.getByRole('navigation')).toHaveCount(['warehouses', 'movements', 'quality-returns'].includes(path) ? 1 : 0);
+        await expect(topbar.getByRole('navigation')).toHaveCount(['warehouses', 'movements', 'quality-returns', 'atmozgatasok', 'transfers', 'shipments'].includes(path) ? 1 : 0);
         await expect(search(page)).toBeVisible();
         const bar = await topbar.boundingBox(); const field = await search(page).boundingBox();
         expect(field.x, path).toBeGreaterThan(bar.x + bar.width / 2); expect(bar.height, path).toBeLessThanOrEqual(60);

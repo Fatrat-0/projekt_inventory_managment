@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $field = static function ($key, $default = '') use ($prefill) {
             $value = old($key, $prefill[$key] ?? $default);
@@ -128,4 +128,4 @@
             </form>
         @endif
     </div>
-</x-app-layout>
+</x-transfer-layout>

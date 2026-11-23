@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $sortColumns = [
             'name' => 'Megnevezés',
@@ -31,7 +31,9 @@
                 <button type="button" class="{{ $primary }}" @click="openEditor()">Új jármű</button>
             @endif
         </x-page-toolbar>
-        @include('transfers.tabs')
+        @if ($canManageVehicles)
+            <p class="text-sm text-gray-600">A járműnapló a létrehozástól védi a járműrekordot a törléstől. A használatból kivont járműveket a műveleti menüben inaktiválhatod. A kapcsolódó fuvarok megmaradnak.</p>
+        @endif
 
         <div class="grid min-w-0 items-end gap-3 rounded-lg border border-gray-200 bg-white p-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)_auto] sm:p-4">
             <div class="min-w-0">
@@ -88,4 +90,4 @@
         @endif
         @include('vehicles.related')
     </div>
-</x-app-layout>
+</x-transfer-layout>

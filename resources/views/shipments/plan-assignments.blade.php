@@ -34,7 +34,7 @@
                             </div>
                             <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
                                 <p><span x-text="@js($priorities)[row.intent.priority] || 'Normál'"></span> prioritás</p>
-                                <p x-show="row.intent.requested_arrival_at">Kért érkezés <span class="font-medium text-gray-900" x-text="formatDate(row.intent.requested_arrival_at)"></span></p>
+                                <p x-show="row.intent.requested_arrival_at">Kért érkezés <span class="font-medium text-gray-900" x-text="formatRequestedArrival(row.intent)"></span></p>
                             </div>
                             @if ($canManage)
                             <div class="mt-1 flex flex-wrap justify-between gap-x-2" x-show="canEdit || canOpenTask(prepFor(row.transfer_intent_id))">

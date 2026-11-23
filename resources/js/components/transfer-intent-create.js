@@ -1,29 +1,9 @@
 import transferQuantity from './transfer-quantity';
-import intentSubmission from './transfer-intent-submission';
+import intentSubmission, { operationKey } from './transfer-intent-submission';
+import { planningFieldError, planningInstant } from './planning-time';
 
-const budapestOffset = new Intl.DateTimeFormat('hu-HU', {
-    timeZone: 'Europe/Budapest',
-    timeZoneName: 'longOffset',
-});
-
-function arrivalWithOffset(value) {
-    const local = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/.exec(value);
-    if (!local) return null;
-
-    const civilTime = Date.parse(local[1] + ':00Z');
-    if (!Number.isFinite(civilTime) || new Date(civilTime).toISOString().slice(0, 16) !== local[1]) return null;
-
-    const day = 24 * 60 * 60 * 1000;
-    const offsetAt = milliseconds => budapestOffset.formatToParts(milliseconds)
-        .find(part => part.type === 'timeZoneName').value.replace('GMT', '');
-    // Try both offsets around clock changes. A local time can correspond to zero or two instants.
-    const offsets = [...new Set([offsetAt(civilTime - day), offsetAt(civilTime + day)])];
-    const matchingOffsets = offsets.filter(offset => {
-        const instant = Date.parse(local[1] + ':00' + offset);
-        return Number.isFinite(instant) && offsetAt(instant) === offset;
-    });
-    return matchingOffsets.length === 1 ? local[1] + ':00' + matchingOffsets[0] : null;
-}
+const draftFields = ['product', 'source', 'destination', 'priority', 'shippingPreference', 'arrival', 'arrivalDate',
+    'arrivalDateOnly', 'reason', 'note', 'quantityDraft', 'lastValidQuantity', 'boxMode'];
 
 export default initial => {
     const amount = transferQuantity({ pieces: '', boxCount: '', boxFieldId: 'intent-box-count' });
@@ -41,9 +21,68 @@ export default initial => {
         priority: 'normal',
         shippingPreference: 'groupable',
         arrival: '',
+        arrivalDate: '',
+        arrivalDateOnly: false,
         reason: '',
         note: '',
         submitted: false,
+        pending: null,
+        recoveredIntentId: null,
+        storageUnavailable: false,
+
+        init() {
+            this.restoreSubmission();
+            this.$watch('draftSignature', () => {
+                if (this.pending || this.recoveredIntentId) this.persistSubmission();
+            });
+        },
+
+        get draftData() { return Object.fromEntries(draftFields.map(field => [field, this[field]])); },
+        get draftSignature() { return JSON.stringify(this.draftData); },
+        get visibleArrival() { return this.arrivalDateOnly ? this.arrivalDate : this.arrival; },
+        get uncertain() { return Boolean(this.pending) && !this.submitting; },
+
+        restoreSubmission() {
+            if (this.submitting || this.storageUnavailable) return;
+            try {
+                const stored = JSON.parse(sessionStorage.getItem(initial.recoveryKey));
+                if (!stored?.pending && !stored?.recoveredIntentId) {
+                    if (this.pending || this.recoveredIntentId) window.location.reload();
+                    return;
+                }
+                for (const field of draftFields) {
+                    if (typeof stored.draft?.[field] === typeof this[field]) this[field] = stored.draft[field];
+                }
+                this.pending = stored.pending ?? null;
+                this.recoveredIntentId = stored.recoveredIntentId ?? null;
+                this.submitted = this.recoveredIntentId !== null;
+            } catch {
+                this.storageUnavailable = true;
+            }
+        },
+
+        persistSubmission() {
+            try {
+                if (this.pending || this.recoveredIntentId) {
+                    sessionStorage.setItem(initial.recoveryKey, JSON.stringify({
+                        pending: this.pending, recoveredIntentId: this.recoveredIntentId, draft: this.draftData,
+                    }));
+                } else {
+                    sessionStorage.removeItem(initial.recoveryKey);
+                }
+            } catch {
+                this.storageUnavailable = true;
+            }
+        },
+
+        intentDetailUrl(id) { return this.detailUrl.replace('__intent__', String(id)); },
+
+        startSeparateIntent() {
+            this.recoveredIntentId = null;
+            this.submitted = false;
+            this.resetIntentSubmission();
+            this.persistSubmission();
+        },
 
         get packaging() { return initial.packagings[this.product]; },
         get productName() { return this.productNames[this.product] ?? '–'; },
@@ -81,7 +120,9 @@ export default initial => {
         },
 
         async submitIntent() {
-            if (this.submitting || this.submitted || this.conflict) return;
+            if (this.submitting || this.submitted) return;
+            if (this.pending) return this.completeSubmission(this.pending, true);
+            if (this.conflict) return;
 
             const errors = {};
             if (!this.product) errors.product_id = ['Válassz terméket.'];
@@ -92,12 +133,10 @@ export default initial => {
             }
             if (!this.quantityValid) errors.quantity = [this.quantityInputError || 'Add meg a kért darabszámot.'];
 
-            const arrival = this.arrival ? arrivalWithOffset(this.arrival) : null;
-            if (!this.$refs.arrival.validity.valid) {
-                errors.requested_arrival_at = ['Adj meg érvényes dátumot és időpontot.'];
-            } else if (this.arrival && !arrival) {
-                errors.requested_arrival_at = ['Ez az időpont magyarországi idő szerint nem létezik vagy kétszer fordul elő az óraátállításkor. Válassz másik időpontot.'];
-            }
+            const arrival = this.arrivalDateOnly ? this.arrivalDate || null : planningInstant(this.arrival);
+            const arrivalField = this.arrivalDateOnly ? this.$refs.arrivalDate : this.$refs.arrival;
+            const arrivalError = planningFieldError(arrivalField, this.visibleArrival, arrival);
+            if (arrivalError) errors.requested_arrival_at = [arrivalError];
 
             if (Object.keys(errors).length) {
                 this.clearIntentFeedback();
@@ -107,25 +146,61 @@ export default initial => {
                 return;
             }
 
-            const result = await this.sendIntent(this.endpoint, 'POST', {
-                product_id: this.product,
-                from_warehouse_id: this.source,
-                to_warehouse_id: this.destination,
-                quantity: this.quantity,
-                priority: this.priority,
-                requested_arrival_at: arrival,
-                shipping_preference: this.shippingPreference,
-                reason: this.reason.trim() || null,
-                note: this.note.trim() || null,
-            });
+            this.pending = {
+                key: operationKey(),
+                draftSignature: this.draftSignature,
+                payload: {
+                    product_id: this.product,
+                    from_warehouse_id: this.source,
+                    to_warehouse_id: this.destination,
+                    quantity: this.quantity,
+                    priority: this.priority,
+                    requested_arrival_at: arrival,
+                    shipping_preference: this.shippingPreference,
+                    reason: this.reason.trim() || null,
+                    note: this.note.trim() || null,
+                },
+            };
+            this.persistSubmission();
+            return this.completeSubmission(this.pending, false);
+        },
+
+        async completeSubmission(operation, recovering) {
+            const result = await this.sendIntent(this.endpoint, 'POST', operation.payload, operation.key);
+            const draftChanged = this.draftSignature !== operation.draftSignature;
             if (result) {
+                this.pending = null;
                 this.submitted = true;
-                const destination = new URL(this.detailUrl.replace('__intent__', String(result.intent.id)), window.location.href);
+                if (draftChanged) this.recoveredIntentId = result.intent.id;
+                this.persistSubmission();
+
+                if (draftChanged) {
+                    this.$nextTick(() => this.$refs.recoverySuccess?.focus());
+                    return;
+                }
+                const destination = new URL(this.intentDetailUrl(result.intent.id), window.location.href);
                 destination.searchParams.set('submitted', '1');
                 window.location.replace(destination);
-            } else {
-                this.$nextTick(() => this.$refs.errorNotice?.focus());
+                return;
             }
+
+            const validationRejected = this.submissionStatus === 422 && Object.keys(this.fieldErrors).length > 0;
+            const rejected = validationRejected || this.conflict
+                || (!recovering && [401, 403, 404, 419].includes(this.submissionStatus));
+            if (rejected) {
+                this.pending = null;
+                this.persistSubmission();
+                if (recovering && draftChanged && validationRejected) {
+                    const [error] = Object.values(this.fieldErrors).flat();
+                    this.fieldErrors = {};
+                    this.submissionError = 'Az eredeti igény mentése nem történt meg. ' + error;
+                }
+                this.$nextTick(() => this.$refs.errorNotice?.focus());
+                return;
+            }
+
+            this.persistSubmission();
+            this.$nextTick(() => this.$refs.recoveryNotice?.focus());
         },
     }));
 };

@@ -51,8 +51,26 @@ test('warehouse tasks have their own active navigation and accessible tabs at ea
     await expect(page).toHaveURL(url => url.pathname === work + '/betarolas'
         && url.searchParams.get('origin') === 'manual' && url.searchParams.get('sort_by') === 'received_at');
     await page.goto('/shipments');
-    await expect(transfers.getByRole('link')).toHaveText(['Igények', 'Fuvarok és szállítmányok', 'Járművek']);
+    const transferTabs = page.locator('[data-app-topbar]').getByRole('navigation', { name: 'Átmozgatások modul' });
+    await expect(transfers).toHaveCount(1);
+    await expect(transferTabs.getByRole('link')).toHaveCount(3);
+    await expect(transferTabs.getByRole('link', { name: 'Fuvarok és szállítmányok' })).toHaveAttribute('aria-current', 'page');
     await expect(tabs).toHaveCount(0);
+
+    for (const width of [320, 375, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 800 });
+        await expect(transferTabs).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    }
+    await transferTabs.getByRole('link', { name: 'Járművek' }).press('Enter');
+    await expect(page).toHaveURL('/atmozgatasok/jarmuvek');
+    await expect(transferTabs.getByRole('link', { name: 'Járművek' })).toHaveAttribute('aria-current', 'page');
+
+    await page.goto('/shipments/create');
+    await expect(transferTabs.getByRole('link', { name: 'Fuvarok és szállítmányok' })).toHaveAttribute('aria-current', 'page');
+    await page.goto('/atmozgatasok/uj-igeny');
+    await expect(transferTabs.getByRole('link', { name: 'Igények' })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('main').getByRole('navigation', { name: 'Átmozgatások modul' })).toHaveCount(0);
 });
 
 test('desktop sidebar groups links, marks the current section and remembers hiding across pages', async ({ page }) => {
@@ -188,7 +206,8 @@ test('related pages highlight their section, show one page heading and retain co
     ]) {
         await page.goto(path);
         await expect(page.getByRole('navigation', { name: 'Főmenü', exact: true }).locator('[aria-current="page"]')).toHaveText(section);
-        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(path.startsWith('/warehouses/') || path === '/quality-returns' ? 1 : 0);
+        const modulePages = path.startsWith('/warehouses/') || path === '/quality-returns' || path === '/shipments/create';
+        await expect(page.locator('[data-app-topbar] nav')).toHaveCount(modulePages ? 1 : 0);
         await expect(page.locator('main h1')).toHaveCount(1); await expect(page).toHaveTitle(new RegExp(label));
         if (back) {
             const href = await page.locator('main').getByRole('link', { name: back, exact: true }).first().getAttribute('href');

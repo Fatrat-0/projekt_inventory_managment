@@ -3,11 +3,24 @@
 namespace App\Services;
 
 use App\Models\{Shipment, ShipmentIntentAssignment, TransferIntent, TransferStockReservation, WarehouseTransferAllocation, WarehouseTransferTask};
+use App\Support\PlanningTime;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
 
 class ShipmentPlanReadiness
 {
     public function __construct(private WarehouseStockAvailability $availability, private ShipmentCargoPreparation $cargo) {}
+
+    public static function departureBlocker(Shipment $shipment, ?CarbonInterface $at = null): ?array
+    {
+        $at ??= now();
+
+        return PlanningTime::isPast($shipment->planned_departure_at, $at) ? [
+            'code' => 'planned_departure_expired',
+            'minimum_planned_departure_at' => PlanningTime::localMinimum($at),
+            'message' => 'A tervezett indulási időpont már elmúlt. A feladás előtt frissítsd az indulási tervet.',
+        ] : null;
+    }
 
     /** Advisory assessment for the plan snapshot. Dispatch repeats it under write locks. */
     public function assess(Shipment $shipment, Collection $assignments): array
@@ -56,7 +69,8 @@ class ShipmentPlanReadiness
         $itemStockBlockers = $rows->flatMap(fn (array $row) => collect($row['blockers'])->map(fn (array $blocker) => $blocker + [
             'transfer_intent_id' => $row['transfer_intent_id'], 'reference' => $row['reference'],
         ]))->all();
-        $prerequisitesMet = $summary['stock_ready'] && $transportReady && $versionBlockers === [];
+        $departureBlocker = self::departureBlocker($shipment);
+        $prerequisitesMet = $summary['stock_ready'] && $transportReady && $versionBlockers === [] && $departureBlocker === null;
 
         $readiness = $summary + [
             'shipment_id' => $shipment->id,
@@ -76,7 +90,8 @@ class ShipmentPlanReadiness
             'dispatch_status' => 'planned',
             'dispatch_prerequisites_met' => $prerequisitesMet,
             'can_dispatch' => $prerequisitesMet,
-            'dispatch_blockers' => [...$versionBlockers, ...$stockBlockers, ...$itemStockBlockers, ...$cargo['cargo_blockers'], ...$cargo['vehicle_blockers']],
+            'dispatch_blockers' => [...($departureBlocker ? [$departureBlocker] : []), ...$versionBlockers, ...$stockBlockers,
+                ...$itemStockBlockers, ...$cargo['cargo_blockers'], ...$cargo['vehicle_blockers']],
             'intents' => $rows,
         ];
 

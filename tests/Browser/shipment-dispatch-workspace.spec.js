@@ -3,6 +3,7 @@ import { seedUsableStock } from './movement-fixtures';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { setBrowserServerTime } from './browser-server-time';
 import { plan, shipmentCommand as command } from './shipment-fixtures';
 
 const admin = 'warehouse-admin@example.test';
@@ -188,6 +189,216 @@ function readDatabase(shipment, origin, firstStop, secondStop, firstProduct, sec
     const raw = execFileSync('php', ['tests/Browser/read-shipment-dispatch.php', ...ids.map(String)], { encoding: 'utf8' });
     return JSON.parse(raw);
 }
+
+async function timedDispatchPlan(page, { twoStops = false } = {}) {
+    await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
+    const origin = { id: 1 };
+    const destination = { id: 2 };
+    const token = randomUUID().slice(0, 8);
+    const goods = await product(page, 'Időpont-próba', 'FUV-IDOPONT');
+    await receive(page, goods, origin, 20);
+    const request = await demand(page, origin, destination, goods, 10);
+    await stage(page, request);
+    const requests = [request];
+    if (twoStops) {
+        const second = await demand(page, origin, { id: 3 }, goods, 1);
+        await stage(page, second);
+        requests.push(second);
+    }
+    const shipment = await plan(page, 'Ellenőrzött indulás ' + token, origin.id, requests.map(row => row.id));
+    const base = api(shipment.id);
+    const version = async () => (await json(page, base)).shipment.version;
+    const update = async (path, fields) => (await (await command(page, 'PATCH', base + path, {
+        operation_key: randomUUID(), version: await version(), ...fields,
+    }, 200)).json());
+    const vehicle = await createVehicle(page, 'Indulási időpont-próba', 'DATE-' + token, 100, 2);
+    await update('/vehicle', { vehicle_id: vehicle.id });
+    let basis;
+    for (const assignment of (await json(page, base)).assignments) {
+        const itemCargo = await update('/cargo/items/' + assignment.id, {
+            source: 'manual', confirmed: true, gross_weight_grams: assignment.intent.quantity * 1000,
+        });
+        basis = itemCargo.cargo.basis_revision;
+    }
+    await update('/cargo', { basis_revision: basis, gross_weight_grams: twoStops ? 11000 : 10000, pallet_slots: 0 });
+    await update('/departure', { planned_departure_at: '2026-11-23T15:24:00+01:00' });
+
+    return { shipment, origin, goods, base, update, version };
+}
+
+test('a changed departure and changed stop order block dispatch until saved or discarded', async ({ page }) => {
+    test.setTimeout(90_000);
+    const { shipment, base, update } = await timedDispatchPlan(page, { twoStops: true });
+    await page.goto(pageUrl(shipment.id));
+    const launch = action(page, 'Fuvar feladása');
+    const edit = action(page, 'Tervezett indulás módosítása');
+    const field = page.getByLabel('Új tervezett indulás', { exact: true });
+    const save = action(page, 'Indulás mentése');
+    const handoff = dialog(page, 'Fuvar feladásának megerősítése');
+    await expect(launch).toBeEnabled();
+    await edit.click();
+    await field.fill('2026-11-23T16:30');
+    await expect(launch).toBeDisabled();
+    await expect(checklist(page)).toContainText('A tervezett indulás módosítása még nincs mentve.');
+    await expect(handoff).toBeHidden();
+    await page.locator('[data-plan-stop]').first().getByRole('button', { name: /^Hátrébb/ }).click();
+    await expect(checklist(page)).toContainText('a megállók módosított sorrendjét');
+    await action(page, 'Módosítás elvetése').click();
+    await expect(launch).toBeDisabled();
+    await action(page.locator('form').filter({ has: field }), 'Mégse').click();
+    await launch.click();
+    await expect(handoff).toContainText('2026. 11. 23. 15:24');
+    await action(handoff, 'Mégse').click();
+
+    await edit.click();
+    await field.fill('2026-11-23T16:30');
+    await update('/departure', { planned_departure_at: '2026-11-23T15:25:00+01:00' });
+    await save.click();
+    await expect(page.getByRole('alert').filter({ hasText: 'A fuvarterv verziója megváltozott' })).toBeVisible();
+    await expect(field).toHaveValue('2026-11-23T16:30');
+    await expect(launch).toBeDisabled();
+    await action(page, 'Fuvarterv frissítése').click();
+    await expect(save).toBeEnabled();
+    await expect(field).toHaveValue('2026-11-23T16:30');
+
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    let onCommit;
+    const committed = new Promise(resolve => { onCommit = resolve; });
+    await page.route('**' + base + '/departure', async route => {
+        const response = await route.fetch();
+        onCommit(response.status());
+        await held;
+        return route.fulfill({ response });
+    }, { times: 1 });
+    await save.click();
+    try {
+        expect(await committed).toBe(200);
+        await expect(launch).toBeDisabled();
+        await expect(field).toBeDisabled();
+        await expect(handoff).toBeHidden();
+    } finally {
+        release();
+    }
+    await expect(launch).toBeEnabled();
+    await launch.click();
+    await expect(handoff).toContainText('2026. 11. 23. 16:30');
+    await handoff.getByRole('checkbox', { name: confirmText }).check();
+    await action(handoff, 'Feladás véglegesítése').click();
+    await expect(handoff).toBeHidden();
+    const record = await json(page, base + '/dispatch');
+    expect(record.dispatch.dispatched_at).toBe('2026-11-23T14:23:37.000000Z');
+    expect(record.dispatch.snapshot.shipment.planned_departure_at).toBe('2026-11-23T15:30:00.000000Z');
+});
+
+test('lost departure save blocks dispatch until the original edit is recovered, and cancelling a later edit uses the saved time', async ({ page }) => {
+    test.setTimeout(75_000);
+    const { shipment, base, version } = await timedDispatchPlan(page);
+    await page.goto(pageUrl(shipment.id));
+    const launch = action(page, 'Fuvar feladása');
+    const edit = action(page, 'Tervezett indulás módosítása');
+    const field = page.getByLabel('Új tervezett indulás', { exact: true });
+    const handoff = dialog(page, 'Fuvar feladásának megerősítése');
+    await expect(launch).toBeEnabled();
+    const initialVersion = await version();
+    const requests = [];
+    await page.route('**' + base + '/departure', async route => {
+        if (route.request().method() !== 'PATCH') return route.continue();
+        requests.push(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        if (requests.length === 1) return route.abort('failed');
+        return route.fulfill({ response });
+    });
+    await edit.click();
+    await field.fill('2026-11-23T16:30');
+    await action(page, 'Indulás mentése').click();
+    const retry = action(page, 'Mentés újrapróbálása');
+    await expect(retry).toBeEnabled();
+    await expect(launch).toBeDisabled();
+    await expect(field).toHaveValue('2026-11-23T16:30');
+    await expect(field).toBeDisabled();
+    await retry.click();
+    await expect(launch).toBeEnabled();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(await version()).toBe(initialVersion + 1);
+
+    await edit.click();
+    await field.fill('2026-11-23T16:45');
+    await expect(launch).toBeDisabled();
+    await action(page.locator('form').filter({ has: field }), 'Mégse').click();
+    await launch.click();
+    await expect(handoff).toContainText('2026. 11. 23. 16:30');
+    await handoff.getByRole('checkbox', { name: confirmText }).check();
+    await action(handoff, 'Feladás véglegesítése').click();
+    await expect(handoff).toBeHidden();
+    expect((await json(page, base + '/dispatch')).dispatch.snapshot.shipment.planned_departure_at).toBe('2026-11-23T15:30:00.000000Z');
+});
+
+test('dispatch checks the server clock on preview and confirmation and can recover from an expired plan', async ({ page }) => {
+    test.setTimeout(75_000);
+    const { shipment, origin, goods, base } = await timedDispatchPlan(page);
+
+    await page.setViewportSize({ width: 375, height: 820 });
+    await page.goto(pageUrl(shipment.id));
+    const launch = action(page, 'Fuvar feladása');
+    const handoff = dialog(page, 'Fuvar feladásának megerősítése');
+    const edit = scope => action(scope, 'Tervezett indulás módosítása');
+    const time = page.getByLabel('Új tervezett indulás', { exact: true });
+    const expired = 'A tervezett indulási időpont már elmúlt. A feladás előtt frissítsd az indulási tervet.';
+    const saveTime = async value => {
+        await expect(time).toBeFocused();
+        await time.fill(value);
+        await action(page, 'Indulás mentése').click();
+        await expect(time).toBeHidden();
+        await expect(launch).toBeEnabled();
+    };
+
+    await expect(launch).toBeEnabled();
+    await setBrowserServerTime(page, '2026-11-23T14:25:00Z');
+    await launch.click();
+    await expect(checklist(page)).toContainText(expired);
+    await expect(handoff).toBeHidden();
+    await expect(launch).toBeDisabled();
+    await edit(page).press('Enter');
+    await expect(time).toHaveAttribute('min', '2026-11-23T15:25');
+    await expect(time).toHaveValue('2026-11-23T15:24');
+    await saveTime('2026-11-23T15:25');
+
+    await launch.click();
+    await expect(handoff).toBeVisible();
+    await handoff.getByRole('checkbox', { name: confirmText }).check();
+    await setBrowserServerTime(page, '2026-11-23T14:26:31Z');
+    await action(handoff, 'Feladás véglegesítése').click();
+    await expect(handoff.getByRole('alert')).toHaveText(expired);
+    expect(await balance(page, origin, goods)).toMatchObject({ physical_quantity: 20, staged_quantity: 10 });
+    expect((await json(page, base + '/dispatch')).dispatch).toBeNull();
+
+    await edit(handoff).click();
+    await expect(time).toHaveAttribute('min', '2026-11-23T15:26');
+    await saveTime('2026-11-23T15:26');
+    await launch.click();
+    await expect(handoff).toBeVisible();
+    await handoff.getByRole('checkbox', { name: confirmText }).check();
+    const sent = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith(base + '/dispatch'));
+    await action(handoff, 'Feladás véglegesítése').click();
+    const attempt = (await sent).postDataJSON();
+    await expect(handoff).toBeHidden();
+    await expect(page.getByText('A fuvar feladásra került.', { exact: true })).toBeVisible();
+    const recorded = await json(page, base + '/dispatch');
+    expect(recorded.dispatch.dispatched_at).toBe('2026-11-23T14:26:31.000000Z');
+    expect(recorded.transit_items).toHaveLength(1);
+    await setBrowserServerTime(page, '2026-11-23T14:27:31Z');
+    const replay = await command(page, 'POST', base + '/dispatch', attempt, 200);
+    expect((await replay.json()).dispatch).toEqual(recorded.dispatch);
+    await page.reload();
+    await expect(page.getByText('Tényleges feladás', { exact: true })).toBeVisible();
+    await expect(edit(page)).toBeHidden();
+    expect(await json(page, '/movements/stock?warehouse_id=1&product_id=' + goods.id + '&details=1'))
+        .toMatchObject({ physical_quantity: 10, staged_quantity: 0 });
+});
 
 test('three requests on two stops move through the cargo workspace, explicit dispatch and a single booked transit', async ({ page }) => {
     test.setTimeout(180000);

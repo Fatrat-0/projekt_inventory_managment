@@ -36,6 +36,16 @@ class TransferIntentDisplay
         'cancelled' => 'Igény visszavonva',
     ];
 
+    public static function requestedArrival(TransferIntent $intent, bool $compact = false): ?string
+    {
+        $format = $compact ? 'Y.m.d.' : 'Y. m. d.';
+        if ($intent->requested_arrival_date !== null) {
+            return \Carbon\CarbonImmutable::parse($intent->requested_arrival_date, PlanningTime::ZONE)->format($format);
+        }
+
+        return $intent->requested_arrival_at?->timezone(PlanningTime::ZONE)->format($format.' H:i');
+    }
+
     public static function workflow(TransferIntent $intent, User $user, TransferIntentPolicy $policy): array
     {
         $intent->load(['events' => fn ($events) => $events

@@ -67,6 +67,13 @@ export default ({ urls, readJson }) => ({
     },
     async saveVehicleSelection() {
         if (!this.canSaveVehicleSelection) return;
-        await this.saveCommand('selectVehicle', urls.vehicle, 'PATCH', { vehicle_id: this.vehicleSelection }, 'vehiclePicker');
+        const selected = this.vehicles.find(vehicle => vehicle.id === this.vehicleSelection);
+        await this.saveCommand('selectVehicle', urls.vehicle, 'PATCH', {
+            vehicle_id: this.vehicleSelection, vehicle_version: selected?.version ?? null,
+        }, 'vehiclePicker');
+        if (this.fieldErrors.vehicle_id) {
+            this.vehicleSelection = this.currentVehicle?.id ?? null;
+            await this.loadVehicles();
+        }
     },
 });

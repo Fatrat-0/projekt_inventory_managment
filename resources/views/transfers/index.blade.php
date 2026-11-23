@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     <div class="app-page py-4 space-y-4" data-listing-page="transfers" :data-listing-view="viewMode" @resize.window.debounce.100ms="closeMenus()" x-data="listingView('transfers', { filtersOpen: {{ count($labels) ? 'true' : 'false' }} })">
         <x-page-toolbar title="Átmozgatások" :count="$transfers->total()" unit="tétel">
             @can('createAnyPlan', \App\Models\Shipment::class)
@@ -7,7 +7,6 @@
             <a href="{{ route('transfers.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">+ Új átmozgatás</a>
             <x-listing-view-toggle />
         </x-page-toolbar>
-        @include('transfers.tabs')
         <x-operation-feedback />
         <x-operation-status-filters :statuses="\App\Models\InventoryTransfer::STATUSES" :counts="$statusCounts" :filters="$filters" route="transfers.index" />
         <form id="transfer-filters" x-ref="filtersForm" method="GET" action="{{ route('transfers.index') }}" class="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
@@ -44,4 +43,4 @@
         @include('transfers.cards')
         <div class="flex flex-wrap gap-3 justify-between items-center text-sm text-gray-600"><div class="flex flex-wrap gap-3 items-center"><span>{{ $transfers->firstItem() ?? 0 }}–{{ $transfers->lastItem() ?? 0 }} / {{ $transfers->total() }} találat</span><label for="transfer-per-page" class="sr-only">Találatok oldalanként</label><select id="transfer-per-page" name="per_page" form="transfer-filters" onchange="this.form.requestSubmit()" class="rounded-md border-gray-300 text-sm">@foreach([10,25,50,100] as $size)<option value="{{ $size }}" @selected($filters['per_page'] === $size)>{{ $size }} / oldal</option>@endforeach</select></div>{{ $transfers->links('pagination.inventory') }}</div>
     </div>
-</x-app-layout>
+</x-transfer-layout>

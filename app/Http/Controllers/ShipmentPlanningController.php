@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\{Shipment, TransferIntent, Warehouse};
 use App\Policies\ShipmentPolicy;
 use App\Services\{ShipmentCargoPreparation, ShipmentDispatchBlocked, ShipmentDispatchService, ShipmentPlanningService, ShipmentPlanReader, ShipmentPlanReadiness};
+use App\Support\PlanningTime;
 use Closure;
 use Illuminate\Http\{JsonResponse, Request};
 use Illuminate\Support\Facades\{DB, Gate, Validator};
@@ -48,6 +49,11 @@ class ShipmentPlanningController extends Controller
         ]);
     }
 
+    public function updateDeparture(Request $request, Shipment $shipment, ShipmentPlanningService $service): JsonResponse
+    {
+        return $this->response($service->updateDeparture($request->user(), $shipment, $request->all()));
+    }
+
     public function attach(Request $request, Shipment $shipment, ShipmentPlanningService $service): JsonResponse
     {
         return $this->response($service->attach($request->user(), $shipment, $request->all()));
@@ -86,6 +92,7 @@ class ShipmentPlanningController extends Controller
         return $this->read($shipment, function (Shipment $current) use ($readiness) {
             $result = $readiness->assess($current,
                 $current->intentAssignments()->active()->with(['intent', 'stop:id,warehouse_id,received_at'])->orderBy('id')->get());
+            $result['minimum_planned_departure_at'] = PlanningTime::localMinimum();
             $result['has_dispatch_permission'] = Gate::allows('dispatchPlan', $current);
             $result['can_dispatch'] = $result['can_dispatch'] && $result['has_dispatch_permission'];
             // Plan viewers have the same origin access as picking task viewers.

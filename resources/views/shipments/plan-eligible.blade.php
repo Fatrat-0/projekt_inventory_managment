@@ -32,7 +32,7 @@
                             <span class="mt-1 block text-xs text-gray-700"><span>{{ $shipment->origin->warehouse_name }}</span> <span aria-hidden="true">→</span><span class="sr-only">Célraktár</span> <strong x-text="row.to_warehouse_name"></strong></span>
                             <span class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-600">
                                 <span><span x-text="@js($priorities)[row.priority] || 'Normál'"></span> prioritás</span>
-                                <span x-show="row.requested_arrival_at">Kért érkezés <span class="font-medium text-gray-900" x-text="formatDate(row.requested_arrival_at)"></span></span>
+                                <span x-show="row.requested_arrival_at">Kért érkezés <span class="font-medium text-gray-900" x-text="formatRequestedArrival(row)"></span></span>
                                 <span x-show="row.shipping_preference === 'dedicated_requested'" class="rounded-md bg-amber-50 px-1.5 py-0.5 font-medium text-amber-950">Külön fuvar kérése</span>
                                 <span x-show="row.shipping_preference === 'groupable'">Összevonható</span>
                             </span>

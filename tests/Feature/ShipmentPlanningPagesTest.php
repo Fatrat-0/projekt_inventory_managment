@@ -12,6 +12,12 @@ class ShipmentPlanningPagesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-23T14:23:37Z'));
+    }
+
     public function test_list_and_create_pages_scope_warehouse_and_shipment_access_per_policy(): void
     {
         $source = Warehouse::create(['warehouse_name' => 'Forrásraktár']);

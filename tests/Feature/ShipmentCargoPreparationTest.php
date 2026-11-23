@@ -234,6 +234,13 @@ class ShipmentCargoPreparationTest extends TestCase
             $prepared['capacity']['pallet_slots'],
         );
         $this->assertSame(975000, $prepared['confirmed_item_weight_grams']);
+        // Both individual stops' cargo is below 700 kg, but all cargo is on board at departure.
+        $this->patchJson(route('shipment-plans.vehicles.update', $vehicle['id']), $this->command($vehicle['version']) + [
+            'payload_capacity_kg' => 700, 'pallet_slots_capacity' => 3,
+        ])->assertOk();
+        $this->readiness($plan)->assertJsonPath('can_dispatch', false)->assertJsonPath('cargo_ready', true)
+            ->assertJsonFragment(['code' => 'vehicle_weight_capacity_exceeded'])
+            ->assertJsonFragment(['code' => 'vehicle_pallet_slots_capacity_exceeded']);
 
         $this->postJson(route('shipments.start', $plan), ['version' => $plan->refresh()->version])->assertConflict();
         $this->assertSame('draft', $plan->refresh()->status);

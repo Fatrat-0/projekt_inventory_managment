@@ -42,6 +42,10 @@ class ShipmentPlanReader
     public function plans(Builder $query, array $filters): LengthAwarePaginator
     {
         $filters = ListingSort::normalize($filters, self::SORTS, 'created_at');
+        $dispatchName = $this->dispatchVehicleColumn($query, 'name');
+        $dispatchPlate = $this->dispatchVehicleColumn($query, 'registration_number');
+        $vehicleName = "COALESCE($dispatchName, (SELECT name FROM vehicles WHERE vehicles.id = shipments.vehicle_id), NULLIF(shipments.vehicle_label, ''))";
+        $vehiclePlate = "(CASE WHEN $dispatchName IS NOT NULL THEN $dispatchPlate ELSE (SELECT registration_number FROM vehicles WHERE vehicles.id = shipments.vehicle_id) END)";
         if (isset($filters['origin_warehouse_id'])) {
             $query->where('origin_warehouse_id', $filters['origin_warehouse_id']);
         }
@@ -51,8 +55,10 @@ class ShipmentPlanReader
         if (isset($filters['search'])) {
             $pattern = $this->pattern($filters['search']);
             $shipmentId = ListingNumber::id($filters['search'], 'SZALL');
-            $query->where(function (Builder $match) use ($pattern, $shipmentId) {
-                $match->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])->orWhereRaw("vehicle_label LIKE ? ESCAPE '!'", [$pattern])
+            $query->where(function (Builder $match) use ($pattern, $shipmentId, $vehicleName, $vehiclePlate) {
+                $match->whereRaw("reference LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereRaw("$vehicleName LIKE ? ESCAPE '!'", [$pattern])->orWhereRaw("$vehiclePlate LIKE ? ESCAPE '!'", [$pattern])
+                    ->orWhereRaw("shipments.vehicle_label LIKE ? ESCAPE '!'", [$pattern])
                     ->orWhereHas('origin', fn (Builder $warehouse) => $warehouse->whereRaw("warehouse_name LIKE ? ESCAPE '!'", [$pattern]));
                 if ($shipmentId !== null) $match->orWhere('shipments.id', $shipmentId);
             });
@@ -64,7 +70,10 @@ class ShipmentPlanReader
             if (in_array($sort, ['planned_departure_at', 'created_at'], true)) {
                 $query->orderByRaw('shipments.'.$sort.' IS NULL');
             }
-            if ($sort === 'vehicle_label') $query->orderByRaw("vehicle_label IS NULL OR vehicle_label = ''");
+            if ($sort === 'vehicle_label') {
+                $query->orderByRaw("$vehicleName IS NULL")->orderByRaw("$vehicleName $direction");
+                continue;
+            }
             $column = $sort === 'origin_warehouse'
                 ? Warehouse::select('warehouse_name')->whereColumn('warehouses.warehouse_id', 'shipments.origin_warehouse_id')
                 : 'shipments.'.$sort;
@@ -76,16 +85,30 @@ class ShipmentPlanReader
             }
         }
         $query->orderBy('shipments.id', $filters['sort_dir']);
-        $plans = $query->with('origin:warehouse_id,warehouse_name')->withCount([
+        $plans = $query->select('shipments.*')->selectRaw("$vehicleName AS display_vehicle_name, $vehiclePlate AS display_vehicle_plate")
+            ->with('origin:warehouse_id,warehouse_name')->withCount([
             'intentAssignments as assignment_count' => fn (Builder $assignments) => $assignments->active(),
             'stops as stop_count' => fn (Builder $stops) => $stops->whereHas('intentAssignments', fn (Builder $assignments) => $assignments->active()),
         ])->paginate($filters['per_page'] ?? 25, page: $filters['page'] ?? 1)->appends($filters);
         $summaries = $this->readiness->summaries($plans->getCollection());
 
         return $plans->through(fn (Shipment $shipment) => $this->shipment($shipment) + [
+            'vehicle_display' => $shipment->display_vehicle_name === null ? null
+                : $shipment->display_vehicle_name.($shipment->display_vehicle_plate ? ' · '.$shipment->display_vehicle_plate : ''),
             'assignment_count' => $shipment->assignment_count,
             'stop_count' => $shipment->stop_count,
         ] + $summaries[$shipment->id]);
+    }
+
+    private function dispatchVehicleColumn(Builder $query, string $field): string
+    {
+        $json = $query->getQuery()->getGrammar()->wrap('snapshot->vehicle->'.$field);
+        // JSON null is a string after JSON_UNQUOTE on MySQL. SQLite returns SQL NULL.
+        if ($field === 'registration_number' && $query->getConnection()->getDriverName() === 'mysql') {
+            $json = "CASE WHEN JSON_TYPE(JSON_EXTRACT(snapshot, '$.vehicle.registration_number')) = 'NULL' THEN NULL ELSE $json END";
+        }
+
+        return "(SELECT $json FROM shipment_dispatches WHERE shipment_dispatches.shipment_id = shipments.id)";
     }
 
     public function eligible(int $origin, array $filters): LengthAwarePaginator
@@ -215,6 +238,7 @@ class ShipmentPlanReader
             'priority' => $intent->priority,
             'shipping_preference' => $intent->shipping_preference,
             'requested_arrival_at' => $intent->requested_arrival_at?->toISOString(),
+            'requested_arrival_date' => $intent->requested_arrival_date,
             'status' => $intent->status,
         ];
     }

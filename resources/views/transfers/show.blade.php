@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     <div class="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-4">
         <a href="{{ $returnUrl }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a>
         <x-operation-feedback />
@@ -52,4 +52,4 @@
             <a href="{{ route('export.transfer', $transfer) }}" class="inline-block text-sm text-indigo-600 underline">Szállítólevél letöltése (PDF)</a>
         </div>
     </div>
-</x-app-layout>
+</x-transfer-layout>

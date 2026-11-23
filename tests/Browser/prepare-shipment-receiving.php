@@ -109,7 +109,7 @@ $fixture = DB::transaction(function () use ($withOpenPicking) {
     $planned = $planning->create($admin, [
         'operation_key' => (string) Str::uuid(), 'origin_warehouse_id' => $source->getKey(),
         'reference' => 'Áruátvételi bemutatófuvar · '.$token, 'intent_ids' => array_keys($weights),
-        'planned_departure_at' => now()->subMinutes(10)->toIso8601String(),
+        'planned_departure_at' => now()->addMinutes(15)->startOfMinute()->toIso8601String(),
     ]);
     $shipment = Shipment::findOrFail($planned['shipment']['id']);
     $planning->selectVehicle($admin, $shipment, receivingCommand($shipment) + ['vehicle_id' => $vehicle->id]);

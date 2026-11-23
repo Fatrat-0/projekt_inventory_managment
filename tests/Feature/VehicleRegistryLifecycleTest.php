@@ -150,6 +150,23 @@ class VehicleRegistryLifecycleTest extends TestCase
         $this->assertDatabaseCount('inventory_movements', $movementCount);
     }
 
+    public function test_the_append_only_registry_protects_even_an_unused_vehicle_from_hard_deletion(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $saved = $this->actingAs($admin)->postJson(route('shipment-plans.vehicles.store'), [
+            'operation_key' => (string) Str::uuid(), 'name' => 'Még nem használt jármű',
+        ])->assertCreated()->json('vehicle');
+        $vehicle = Vehicle::findOrFail($saved['id']);
+        $this->assertDatabaseMissing('shipments', ['vehicle_id' => $vehicle->id]);
+        $this->assertThrows(fn () => $vehicle->delete(), \Illuminate\Database\QueryException::class);
+        $this->deleteJson(route('shipment-plans.vehicles.update', $vehicle))->assertStatus(405);
+        $this->patchJson(route('shipment-plans.vehicles.update', $vehicle), $this->command($vehicle->version) + [
+            'active' => false,
+        ])->assertOk();
+        $this->assertDatabaseHas('vehicles', ['id' => $vehicle->id, 'active' => false]);
+        $this->assertSame(2, $vehicle->operations()->count());
+    }
+
     public function test_vehicle_tab_is_active_for_authorized_viewers_and_only_admin_can_manage(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
@@ -165,7 +182,7 @@ class VehicleRegistryLifecycleTest extends TestCase
 
         $operatorPage = $this->actingAs($operator)->get($url)->assertOk()
             ->assertViewHas('canManageVehicles', false)->assertSee('Járművek')->assertDontSee('Új jármű');
-        $this->assertMatchesRegularExpression('~href="'.preg_quote($url, '~').'"\s+aria-current="page"~', $operatorPage->getContent());
+        $this->assertMatchesRegularExpression('~href="'.preg_quote($url, '~').'"[^>]*\baria-current="page"~', $operatorPage->getContent());
 
         $this->actingAs($admin)->get($url)->assertOk()->assertViewHas('canManageVehicles', true)
             ->assertSeeInOrder(['Igények', 'Fuvarok és szállítmányok', 'Járművek'])

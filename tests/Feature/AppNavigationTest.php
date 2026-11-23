@@ -82,8 +82,18 @@ class AppNavigationTest extends TestCase
         $this->assertCount($active ? 1 : 0, $selected);
         if ($active) $this->assertSame(route($active), $selected->item(0)->getAttribute('href'));
         $topbarNavigation = "//header[@data-app-topbar]//nav";
-        $hasTopbarNavigation = $active === 'warehouse-tasks.index' || in_array($path, ['/quality-returns', '/movements/create'], true);
+        $transferModule = $active === 'transfer-intent-pages.index';
+        $hasTopbarNavigation = $transferModule || $active === 'warehouse-tasks.index'
+            || in_array($path, ['/quality-returns', '/movements/create'], true);
         $this->assertCount($hasTopbarNavigation ? 1 : 0, $xpath->query($topbarNavigation));
+        if ($transferModule) {
+            $tabs = $topbarNavigation."[@aria-label='Átmozgatások modul']";
+            $this->assertCount(1, $xpath->query($tabs));
+            $current = $xpath->query($tabs."//a[@aria-current='page']");
+            $this->assertCount(1, $current);
+            $route = str_starts_with($path, '/shipments') ? 'shipments.index' : 'transfer-intent-pages.index';
+            $this->assertSame(route($route), $current->item(0)->getAttribute('href'));
+        }
         if ($path === '/quality-returns') {
             $current = $xpath->query($topbarNavigation."//a[@aria-current='page']");
             $this->assertCount(1, $current);

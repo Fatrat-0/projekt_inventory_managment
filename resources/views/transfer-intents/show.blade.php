@@ -66,10 +66,10 @@
             ],
         ],
     ];
-    $requestedArrival = $intent->requested_arrival_at?->timezone('Europe/Budapest')->format('Y. m. d. H:i');
+    $requestedArrival = TransferIntentDisplay::requestedArrival($intent);
 @endphp
 
-<x-app-layout>
+<x-transfer-layout>
     <div class="app-page mx-auto max-w-6xl space-y-4 py-4 [&_h1]:break-all [&_h1]:font-mono [&_h1]:text-base sm:[&_h1]:text-xl"
          x-data="transferIntentDecision(@js($decisionOptions))">
         <a href="{{ route('transfer-intent-pages.index') }}" class="inline-flex min-h-9 items-center text-sm font-medium text-indigo-700 hover:underline">← Átmozgatási igények</a>
@@ -226,4 +226,4 @@
             </form>
         </dialog>
     </div>
-</x-app-layout>
+</x-transfer-layout>

@@ -1,6 +1,7 @@
-@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null, 'movementPartner' => false, 'availableValues' => null, 'itemsSource' => null, 'modelValue' => null, 'maxResults' => null, 'errorActive' => null, 'validateSelection' => true, 'detailsSource' => null, 'emptyMessage' => null, 'searchEvent' => null])
+@props(['items', 'id', 'name', 'value' => '', 'form' => null, 'required' => false, 'placeholder' => 'Keresés…', 'eventName' => 'item-selected', 'clearLabel' => null, 'resultsLabel' => null, 'invalidValueLabel' => null, 'describedBy' => null, 'movementPartner' => false, 'availableValues' => null, 'itemsSource' => null, 'modelValue' => null, 'maxResults' => null, 'errorActive' => null, 'validateSelection' => true, 'detailsSource' => null, 'emptyMessage' => null, 'searchEvent' => null, 'clientError' => null])
 @php
     $hasError = $name && $errors->has($name);
+    $dynamicError = $clientError ?? ($hasError ? $errorActive : null);
     $description = trim(($describedBy ?? '').' '.($hasError ? $id.'-error' : ''));
     $selectedValue = is_scalar($value) ? (string)$value : '';
     $selected = collect($items)->first(fn($item) => (string)$item['value'] === $selectedValue);
@@ -22,14 +23,14 @@
             x-model="query" value="{{ $selected['label'] ?? '' }}" @input="edit()" @focus="open = true" @click="open = true"
             @keydown.arrow-down.prevent="move(1)" @keydown.arrow-up.prevent="move(-1)" @keydown.enter="enter($event)" @keydown.escape.stop.prevent="open = false; active = -1" @keydown.tab="open = false"
             @required($required) @if($form) form="{{ $form }}" @endif autocomplete="off" spellcheck="false" placeholder="{{ $placeholder }}"
-            @if($hasError && $errorActive)
-                :aria-invalid="String({{ $errorActive }})" :aria-describedby="{{ $errorActive }} ? @js($description) : @js($describedBy)"
-                :class="{{ $errorActive }} ? 'border-red-500' : 'border-gray-300'"
+            @if($dynamicError)
+                :aria-invalid="String({{ $dynamicError }})" :aria-describedby="{{ $dynamicError }} ? @js($description) : @js($describedBy)"
+                :class="{{ $dynamicError }} ? 'border-red-500' : 'border-gray-300'"
             @else
                 aria-invalid="{{ $hasError ? 'true' : 'false' }}" @if($description) aria-describedby="{{ $description }}" @endif
             @endif
-            class="w-full rounded-md pr-10 text-sm focus:border-indigo-500 focus:ring-indigo-500 {{ $hasError && $errorActive ? '' : ($hasError ? 'border-red-500' : 'border-gray-300') }}">
-        <button type="button" x-show="query" style="display:none;" @click="clear()" aria-label="{{ $clearLabel ?? ($name === 'product_id' ? 'Termék törlése a mezőből' : 'Raktár törlése a mezőből') }}" class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-700">×</button>
+            class="w-full rounded-md pr-10 text-sm focus:border-indigo-500 focus:ring-indigo-500 {{ $dynamicError ? '' : ($hasError ? 'border-red-500' : 'border-gray-300') }}">
+        <button type="button" data-autocomplete-clear x-show="query" style="display:none;" @click="clear()" aria-label="{{ $clearLabel ?? ($name === 'product_id' ? 'Termék törlése a mezőből' : 'Raktár törlése a mezőből') }}" class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-700">×</button>
     </div>
     <div x-show="open" style="display:none;" class="absolute left-0 right-0 top-full z-40 mt-1 rounded-md border border-gray-200 bg-white shadow-lg">
         <ul id="{{ $id }}-results" x-ref="list" role="listbox" aria-label="{{ $resultsLabel ?? ($name === 'product_id' ? 'Terméktalálatok' : 'Raktártalálatok') }}" class="max-h-60 overflow-y-auto py-1">

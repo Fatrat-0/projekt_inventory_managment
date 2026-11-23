@@ -1,9 +1,8 @@
-<x-app-layout>
+<x-transfer-layout>
     <div class="app-page min-w-0 space-y-4 py-4 [overflow-wrap:anywhere]">
         <x-page-toolbar title="Fuvaradatlap" :description="$shipment->shipment_number">
             <a href="{{ route('warehouse-receiving-pages.index') }}" class="inline-flex min-h-10 items-center font-medium text-indigo-700 hover:underline">Vissza az átvételi feladatokhoz</a>
         </x-page-toolbar>
-        @include('transfers.tabs')
 
         <header class="min-w-0 rounded-lg border border-gray-200 bg-white p-4">
             <div class="flex flex-wrap items-center gap-2">
@@ -19,5 +18,5 @@
 
         @include('shipments.plan-receiving')
     </div>
-</x-app-layout>
+</x-transfer-layout>
 

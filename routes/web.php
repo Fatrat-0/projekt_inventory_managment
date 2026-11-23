@@ -85,6 +85,7 @@ Route::middleware(['auth'])->group(function () {
             Route::post('/{shipment}/stops/{stop}/receipts', [ShipmentReceivingController::class, 'store'])->whereNumber('stop')->name('stops.receipts.store');
             Route::get('/{shipment}/loading-order', 'loadingOrder')->name('loading-order');
             Route::get('/{shipment}/readiness', 'readiness')->name('readiness');
+            Route::patch('/{shipment}/departure', 'updateDeparture')->name('departure.update');
             Route::get('/{shipment}/cargo', 'cargo')->name('cargo.show');
             Route::patch('/{shipment}/vehicle', 'selectVehicle')->name('vehicle.update');
             Route::patch('/{shipment}/cargo/items/{assignment}', 'saveCargoItem')->whereNumber('assignment')->name('cargo.items.update');

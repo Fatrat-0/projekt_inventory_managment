@@ -13,7 +13,7 @@ class TransferWorkflowOperations
 {
     private const INTENT_FIELDS = [
         'id', 'reference', 'product_id', 'from_warehouse_id', 'to_warehouse_id', 'quantity',
-        'requested_by', 'requested_arrival_at', 'reason', 'note', 'priority', 'shipping_preference',
+        'requested_by', 'requested_arrival_at', 'requested_arrival_date', 'reason', 'note', 'priority', 'shipping_preference',
         'status', 'version', 'created_at', 'updated_at',
     ];
 
@@ -32,7 +32,7 @@ class TransferWorkflowOperations
         'started_at', 'completed_at', 'created_at', 'updated_at',
     ];
 
-    public function run(string $key, string $fingerprint, Closure $operation): array
+    public function run(string $key, string $fingerprint, Closure $operation, ?string $legacyFingerprint = null): array
     {
         try {
             return DB::transaction($operation, 3);
@@ -41,7 +41,7 @@ class TransferWorkflowOperations
             $existing = $this->findEvent($key, true);
             if (!$existing) throw $exception;
 
-            return $this->replay($existing, $fingerprint);
+            return $this->replay($existing, $fingerprint, $legacyFingerprint);
         }
     }
 
@@ -71,10 +71,11 @@ class TransferWorkflowOperations
         return $this->response($event);
     }
 
-    public function replay(TransferWorkflowEvent $event, string $fingerprint): array
+    public function replay(TransferWorkflowEvent $event, string $fingerprint, ?string $legacyFingerprint = null): array
     {
         $originalHash = $event->metadata['request_hash'] ?? null;
-        if (!is_string($originalHash) || !hash_equals($originalHash, $fingerprint)
+        if (!is_string($originalHash)
+            || (!hash_equals($originalHash, $fingerprint) && ($legacyFingerprint === null || !hash_equals($originalHash, $legacyFingerprint)))
             || !is_array($event->metadata['intent_snapshot'] ?? null)) {
             throw new ConflictHttpException('Ez a műveleti azonosító már másik kéréshez tartozik. Az új művelethez használj új azonosítót.');
         }
@@ -94,9 +95,10 @@ class TransferWorkflowOperations
         return hash('sha256', json_encode([$type, (int) $actor->getKey(), $intentId, $payload], JSON_THROW_ON_ERROR));
     }
 
-    public function currentActor(User $actor): User
+    public function currentActor(User $actor, bool $exclusive = false): User
     {
-        $current = User::whereKey($actor->getKey())->sharedLock()->first();
+        $users = User::whereKey($actor->getKey());
+        $current = ($exclusive ? $users->lockForUpdate() : $users->sharedLock())->first();
         abort_unless($current, 403, 'A felhasználói fiók már nem érhető el.');
 
         return $current;

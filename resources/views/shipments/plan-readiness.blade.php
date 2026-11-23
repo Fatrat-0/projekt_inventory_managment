@@ -49,15 +49,20 @@
                 </section>
             </div>
             <div class="space-y-2 pt-3">
+                <p x-show="departureBlocker" role="status" class="rounded-md bg-amber-50 p-2 text-amber-950" x-text="departureBlocker?.message"></p>
                 <p x-show="!readiness.has_dispatch_permission" class="text-xs text-gray-600">A fuvart a forrásraktár felügyelője vagy központi adminisztrátor adhatja fel.</p>
                 <p x-show="readiness.has_dispatch_permission && !readiness.can_dispatch" class="text-xs text-gray-600">A feladáshoz rendezd a fenti teendőket.</p>
-                <p x-show="readiness.can_dispatch && !orderChanged" class="text-xs font-medium text-emerald-800">A feladási előfeltételek teljesültek.</p>
+                <p x-show="readiness.can_dispatch && !orderChanged && !departureChanged" class="text-xs font-medium text-emerald-800">A feladási előfeltételek teljesültek.</p>
                 <p x-show="readiness.can_dispatch && orderChanged" class="text-xs text-amber-900">
                     A feladás előtt mentsd vagy vesd el a megállók módosított sorrendjét.
                     <a href="#plan-order-title" class="font-medium text-indigo-700 underline underline-offset-2">Lerakodási sorrend</a>
                 </p>
+                <p x-show="departureChanged" role="status" class="text-xs text-amber-900">
+                    A tervezett indulás módosítása még nincs mentve. A feladás előtt mentsd vagy vond vissza a változtatást.
+                    <a href="#plan-departure-edit" class="font-medium text-indigo-700 underline underline-offset-2">Tervezett indulás</a>
+                </p>
                 @if($canManage)
-                    <button type="button" x-show="readiness.has_dispatch_permission" @click="openDispatch()" :disabled="!canDispatch" class="{{ $primary }} w-full">Fuvar feladása</button>
+                    <button type="button" x-show="readiness.has_dispatch_permission" @click="openDispatch()" :disabled="!canDispatch" class="{{ $primary }} w-full" x-text="checkingDispatch ? 'Ellenőrzés…' : 'Fuvar feladása'">Fuvar feladása</button>
                 @endif
             </div>
         </div>

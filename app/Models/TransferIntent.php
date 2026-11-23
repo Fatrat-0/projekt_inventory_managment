@@ -14,7 +14,7 @@ class TransferIntent extends Model
 
     protected $fillable = [
         'product_id', 'from_warehouse_id', 'to_warehouse_id', 'quantity', 'requested_by',
-        'requested_arrival_at', 'reason', 'note', 'priority', 'shipping_preference',
+        'requested_arrival_at', 'requested_arrival_date', 'reason', 'note', 'priority', 'shipping_preference',
     ];
 
     protected $attributes = [

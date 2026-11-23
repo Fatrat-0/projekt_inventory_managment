@@ -18,5 +18,6 @@
             </template>
         </tbody>
     </table>
-    <p class="mt-2 text-xs text-gray-600" x-text="readiness?.capacity?.message"></p>
+    <p class="mt-2 text-xs text-gray-600">Minden tétel az induló raktárban kerül a járműre, ezért az induláskori teljes rakomány jelenti a legnagyobb terhelést.</p>
+    <p class="mt-1 text-xs text-gray-600" x-text="readiness?.capacity?.message"></p>
 </section>

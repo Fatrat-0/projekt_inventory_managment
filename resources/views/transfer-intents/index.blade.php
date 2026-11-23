@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $statuses = \App\Support\TransferIntentDisplay::STATUS;
         $statusStyles = \App\Support\TransferIntentDisplay::STATUS_STYLE;
@@ -17,7 +17,6 @@
                 </a>
             @endif
         </x-page-toolbar>
-        @include('transfers.tabs')
 
         <form id="intent-filters" method="GET" action="{{ route('transfer-intent-pages.index') }}" aria-label="Igények szűrése"
             class="relative rounded-lg border border-gray-200 bg-white p-4"
@@ -122,7 +121,7 @@
                             <div role="cell" class="min-w-0 text-xs text-gray-600">
                                 <div><span class="font-medium">Létrehozva</span> {{ $intent->created_at->timezone('Europe/Budapest')->format('Y.m.d. H:i') }}</div>
                                 @if ($intent->requested_arrival_at)
-                                    <div class="mt-1 text-gray-800"><span class="font-medium">Határidő</span> {{ $intent->requested_arrival_at->timezone('Europe/Budapest')->format('Y.m.d. H:i') }}</div>
+                                    <div class="mt-1 text-gray-800"><span class="font-medium">Határidő</span> {{ \App\Support\TransferIntentDisplay::requestedArrival($intent, compact: true) }}</div>
                                 @endif
                             </div>
 
@@ -135,4 +134,4 @@
             <div class="min-w-0">{{ $intents->links('pagination.inventory') }}</div>
         @endif
     </div>
-</x-app-layout>
+</x-transfer-layout>

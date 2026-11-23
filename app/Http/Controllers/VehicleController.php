@@ -23,7 +23,7 @@ class VehicleController extends Controller
         Gate::authorize('viewAnyPlan', Shipment::class);
 
         $vehicles = Vehicle::query()
-            ->when($request->user()->role !== 'admin', fn ($query) => $query->where('active', true))
+            ->when($request->user()->role !== 'admin' || $request->boolean('active_only'), fn ($query) => $query->where('active', true))
             ->orderBy('name')->orderBy('id')->get()->map(fn (Vehicle $vehicle) => $vehicle->registrySnapshot());
 
         return $this->response(['data' => $vehicles]);

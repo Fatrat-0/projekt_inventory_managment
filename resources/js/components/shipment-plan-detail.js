@@ -1,4 +1,5 @@
 import intentSubmission from './transfer-intent-submission';
+import { budapestLocalMinute, planningFieldError, planningInstant } from './planning-time';
 import shipmentPlanCargo from './shipment-plan-cargo';
 import shipmentPlanVehicle from './shipment-plan-vehicle';
 
@@ -7,6 +8,7 @@ const mass = new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 3 });
 const date = new Intl.DateTimeFormat('hu-HU', {
     dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Budapest',
 });
+const departureExpired = blocker => blocker.code === 'planned_departure_expired';
 const sameOrder = (left, right) => left.length === right.length && left.every((stop, index) => stop.id === right[index].id);
 
 async function readJson(url, signal) {
@@ -35,6 +37,10 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
     dispatchState: null,
     dispatchConfirmed: false,
     dispatchNote: '',
+    departure: '',
+    departureEditing: false,
+    departureBadInput: false,
+    checkingDispatch: false,
     loading: true,
     dataError: '',
     accessLost: false,
@@ -72,11 +78,15 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
     get assignments() { return this.detail?.assignments ?? []; },
     get stops() { return this.detail?.stops ?? []; },
     get saving() { return this.submitting; },
-    get busy() { return this.loading || this.saving || this.unconfirmed; },
+    get busy() { return this.loading || this.saving || this.unconfirmed || this.checkingDispatch; },
     get unconfirmed() { return this.pendingCommand !== null; },
     get canEdit() { return this.canManage && this.detail?.shipment.status === 'draft' && !this.accessLost; },
     get mayChange() { return this.canEdit && !this.busy && !this.needsRefresh && !this.dataError; },
     get orderChanged() { return !sameOrder(this.routeStops, this.stops); },
+    get departureChanged() {
+        return this.departureEditing && (this.departureBadInput
+            || this.departure !== budapestLocalMinute(this.detail?.shipment.planned_departure_at));
+    },
     get needsGrouping() {
         return this.selected.length > 0 && this.selected.length + this.assignments.length > 1
             && (this.selected.some(row => row.shipping_preference === 'dedicated_requested')
@@ -86,9 +96,10 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
     get draft() { return this.detail?.shipment.status === 'draft'; },
     get canDispatch() {
         return this.draft && this.readiness?.can_dispatch === true && this.readiness?.has_dispatch_permission === true
-            && this.cargo?.confirmation?.status === 'confirmed' && !this.orderChanged
+            && this.cargo?.confirmation?.status === 'confirmed' && !this.orderChanged && !this.departureChanged
             && !this.busy && !this.needsRefresh && !this.dataError && !this.accessLost;
     },
+    get departureBlocker() { return this.readiness?.dispatch_blockers?.find(departureExpired); },
     get dispatchRecord() { return this.dispatchState?.dispatch ?? null; },
     get transitItems() { return this.dispatchState?.transit_items ?? []; },
     get dispatchStops() { return this.dispatchRecord?.snapshot?.stops ?? []; },
@@ -120,6 +131,18 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
     formatDate(value) {
         const parsed = value ? new Date(value) : null;
         return parsed && Number.isFinite(parsed.getTime()) ? date.format(parsed) : '—';
+    },
+
+    formatRequestedArrival(intent) {
+        const day = intent.requested_arrival_date;
+        return day ? day.split('-').join('. ') + '.' : this.formatDate(intent.requested_arrival_at);
+    },
+
+    formatPlannedDeparture(value) {
+        const local = budapestLocalMinute(value);
+        if (!local) return 'Nincs megadva';
+        const [day, time] = local.split('T');
+        return day.split('-').join('. ') + '. ' + time;
     },
 
     invalidateEligible() {
@@ -314,7 +337,54 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
         await this.saveCommand('reorder', urls.stops, 'PATCH', { stop_ids: this.routeStops.map(stop => stop.id) });
     },
 
-    openDispatch() {
+    openDepartureEditor() {
+        if (!this.mayChange) return;
+        this.closeDialog(this.$refs.dispatchDialog);
+        this.clearIntentFeedback();
+        this.departure = budapestLocalMinute(this.detail.shipment.planned_departure_at);
+        this.departureBadInput = false;
+        this.departureEditing = true;
+        this.$nextTick(() => this.$refs.departureInput?.focus());
+    },
+    closeDepartureEditor() {
+        this.departureEditing = false;
+        if (this.submissionStatus === 422 && this.fieldErrors.planned_departure_at) this.clearIntentFeedback();
+        else delete this.fieldErrors.planned_departure_at;
+        this.$nextTick(() => this.$refs.departureEditButton?.focus());
+    },
+    async saveDeparture() {
+        if (!this.mayChange || !this.departureEditing) return;
+        const instant = planningInstant(this.departure);
+        const error = planningFieldError(this.$refs.departureInput, this.departure, instant);
+        if (error) {
+            this.fieldErrors.planned_departure_at = [error];
+            this.$refs.departureInput.focus();
+            return;
+        }
+        if (!await this.saveCommand('updateDeparture', urls.departure, 'PATCH', { planned_departure_at: instant })
+            && this.fieldErrors.planned_departure_at) {
+            this.$refs.departureInput.focus();
+        }
+    },
+    async openDispatch() {
+        if (!this.canDispatch) return;
+        const plan = this.detail;
+        this.checkingDispatch = true;
+        try {
+            const readiness = await readJson(urls.readiness);
+            if (this.destroyed || this.detail !== plan || this.loading) return;
+            if (readiness.shipment_id !== shipmentId || readiness.version !== plan.shipment.version
+                || readiness.basis_revision !== this.cargo?.basis_revision || readiness.vehicle?.version !== this.cargo?.vehicle?.version) {
+                this.needsRefresh = true;
+                return;
+            }
+            this.readiness = readiness;
+        } catch (error) {
+            if (!this.destroyed && this.detail === plan) this.dataError = error.message;
+            return;
+        } finally {
+            this.checkingDispatch = false;
+        }
         if (!this.canDispatch) return;
         this.dispatchConfirmed = false;
         this.dispatchNote = '';
@@ -340,7 +410,13 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
         this.pendingCommand = null;
         if (!result || (command.action === 'dispatch' && (!result.dispatch?.id || result.shipment.status !== 'in_transit'))) {
             if (result) this.submissionError = 'A feladás eredménye nem ellenőrizhető. Próbáld meg ismét ugyanazokkal az adatokkal.';
-            if (this.conflict) this.needsRefresh = true;
+            const expired = command.action === 'dispatch' && this.conflictBlockers.find(departureExpired);
+            if (expired) {
+                this.readiness = { ...this.readiness, can_dispatch: false, dispatch_blockers: this.conflictBlockers,
+                    minimum_planned_departure_at: expired.minimum_planned_departure_at };
+            } else if (this.conflict) {
+                this.needsRefresh = true;
+            }
             if ([401, 403, 404, 419].includes(this.submissionStatus)) this.needsRefresh = true;
             if (this.submissionStatus === null || this.submissionStatus < 400 || this.submissionStatus >= 500) this.pendingCommand = command;
             return false;
@@ -358,6 +434,9 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
             this.notice = 'Az igényt leválasztottad a fuvarról.';
         } else if (action === 'reorder') {
             this.notice = 'A megállók sorrendje elmentve.';
+        } else if (action === 'updateDeparture') {
+            this.departureEditing = false;
+            this.notice = 'A tervezett indulás időpontja frissült.';
         } else if (action === 'dispatch') {
             this.detail = { ...this.detail, shipment: { ...this.detail.shipment, ...result.shipment }, can_manage: false };
             this.dispatchState = result;
@@ -368,6 +447,7 @@ export default ({ shipmentId, originId, canManage, canOverrideDedicated, urls })
         if (command.dialog) this.closeDialog(this.$refs[command.dialog]);
         this.resetIntentSubmission();
         await this.refreshPlan({ discardOrder: action === 'reorder' });
+        if (action === 'updateDeparture' && this.canEdit) this.$nextTick(() => this.$refs.departureEditButton?.focus());
         if (action === 'dispatch' && !this.accessLost) this.$nextTick(() => this.$refs.transitHeading?.focus());
         return true;
     },

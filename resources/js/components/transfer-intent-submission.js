@@ -30,15 +30,15 @@ export default (isSuccess = result => Boolean(result?.intent?.id), { keyField = 
         this.intentAttempt = null;
     },
 
-    async sendIntent(url, method, payload) {
+    async sendIntent(url, method, payload, requestKey = null) {
         if (this.submitting) return null;
         this.submitting = true;
         this.clearIntentFeedback();
 
         try {
             const signature = JSON.stringify([url, method, payload]);
-            if (this.intentAttempt?.signature !== signature) {
-                this.intentAttempt = { signature, key: this.intentAttempt === null && firstKey ? firstKey : operationKey() };
+            if (this.intentAttempt?.signature !== signature || (requestKey && this.intentAttempt?.key !== requestKey)) {
+                this.intentAttempt = { signature, key: requestKey ?? (this.intentAttempt === null && firstKey ? firstKey : operationKey()) };
             }
 
             const response = await fetch(url, {

@@ -36,6 +36,64 @@ class ShipmentDispatchTest extends TestCase
         $this->screw = $this->product('CS-01', 'Csavar');
     }
 
+    public function test_a_plan_that_expires_after_the_preview_requires_an_audited_update_without_rebooking_cargo(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-23T14:23:57Z'));
+        [$plan] = $this->readyPlan();
+        $editUrl = route('shipment-plans.departure.update', $plan);
+        $edit = $this->command($plan->refresh()->version, ['planned_departure_at' => '2026-11-23T15:23:00+01:00']);
+        $this->patchJson($editUrl, $edit)->assertOk()->assertJsonPath('event.action', 'update_departure');
+
+        $preview = $this->readiness($plan)->assertJsonPath('can_dispatch', true)->json();
+        $version = $plan->refresh()->version;
+        $dispatch = $this->command($version, ['confirmed' => true]);
+        $tables = ['stocks', 'transfer_stock_reservations', 'warehouse_transfer_tasks', 'warehouse_transfer_allocations',
+            'shipment_dispatches', 'shipment_transit_items', 'inventory_movements', 'shipment_plan_operations'];
+        $before = $this->rows($tables);
+
+        $this->travel(3)->seconds();
+        $this->readiness($plan)->assertJsonPath('can_dispatch', false)
+            ->assertJsonPath('dispatch_blockers.0.code', 'planned_departure_expired');
+        $this->postJson($this->dispatchUrl($plan), $dispatch)->assertConflict()
+            ->assertJsonPath('message', 'A tervezett indulási időpont már elmúlt. A feladás előtt frissítsd az indulási tervet.');
+        $this->assertSame($before, $this->rows($tables));
+        $this->assertSame($version, $plan->refresh()->version);
+        $this->get(route('shipments.show', $plan))->assertOk()->assertSee('2026. 11. 23. 15:23');
+        $this->patchJson($editUrl, $this->command($version, ['planned_departure_at' => '2026-11-23T15:23:00+01:00']))
+            ->assertUnprocessable()->assertJsonValidationErrors('planned_departure_at');
+        $this->patchJson($editUrl, $this->command($version, ['planned_departure_at' => null]))
+            ->assertUnprocessable()->assertJsonValidationErrors('planned_departure_at');
+        $this->actingAs($this->member($this->source, 'dispatch_operator'))
+            ->patchJson($editUrl, $this->command($version, ['planned_departure_at' => '2026-11-23T15:24:00+01:00']))->assertForbidden();
+        $this->actingAs($this->admin);
+        $this->patchJson($editUrl, $edit)->assertOk()->assertJsonPath('shipment.version', $version);
+        $update = $this->command($version, ['planned_departure_at' => '2026-11-23T15:24:00+01:00']);
+        $this->patchJson($editUrl, $update)->assertOk()->assertJsonPath('shipment.version', $version + 1);
+        $this->patchJson($editUrl, $this->command($version, ['planned_departure_at' => '2026-11-23T15:30:00+01:00']))->assertConflict();
+        $this->readiness($plan)->assertJsonPath('can_dispatch', true)->assertJsonPath('basis_revision', $preview['basis_revision']);
+        $this->assertSame(array_slice($before, 0, -1), $this->rows(array_slice($tables, 0, -1)));
+        $this->postJson($this->dispatchUrl($plan), $this->command($version, ['confirmed' => true]))->assertConflict();
+
+        $this->travel(37)->seconds();
+        $actual = now()->toISOString();
+        $validDispatch = $this->command($version + 1, ['confirmed' => true, 'dispatched_at' => '2020-01-01']);
+        $result = $this->postJson($this->dispatchUrl($plan), $validDispatch)->assertOk()
+            ->assertJsonPath('dispatch.dispatched_at', $actual)->assertJsonPath('shipment.started_at', $actual)
+            ->assertJsonPath('event.occurred_at', $actual)
+            ->assertJsonPath('dispatch.snapshot.shipment.planned_departure_at', '2026-11-23T14:24:00.000000Z');
+        $this->assertSame($actual, InventoryMovement::findOrFail($result->json('transit_items.0.movement_id'))->created_at->toISOString());
+        $this->travel(2)->days();
+        $this->postJson($this->dispatchUrl($plan), $validDispatch)->assertOk()->assertExactJson($result->json());
+        $this->getJson($this->dispatchUrl($plan))->assertOk()->assertJsonPath('dispatch.dispatched_at', $actual);
+        $this->get(route('shipments.show', $plan))->assertOk()->assertSee('2026. 11. 23. 15:24');
+        $this->readiness($plan)->assertJsonPath('dispatch_blockers.0.code', 'already_dispatched');
+        $this->patchJson($editUrl, $this->command($version + 2, ['planned_departure_at' => now()->addDay()->toIso8601String()]))->assertConflict();
+        $this->assertDatabaseCount('shipment_dispatches', 1);
+        $this->assertDatabaseCount('shipment_transit_items', 1);
+        $this->assertDatabaseCount('inventory_movements', 1);
+        $this->assertBalance($this->screw, physical: 15, assigned: 0, staged: 0, reserved: 0, free: 15);
+    }
+
     public function test_65_unassigned_pieces_move_from_80_physical_stock_into_transit_and_leave_15_free(): void
     {
         [$plan, $intent] = $this->readyPlan();
@@ -159,6 +217,9 @@ class ShipmentDispatchTest extends TestCase
             'name' => 'Később átnevezett jármű', 'payload_capacity_kg' => 100, 'pallet_slots_capacity' => 0,
         ]))->assertOk();
         $this->assertSame($response->json('dispatch'), $this->getJson($this->dispatchUrl($plan))->assertOk()->json('dispatch'));
+        $this->getJson(route('shipment-plans.index', ['search' => 'ABC-456']))->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.vehicle_display', 'Ellenőrzött jármű · ABC-456');
+        $this->getJson(route('shipment-plans.index', ['search' => 'Később átnevezett jármű']))->assertOk()->assertJsonCount(0, 'data');
         $dispatch = DB::table('shipment_dispatches')->where('id', $response->json('dispatch.id'));
         $this->assertDatabaseRejects(fn () => $dispatch->update(['note' => 'Utólagos módosítás']));
         $this->assertDatabaseRejects(fn () => $dispatch->delete());

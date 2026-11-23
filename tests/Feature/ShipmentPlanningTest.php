@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\{Category, Product, Shipment, ShipmentIntentAssignment, ShipmentPlanOperation, Stock, TransferIntent, User, Warehouse, WarehouseLocation};
+use App\Models\{Category, Product, Shipment, ShipmentIntentAssignment, ShipmentPlanOperation, Stock, TransferIntent, User, Vehicle, Warehouse, WarehouseLocation};
 use App\Services\{InventoryService, TransferIntentService, TransferStockReservationService, WarehouseTransferTaskService};
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -64,6 +64,100 @@ class ShipmentPlanningTest extends TestCase
         $this->assertDatabaseCount('shipment_items', 0);
         $this->assertSame($beforeStock, $this->stockState());
         $this->getJson($this->eligibleUrl($this->origin))->assertOk()->assertJsonCount(0, 'data');
+    }
+
+    public function test_departure_creation_validates_calendar_and_minute_but_allows_an_empty_plan_and_replays(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-23T14:23:56Z'));
+        $url = route('shipment-plans.store');
+        foreach (['2026-11-22T16:00:00+01:00', '2026-11-23T13:00:00+01:00', '2026-11-23T15:22:59+01:00'] as $past) {
+            $this->postJson($url, array_replace($this->createPayload(), ['planned_departure_at' => $past]))
+                ->assertUnprocessable()->assertJsonPath('errors.planned_departure_at.0', 'A tervezett indulás nem lehet múltbeli időpont.');
+        }
+        foreach (['2026-02-30T17:00:00+01:00', 'hibás időpont'] as $invalid) {
+            $this->postJson($url, array_replace($this->createPayload(), ['planned_departure_at' => $invalid]))
+                ->assertUnprocessable()->assertJsonValidationErrors('planned_departure_at');
+        }
+        $this->assertDatabaseCount('shipments', 0);
+        $this->assertDatabaseCount('shipment_plan_operations', 0);
+
+        foreach ([
+            [null, null],
+            ['2026-11-23T15:23:00+01:00', '2026-11-23T14:23:00.000000Z'],
+            ['2026-11-23T16:00:00+01:00', '2026-11-23T15:00:00.000000Z'],
+            ['2026-11-24T08:00:00+01:00', '2026-11-24T07:00:00.000000Z'],
+        ] as [$supplied, $expected]) {
+            $data = array_replace($this->createPayload(), ['planned_departure_at' => $supplied]);
+            $created = $this->postJson($url, $data)->assertCreated()->assertJsonPath('shipment.planned_departure_at', $expected);
+        }
+        $this->travel(2)->days();
+        $this->postJson($url, $data)->assertCreated()->assertExactJson($created->json());
+        $this->assertDatabaseCount('shipments', 4);
+        $this->assertDatabaseCount('shipment_plan_operations', 4);
+    }
+
+    public function test_the_budapest_clock_change_distinguishes_the_two_absolute_instants(): void
+    {
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-25T01:15:43Z'));
+        $url = route('shipment-plans.store');
+        $this->get(route('shipments.create'))->assertOk()->assertSee('min="2026-10-25T02:15"', false);
+        $this->postJson($url, array_replace($this->createPayload(), ['planned_departure_at' => '2026-10-25T02:30:00+02:00']))
+            ->assertUnprocessable()->assertJsonValidationErrors('planned_departure_at');
+        $this->postJson($url, array_replace($this->createPayload(), ['planned_departure_at' => '2026-10-25T02:30:00+01:00']))
+            ->assertCreated()->assertJsonPath('shipment.planned_departure_at', '2026-10-25T01:30:00.000000Z');
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-03-29T01:00:09Z'));
+        $this->get(route('shipments.create'))->assertOk()->assertSee('min="2026-03-29T03:00"', false);
+    }
+
+    public function test_creation_uses_the_active_vehicle_registry_and_rejects_outdated_selections(): void
+    {
+        $vehicle = Vehicle::create(['name' => 'Északi teherautó', 'registration_number' => 'REG-321',
+            'payload_capacity_grams' => 1200500, 'pallet_slots_capacity' => 4]);
+        $inactive = Vehicle::create(['name' => 'Szervizben', 'active' => false]);
+        $create = route('shipment-plans.store');
+        $data = array_replace($this->createPayload(), ['vehicle_label' => null, 'vehicle_id' => $vehicle->id, 'vehicle_version' => 1]);
+        $this->getJson(route('shipment-plans.vehicles.index', ['active_only' => 1]))->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.payload_capacity_grams', 1200500)->assertJsonPath('data.0.pallet_slots_capacity', 4);
+        $this->actingAs($this->member($this->pecs, 'supervisor'))->postJson($create, $data)->assertForbidden();
+        $this->actingAs($this->admin);
+        foreach ([$inactive->id, $inactive->id + 99] as $unavailable) {
+            $this->postJson($create, array_replace($data, ['vehicle_id' => $unavailable]))
+                ->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
+        }
+        $this->postJson($create, array_replace($data, ['vehicle_label' => 'Eltérő kézi adat']))
+            ->assertUnprocessable()->assertJsonValidationErrors('vehicle_label');
+        $this->patchJson(route('shipment-plans.vehicles.update', $vehicle), [
+            'operation_key' => (string) Str::uuid(), 'version' => 1, 'pallet_slots_capacity' => 3,
+        ])->assertOk();
+        $this->postJson($create, $data)->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
+        $this->assertDatabaseCount('shipments', 0);
+
+        $this->actingAs($this->member($this->origin, 'supervisor'));
+        $current = array_replace($data, ['vehicle_version' => 2]);
+        $saved = $this->postJson($create, $current)->assertCreated()
+            ->assertJsonPath('shipment.vehicle_id', $vehicle->id)->assertJsonPath('shipment.vehicle_label', null)->json();
+        $this->postJson($create, $current)->assertCreated()->assertExactJson($saved);
+        $plan = Shipment::findOrFail($saved['shipment']['id']);
+        $this->getJson(route('shipment-plans.cargo.show', $plan))->assertOk()
+            ->assertJsonPath('vehicle.payload_capacity_grams', 1200500)->assertJsonPath('vehicle.pallet_slots_capacity', 3)
+            ->assertJsonPath('capacity.weight_grams.required', null)->assertJsonPath('capacity.pallet_slots.required', null);
+        $this->getJson(route('shipment-plans.index', ['search' => 'REG-321']))->assertOk()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.vehicle_display', 'Északi teherautó · REG-321');
+        $this->patchJson(route('shipment-plans.vehicle.update', $plan), [
+            'operation_key' => (string) Str::uuid(), 'version' => 1, 'vehicle_id' => $vehicle->id, 'vehicle_version' => 1,
+        ])->assertUnprocessable()->assertJsonValidationErrors('vehicle_id');
+        $this->assertSame(1, $plan->fresh()->version);
+    }
+
+    public function test_historical_free_text_is_preserved_when_a_registry_vehicle_is_later_assigned(): void
+    {
+        $plan = $this->createPlan();
+        $vehicle = Vehicle::create(['name' => 'Új jármű']);
+        $this->patchJson(route('shipment-plans.vehicle.update', $plan), [
+            'operation_key' => (string) Str::uuid(), 'version' => $plan->version, 'vehicle_id' => $vehicle->id, 'vehicle_version' => $vehicle->version,
+        ])->assertOk()->assertJsonPath('shipment.vehicle_label', 'ABC-123');
+        $this->get(route('shipments.show', $plan))->assertOk()->assertSee('Korábban megadott járműadat')->assertSee('ABC-123');
+        $this->assertSame($vehicle->id, $plan->fresh()->vehicle_id);
     }
 
     public function test_eligible_list_includes_unreserved_partial_and_picked_intents_and_checks_origin(): void
@@ -450,7 +544,7 @@ class ShipmentPlanningTest extends TestCase
     {
         return [
             'operation_key' => (string) Str::uuid(), 'origin_warehouse_id' => $this->origin->getKey(),
-            'reference' => 'SH-001', 'planned_departure_at' => '2026-11-23T10:00:00Z', 'vehicle_label' => 'ABC-123',
+            'reference' => 'SH-001', 'planned_departure_at' => now()->addDay()->startOfMinute()->toIso8601String(), 'vehicle_label' => 'ABC-123',
             'intent_ids' => array_map(fn ($intent) => $intent->id, $intents),
         ];
     }

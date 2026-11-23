@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { setBrowserServerTime } from './browser-server-time';
 
 const listPath = '/atmozgatasok';
 const createPath = listPath + '/uj-igeny';
@@ -131,8 +132,43 @@ test('warehouse members on either side can submit a request even above current s
     }
 });
 
+test('the deadline shows the Budapest minimum and preserves mobile form data after a rejected date', async ({ page }) => {
+    await login(page, requesterEmail);
+    await setBrowserServerTime(page, '2026-11-22T23:00:37Z');
+    await page.setViewportSize({ width: 360, height: 780 });
+    await page.goto(createPath);
+    await fillRoute(page);
+    await page.locator('#intent-quantity').fill('42');
+    await page.locator('#intent-note').fill('A megjegyzés megmarad');
+    const arrival = page.locator('#intent-arrival');
+    const submit = page.getByRole('button', { name: 'Igény benyújtása' });
+    await expect(arrival).toHaveAttribute('min', '2026-11-23T00:00');
+    await arrival.fill('2026-11-22T23:59');
+    await submit.press('Enter');
+    await expect(page.locator('#intent-arrival-error')).toHaveText('A kért érkezési határidő nem lehet múltbeli.');
+
+    await setBrowserServerTime(page, '2026-11-22T23:02:37Z');
+    await arrival.fill('2026-11-23T00:01');
+    const rejected = page.waitForResponse(response => response.url().endsWith('/transfer-intents') && response.request().method() === 'POST');
+    await submit.click();
+    expect((await rejected).status()).toBe(422);
+    await expect(page.locator('#intent-arrival-error')).toHaveText('A kért érkezési határidő nem lehet múltbeli.');
+    await expect(page.locator('#intent-product')).toHaveValue(/Alpha teszttermék/);
+    await expect(page.locator('#intent-from-warehouse')).toHaveValue(source);
+    await expect(page.locator('#intent-to-warehouse')).toHaveValue(destination);
+    await expect(page.locator('#intent-quantity')).toHaveValue('42');
+    await expect(page.locator('#intent-note')).toHaveValue('A megjegyzés megmarad');
+    await arrival.fill('2026-11-23T00:02');
+    await submit.click();
+    await expect(page).toHaveURL(/\/atmozgatasok\/igenyek\/\d+(?:\?submitted=1)?$/);
+    await expect(page.getByRole('status')).toContainText('Az átmozgatási igényt benyújtottad.');
+    await expect(page.locator('dt').filter({ hasText: 'Kért érkezési határidő' }).locator('xpath=following-sibling::dd'))
+        .toHaveText('2026. 11. 23. 00:02');
+});
+
 test('boxed submission preserves pieces, disables duplicate clicks, and reuses the operation key after a lost response', async ({ page }) => {
     await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
     const product = await packagedProduct(page);
     await page.goto(createPath);
     await fillRoute(page, product);
@@ -181,9 +217,10 @@ test('boxed submission preserves pieces, disables duplicate clicks, and reuses t
     } finally {
         releaseResponse();
     }
-    await expect(submit).toBeEnabled();
+    const retry = page.getByRole('button', { name: 'Mentés újrapróbálása', exact: true });
+    await expect(retry).toBeEnabled();
     await expect(page.locator('#intent-note')).toHaveValue('Idempotencia böngészőteszt');
-    await submit.click();
+    await retry.click();
     await expect(page).toHaveURL(/\/atmozgatasok\/igenyek\/\d+(?:\?submitted=1)?$/);
     expect(sent).toHaveLength(2);
     expect(Number(sent[0].quantity)).toBe(200);
@@ -191,6 +228,108 @@ test('boxed submission preserves pieces, disables duplicate clicks, and reuses t
     expect(sent[1]).toEqual(sent[0]);
     expect(results[1]).toEqual(results[0]);
     await expect(page.locator('[data-intent-status]')).toHaveText('Jóváhagyásra vár');
+});
+
+test('lost intent response replays the frozen payload after editing, reload and history navigation', async ({ page }) => {
+    await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
+    await page.goto(createPath);
+    await fillRoute(page);
+    await page.locator('#intent-quantity').fill('42');
+    const arrival = page.locator('#intent-arrival');
+    await arrival.fill('2026-11-23T15:24');
+
+    const sent = [];
+    const results = [];
+    await page.route('**/transfer-intents', async route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        sent.push(route.request().postDataJSON());
+        const response = await route.fetch();
+        expect(response.status()).toBe(201);
+        results.push(await response.json());
+        if (sent.length === 1) return route.abort('failed');
+        return route.fulfill({ response });
+    });
+    await page.getByRole('button', { name: 'Igény benyújtása', exact: true }).click();
+    const retry = page.getByRole('button', { name: 'Mentés újrapróbálása', exact: true });
+    await expect(retry).toBeVisible();
+    await arrival.fill('2026-11-23T15:26');
+    await page.locator('#intent-note').fill('Megőrzött piszkozat');
+    await setBrowserServerTime(page, '2026-11-23T14:25:00Z');
+    await page.reload();
+    await expect(retry).toBeVisible();
+    await page.getByRole('link', { name: '← Vissza az igényekhez', exact: true }).click();
+    await page.goBack();
+    await expect(retry).toBeVisible();
+    await expect(arrival).toHaveValue('2026-11-23T15:26');
+    await expect(page.locator('#intent-note')).toHaveValue('Megőrzött piszkozat');
+    await expect(page.locator('#intent-quantity')).toHaveValue('42');
+    await expect(page.locator('#intent-product')).toHaveValue(/Alpha teszttermék/);
+    await expect(page.locator('#intent-from-warehouse')).toHaveValue(source);
+    await expect(page.locator('#intent-to-warehouse')).toHaveValue(destination);
+    await retry.click();
+    await expect(page.getByRole('link', { name: 'A mentett igény megnyitása', exact: true }))
+        .toHaveAttribute('href', new RegExp('/atmozgatasok/igenyek/' + results[0].intent.id + '$'));
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    expect(results[1]).toEqual(results[0]);
+    await expect(arrival).toHaveValue('2026-11-23T15:26');
+    await expect(page.locator('#intent-note')).toHaveValue('Megőrzött piszkozat');
+    await expect(page.getByRole('button', { name: 'Igény benyújtása', exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole('link', { name: 'A mentett igény megnyitása', exact: true })).toBeVisible();
+    await expect(arrival).toHaveValue('2026-11-23T15:26');
+});
+
+test('a confirmed rejection frees the retained draft for an explicit new attempt', async ({ page }) => {
+    await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
+    await page.goto(createPath);
+    await fillRoute(page);
+    await page.locator('#intent-quantity').fill('7');
+    const arrival = page.locator('#intent-arrival');
+    await arrival.fill('2026-11-23T15:23');
+    const sent = [];
+    await page.route('**/transfer-intents', async route => {
+        if (route.request().method() !== 'POST') return route.continue();
+        sent.push(route.request().postDataJSON());
+        if (sent.length === 1) return route.abort('failed');
+        return route.continue();
+    });
+    const submit = page.getByRole('button', { name: 'Igény benyújtása', exact: true });
+    const retry = page.getByRole('button', { name: 'Mentés újrapróbálása', exact: true });
+    await submit.click();
+    await expect(retry).toBeVisible();
+    await setBrowserServerTime(page, '2026-11-23T14:25:00Z');
+    await arrival.fill('2026-11-23T15:26');
+    await retry.click();
+    await expect(submit).toBeEnabled();
+    await expect(page.getByRole('alert')).toContainText('A kért érkezési határidő nem lehet múltbeli.');
+    await expect(arrival).toHaveValue('2026-11-23T15:26');
+    expect(sent[1]).toEqual(sent[0]);
+    await submit.click();
+    await expect(page).toHaveURL(/\/atmozgatasok\/igenyek\/\d+/);
+    expect(sent).toHaveLength(3);
+    expect(sent[2].operation_key).not.toBe(sent[0].operation_key);
+    expect(sent[2].requested_arrival_at).toBe('2026-11-23T15:26:00+01:00');
+});
+
+test('the date-only deadline in the form and on the intent page uses the whole Budapest day', async ({ page }) => {
+    await login(page);
+    await setBrowserServerTime(page, '2026-07-02T15:30:00Z');
+    await page.goto(createPath);
+    await fillRoute(page);
+    await page.locator('#intent-quantity').fill('2');
+    await page.getByLabel('Csak dátum megadása').check();
+    const day = page.locator('#intent-arrival-date');
+    await expect(day).toHaveAttribute('min', '2026-07-02');
+    await day.fill('2026-07-02');
+    const sent = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/transfer-intents'));
+    await page.getByRole('button', { name: 'Igény benyújtása', exact: true }).click();
+    expect((await sent).postDataJSON().requested_arrival_at).toBe('2026-07-02');
+    await expect(page).toHaveURL(/\/atmozgatasok\/igenyek\/\d+/);
+    await expect(page.locator('dt').filter({ hasText: 'Kért érkezési határidő' }).locator('xpath=following-sibling::dd'))
+        .toHaveText('2026. 07. 02.');
 });
 
 test('conflicting decision can be refreshed without retrying or losing the typed reason', async ({ page }) => {
@@ -255,6 +394,7 @@ test('the list, form and workflow states fit desktop through 320 px', async ({ p
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await login(page);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
     const longProduct = 'Rozsdamentes ipari kötőelem biztonsági rögzítéssel és megerősített csomagolással – bemutató';
     const longSource = 'Központi áruelosztó és készlet-előkészítő bemutató raktár';
     const longDestination = 'Dél-dunántúli szerelőipari és logisztikai fogadó bemutató raktár';

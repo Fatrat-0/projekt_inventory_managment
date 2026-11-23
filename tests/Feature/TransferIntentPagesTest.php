@@ -22,6 +22,7 @@ class TransferIntentPagesTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-23T14:23:37Z'));
 
         $this->admin = User::factory()->create(['role' => 'admin']);
         $this->requester = User::factory()->create(['role' => 'worker']);

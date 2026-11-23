@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     <div class="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-4">
         <a href="{{ route('transfer-intent-pages.index') }}" class="text-sm text-gray-500 hover:text-indigo-600">← Átmozgatások</a><x-operation-feedback />
         <div class="flex flex-wrap items-center gap-3"><div><p class="text-xs font-mono text-indigo-600">{{ $shipment->shipment_number }}</p><h1 class="text-xl font-bold text-gray-900">{{ $shipment->reference }}</h1></div><span class="rounded-md bg-indigo-50 px-2.5 py-1 text-sm text-indigo-800">{{ \App\Models\Shipment::STATUSES[$shipment->status] }}</span>@include('shipments.pdf-preview')</div>
@@ -21,4 +21,4 @@
             </div>@endforeach
         </section>
     </div>
-</x-app-layout>
+</x-transfer-layout>

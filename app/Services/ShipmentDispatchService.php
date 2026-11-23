@@ -44,11 +44,14 @@ class ShipmentDispatchService
         [$readiness, $cargo, $tasks] = $this->readiness->lockedPreparation($shipment, $assignments, [$origin => $stocks]);
         if (!$readiness['dispatch_prerequisites_met']) throw new ShipmentDispatchBlocked($readiness['dispatch_blockers']);
 
-        $at = now();
         $warehouses = Warehouse::whereKey($warehouseIds)->sharedLock()->get(['warehouse_id', 'warehouse_name', 'location'])->keyBy('warehouse_id');
         $byStop = $assignments->groupBy('shipment_stop_id');
         $route = $stops->filter(fn (ShipmentStop $stop) => $byStop->has($stop->id))->values();
         $loading = Shipment::loadingStops($route)->pluck('id')->flip();
+        $at = now();
+        if ($blocker = ShipmentPlanReadiness::departureBlocker($shipment, $at)) {
+            throw new ShipmentDispatchBlocked([$blocker]);
+        }
         $dispatch = $shipment->dispatch()->create([
             'actor_id' => $actor->id, 'vehicle_id' => $shipment->vehicle_id, 'dispatched_at' => $at, 'note' => $note,
             'snapshot' => [

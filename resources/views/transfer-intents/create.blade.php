@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $warehouseItems = $warehouses->map(fn ($warehouse) => [
             'value' => (string) $warehouse->warehouse_id,
@@ -6,6 +6,7 @@
         ])->values();
         $form = [
             'endpoint' => route('transfer-intents.store', absolute: false),
+            'recoveryKey' => 'transfer-intent-creation:'.auth()->id(),
             'detailUrl' => route('transfer-intent-pages.show', ['transferIntent' => '__intent__'], false),
             'productNames' => $products->pluck('product_name', 'product_id'),
             'packagings' => $products->filter(fn ($product) => $product->defaultPackaging?->pieces_per_package > 0)
@@ -16,6 +17,7 @@
             'warehouses' => $warehouseItems,
             'requestWarehouseIds' => $requestWarehouseIds,
         ];
+        $arrivalMinimum = \App\Support\PlanningTime::localMinimum();
         $routeHelp = count($requestWarehouseIds) < $warehouses->count() ? ' intent-route-help' : '';
         $inputClass = 'mt-1 block min-h-11 w-full min-w-0 rounded-md border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500';
     @endphp
@@ -27,11 +29,12 @@
         @if($products->isEmpty() || $warehouses->count() < 2)
             <p class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Új igényhez legalább egy termék és két raktár szükséges.</p>
         @else
-            <form method="POST" action="{{ $form['endpoint'] }}" x-data="transferIntentCreate(@js($form))" @submit.prevent="submitIntent()" novalidate
+            <form method="POST" action="{{ $form['endpoint'] }}" x-data="transferIntentCreate(@js($form))" @submit.prevent="submitIntent()"
+                  @pageshow.window="if ($event.persisted) restoreSubmission()" novalidate
                   class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,13fr)_minmax(0,7fr)] lg:gap-5">
                 @csrf
                 <div class="min-w-0 space-y-4">
-                    <div x-cloak x-show="submissionError" x-ref="errorNotice" tabindex="-1" role="alert"
+                    <div x-cloak x-show="submissionError && !pending" x-ref="errorNotice" tabindex="-1" role="alert"
                          class="space-y-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                         <p x-text="submissionError"></p>
                         <template x-if="fieldErrors.operation_key">
@@ -42,13 +45,30 @@
                             Új műveleti azonosító kérése
                         </button>
                     </div>
+                    <div x-cloak x-show="uncertain" x-ref="recoveryNotice" tabindex="-1" role="status"
+                         class="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                        <p class="font-semibold">A mentés eredménye még nem ismert.</p>
+                        <p>Az újrapróbálás az eredeti igényt ellenőrzi és ugyanazokat az adatokat küldi. A közben módosított mezők piszkozatként megmaradnak.</p>
+                        <p x-show="[401, 403, 404, 419].includes(submissionStatus)" x-text="submissionError"></p>
+                        <p x-show="storageUnavailable">Ebben a böngészőben a lap újratöltése után a mentés nem állítható helyre. Próbáld újra ezen a lapon.</p>
+                    </div>
+                    <div x-cloak x-show="recoveredIntentId" x-ref="recoverySuccess" tabindex="-1" role="status"
+                         class="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
+                        <p class="font-semibold">Az eredeti igény mentése megtörtént.</p>
+                        <p>A közben módosított adatok az alábbi piszkozatban maradtak.</p>
+                        <a x-bind:href="recoveredIntentId ? intentDetailUrl(recoveredIntentId) : null"
+                           class="inline-flex min-h-9 items-center rounded font-semibold underline focus-visible:outline focus-visible:outline-2">A mentett igény megnyitása</a>
+                        <button type="button" @click="startSeparateIntent()" class="block min-h-9 rounded font-semibold underline focus-visible:outline focus-visible:outline-2">
+                            Külön új igény előkészítése a piszkozatból
+                        </button>
+                    </div>
                     <fieldset :disabled="submitting || submitted" aria-labelledby="intent-basics-title"
                               class="min-w-0 space-y-4 rounded-lg border border-gray-200 bg-white p-4 sm:p-5 [&_[role=combobox]]:min-h-11">
                         <h2 id="intent-basics-title" class="font-semibold text-gray-900">Átmozgatás adatai</h2>
                         <div class="min-w-0" @product-selected="chooseProduct($event.detail.value)"
                              x-effect="$el.querySelector('[role=combobox]').setAttribute('aria-invalid', String(Boolean(fieldErrors.product_id)))">
                             <label for="intent-product" class="mb-1 block text-sm font-medium">Termék</label>
-                            <x-product-picker :$products id="intent-product" :required="true" described-by="intent-product-error" />
+                            <x-product-picker :$products id="intent-product" :required="true" model-value="product" described-by="intent-product-error" />
                             <p id="intent-product-error" x-cloak x-show="fieldErrors.product_id" x-text="fieldErrors.product_id?.[0]" class="mt-1 text-sm text-red-700"></p>
                         </div>
 
@@ -58,7 +78,7 @@
                                 <label for="intent-from-warehouse" class="mb-1 block text-sm font-medium">Forrásraktár</label>
                                 <x-autocomplete-picker :items="$warehouseItems" id="intent-from-warehouse" name="from_warehouse_id"
                                     :required="true" event-name="intent-source-selected" placeholder="Raktár keresése…"
-                                    available-values="sourceOptions" :described-by="'intent-source-error'.$routeHelp" />
+                                    available-values="sourceOptions" model-value="source" :described-by="'intent-source-error'.$routeHelp" />
                                 <p id="intent-source-error" x-cloak x-show="fieldErrors.from_warehouse_id" x-text="fieldErrors.from_warehouse_id?.[0]" class="mt-1 text-sm text-red-700"></p>
                             </div>
                             <div class="min-w-0" @intent-destination-selected="chooseWarehouse('destination', $event.detail.value)"
@@ -66,7 +86,7 @@
                                 <label for="intent-to-warehouse" class="mb-1 block text-sm font-medium">Célraktár</label>
                                 <x-autocomplete-picker :items="$warehouseItems" id="intent-to-warehouse" name="to_warehouse_id"
                                     :required="true" event-name="intent-destination-selected" placeholder="Raktár keresése…"
-                                    available-values="destinationOptions" :described-by="'intent-destination-error'.$routeHelp" />
+                                    available-values="destinationOptions" model-value="destination" :described-by="'intent-destination-error'.$routeHelp" />
                                 <p id="intent-destination-error" x-cloak x-show="fieldErrors.to_warehouse_id" x-text="fieldErrors.to_warehouse_id?.[0]" class="mt-1 text-sm text-red-700"></p>
                             </div>
                         </div>
@@ -134,11 +154,23 @@
                                 <p id="intent-priority-error" x-cloak x-show="fieldErrors.priority" x-text="fieldErrors.priority?.[0]" class="mt-1 text-sm text-red-700"></p>
                             </div>
                             <div class="min-w-0">
-                                <label for="intent-arrival" class="block text-sm font-medium">Kért érkezési határidő <span class="font-normal text-gray-600">(opcionális)</span></label>
-                                <input id="intent-arrival" x-ref="arrival" type="datetime-local" x-model="arrival" @input="clearFieldError('requested_arrival_at')"
-                                       min="1000-01-01T00:00" max="9999-12-31T23:59" class="{{ $inputClass }}"
+                                <label for="intent-arrival" :for="arrivalDateOnly ? 'intent-arrival-date' : 'intent-arrival'"
+                                       class="block text-sm font-medium">Kért érkezési határidő <span class="font-normal text-gray-600">(opcionális)</span></label>
+                                <input id="intent-arrival" x-ref="arrival" type="datetime-local" x-show="!arrivalDateOnly" x-model="arrival" @input="clearFieldError('requested_arrival_at')"
+                                       min="{{ $arrivalMinimum }}" max="9999-12-31T23:59"
+                                       data-past-message="{{ \App\Support\PlanningTime::PAST_ARRIVAL }}" class="{{ $inputClass }}"
                                        :aria-invalid="String(Boolean(fieldErrors.requested_arrival_at))" aria-describedby="intent-arrival-zone intent-arrival-error">
-                                <p id="intent-arrival-zone" class="mt-1 text-xs text-gray-600">Magyarországi idő</p>
+                                <input id="intent-arrival-date" x-cloak x-ref="arrivalDate" type="date" x-show="arrivalDateOnly"
+                                       x-model="arrivalDate" @input="clearFieldError('requested_arrival_at')" min="{{ substr($arrivalMinimum, 0, 10) }}" max="9999-12-31"
+                                       data-past-message="{{ \App\Support\PlanningTime::PAST_ARRIVAL }}" class="{{ $inputClass }}"
+                                       :aria-invalid="String(Boolean(fieldErrors.requested_arrival_at))" aria-describedby="intent-arrival-zone intent-arrival-error">
+                                <label class="mt-1 inline-flex min-h-9 items-center gap-2 text-sm text-gray-700">
+                                    <input type="checkbox" x-model="arrivalDateOnly" @change="clearFieldError('requested_arrival_at')"
+                                           class="rounded border-gray-400 text-indigo-700 focus:ring-indigo-600">
+                                    Csak dátum megadása
+                                </label>
+                                <p id="intent-arrival-zone" class="mt-1 text-xs text-gray-600"
+                                   x-text="arrivalDateOnly ? 'A megadott magyarországi nap végéig érvényes.' : 'Magyarországi idő. Az aktuális perc vagy későbbi időpont választható.'">Magyarországi idő. Az aktuális perc vagy későbbi időpont választható.</p>
                                 <p id="intent-arrival-error" x-cloak x-show="fieldErrors.requested_arrival_at" x-text="fieldErrors.requested_arrival_at?.[0]" class="mt-1 text-sm text-red-700"></p>
                             </div>
                             <div class="min-w-0">
@@ -195,18 +227,18 @@
                         </div>
                         <div class="col-span-2 min-w-0">
                             <dt class="text-xs text-gray-600">Kért érkezési határidő</dt>
-                            <dd class="break-words font-medium text-gray-900" x-text="arrival ? arrival.replace('T', ' ') : '–'"></dd>
+                            <dd class="break-words font-medium text-gray-900" x-text="visibleArrival ? visibleArrival.replace('T', ' ') : '–'"></dd>
                         </div>
                     </dl>
                     <div class="mt-4 space-y-3 border-t border-gray-100 pt-4">
                         <p class="text-xs text-gray-600">A benyújtott igény a forrásraktár jóváhagyására vár.</p>
-                        <button type="submit" :disabled="submitting || submitted || conflict"
+                        <button type="submit" x-show="!submitted" :disabled="submitting || (conflict && !pending)"
                                 class="min-h-11 w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                                x-text="submitting || submitted ? 'Benyújtás…' : 'Igény benyújtása'">Igény benyújtása</button>
+                                x-text="submitting ? 'Benyújtás…' : pending ? 'Mentés újrapróbálása' : 'Igény benyújtása'">Igény benyújtása</button>
                     </div>
                 </aside>
             </form>
             <noscript><p class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Az igény benyújtásához engedélyezd a JavaScriptet.</p></noscript>
         @endif
     </div>
-</x-app-layout>
+</x-transfer-layout>

@@ -1,4 +1,4 @@
-<x-app-layout>
+<x-transfer-layout>
     @php
         $field = 'mt-1 min-h-11 w-full min-w-0 rounded-md border-gray-300 text-sm focus:border-indigo-500 focus:ring-indigo-500';
         $primary = 'inline-flex min-h-11 items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600';
@@ -14,7 +14,6 @@
                 <a href="{{ route('shipments.create') }}" class="{{ $primary }}">Új fuvar tervezése</a>
             @endif
         </x-page-toolbar>
-        @include('transfers.tabs')
 
         @if ($filterErrors)
             <div role="alert" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -115,7 +114,7 @@
                             </dl>
                             <div role="cell" class="min-w-0 [overflow-wrap:anywhere]">
                                 <p class="text-xs font-medium text-gray-600 xl:hidden">Jármű és állapot</p>
-                                <p>{{ $plan['vehicle_label'] ?? '—' }}</p>
+                                <p>{{ $plan['vehicle_display'] ?? '—' }}</p>
                                 <span class="mt-1.5 inline-block rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-800">{{ $statuses[$plan['status']] }}</span>
                             </div>
                             <dl role="cell" class="min-w-0 text-xs">
@@ -142,4 +141,4 @@
 
         {{ $plans->links('pagination.inventory') }}
     </div>
-</x-app-layout>
+</x-transfer-layout>

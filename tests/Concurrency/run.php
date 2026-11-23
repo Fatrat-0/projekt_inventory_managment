@@ -40,6 +40,7 @@ function saveDashboardLayout(array $job): void
 
 function runIntentOperation(array $job): void
 {
+    if (isset($job['clock'])) \Illuminate\Support\Carbon::setTestNow($job['clock']);
     $service = app(TransferIntentService::class);
     $actor = User::findOrFail($job['actor']);
     $result = $job['operation'] === 'create'
@@ -164,6 +165,8 @@ if (($argv[1] ?? '') === '--worker') {
             'transfer_intent' => runIntentOperation($job),
             'stock_reservation' => runReservationOperation($job),
             'shipment_plan' => runPlanOperation($job),
+            'shipment_plan_create' => app(ShipmentPlanningService::class)->create(User::findOrFail($job['actor']), $job['data']),
+            'vehicle_delete' => Vehicle::findOrFail($job['id'])->delete(),
             'shipment_2_receipt' => runReceiptOperation($job),
             'shipment_receipt_putaway' => runPutawayOperation($job),
             'vehicle_update' => app(VehicleRegistry::class)->save(User::findOrFail($job['actor']), $job['data'], Vehicle::findOrFail($job['id'])),
@@ -185,6 +188,10 @@ if (($argv[1] ?? '') === '--worker') {
         echo "REJECTED\n";
     } catch (Throwable $e) {
         if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
+        if ($job['action'] === 'vehicle_delete' && $e instanceof \Illuminate\Database\QueryException && ($e->errorInfo[1] ?? null) === 1451) {
+            echo "REJECTED\n";
+            exit(0);
+        }
         fwrite(STDERR, get_class($e).': '.$e->getMessage());
         exit(1);
     }
@@ -1046,6 +1053,26 @@ try {
         $intentRaceCount++;
         echo 'PASS: concurrent intent creation with '.$scenario.PHP_EOL;
     }
+    $clock = '2026-11-23T14:23:37Z';
+    $expiring = $intentData + ['operation_key' => (string) Str::uuid(), 'requested_arrival_at' => '2026-11-23T15:23:00+01:00'];
+    $before = TransferIntent::count();
+    $results = race($database, [], [[
+        'action' => 'transfer_intent', 'operation' => 'create', 'actor' => $requester->id,
+        'outerSnapshot' => true, 'clock' => '2026-11-23T14:24:00Z', 'data' => $expiring,
+    ]], recordBarrier: $requester, beforeRelease: function () use ($intentService, $requester, $expiring, $clock) {
+        \Illuminate\Support\Carbon::setTestNow($clock);
+        try {
+            $intentService->create($requester, $expiring);
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    });
+    check($results === ['OK'] && TransferIntent::count() === $before + 1
+        && TransferWorkflowEvent::where('operation_key', $expiring['operation_key'])->count() === 1,
+        'An expired retry missed the original creation in an older database snapshot.');
+    $intentRaceCount++;
+    echo 'PASS: intent creation replay at deadline rollover with an outer snapshot'.PHP_EOL;
+
     check(Stock::where('product_id', $intentProduct->getKey())->doesntExist()
         && InventoryTransfer::where('product_id', $intentProduct->getKey())->doesntExist(), 'Intent decisions booked inventory.');
     $reservationRaceCount = 0;
@@ -1679,6 +1706,33 @@ try {
 
     foreach ([false, true] as $outerSnapshot) {
         $snapshotLabel = $outerSnapshot ? ' with outer snapshots' : '';
+        foreach (['delete', 'inactivate'] as $scenario) {
+            $seed = $vehicleRegistry->save($dispatchAdmin, ['name' => 'Concurrent selection', 'operation_key' => (string) Str::uuid()]);
+            $candidate = Vehicle::findOrFail($seed['vehicle']['id']);
+            $reference = 'Concurrent selection '.$candidate->id;
+            $planJob = ['action' => 'shipment_plan_create', 'actor' => $supervisor->id, 'outerSnapshot' => $outerSnapshot,
+                'data' => ['operation_key' => (string) Str::uuid(), 'origin_warehouse_id' => $intentData['from_warehouse_id'],
+                    'reference' => $reference, 'vehicle_id' => $candidate->id, 'vehicle_version' => $candidate->version]];
+            $change = $scenario === 'delete'
+                ? ['action' => 'vehicle_delete', 'id' => $candidate->id, 'outerSnapshot' => $outerSnapshot]
+                : $vehicleChange($candidate, $secondVehicleAdmin, $outerSnapshot, ['active' => false, 'inactivation_reason' => $reason]);
+            $results = race($database, [], [$planJob, $change], recordBarrier: $candidate);
+            $linked = Shipment::where('reference', $reference)->first();
+            check($candidate->refresh()->operations()->count() === ($scenario === 'delete' ? 1 : 2)
+                && (!$linked || $linked->vehicle_id === $candidate->id), 'Vehicle selection lost its registry or audit link.');
+            if ($linked) {
+                $listed = app(\App\Services\ShipmentPlanReader::class)->plans(Shipment::whereKey($linked->id), ['search' => 'Concurrent selection'])->items();
+                check(count($listed) === 1 && $listed[0]['vehicle_display'] === $candidate->name, 'MySQL listing lost the selected vehicle.');
+            }
+            if ($scenario === 'delete') {
+                check($results === ['OK', 'REJECTED'] && $linked && $candidate->active, 'Hard deletion bypassed the vehicle audit.');
+            } else {
+                check(!$candidate->active && $results === ($linked ? ['OK', 'OK'] : ['OK', 'REJECTED']), 'Draft creation ignored the locked vehicle status.');
+            }
+            $vehicleRaceCount++;
+            echo 'PASS: vehicle selection versus '.$scenario.$snapshotLabel.PHP_EOL;
+        }
+
         $truck = Vehicle::create(['name' => 'Concurrent registry edits']);
         $inactivation = $vehicleChange($truck, $dispatchAdmin, $outerSnapshot, ['active' => false, 'inactivation_reason' => $reason]);
         $rename = $vehicleChange($truck, $secondVehicleAdmin, $outerSnapshot, ['name' => 'Winning admin edit']);

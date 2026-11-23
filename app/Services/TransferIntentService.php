@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{Product, TransferIntent, User, Warehouse};
+use App\Support\PlanningTime;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Support\Facades\{Gate, Validator};
@@ -30,7 +31,7 @@ class TransferIntentService
                 TransferIntent::MAX_QUANTITY, 'A kért mennyiség 1 és 2 147 483 647 közötti egész darabszám legyen.',
             )],
             'requested_arrival_at' => ['bail', 'nullable', 'string', 'date',
-                'regex:/^\d{4}-\d{2}-\d{2}(?:[T ](?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)?$/D'],
+                PlanningTime::FORMAT],
             'reason' => 'nullable|string|max:500',
             'note' => 'nullable|string|max:2000',
             'priority' => 'nullable|in:normal,urgent,critical',
@@ -80,13 +81,16 @@ class TransferIntentService
     {
         $data = Validator::make($this->normalizeText($data), self::creationRules(), self::creationMessages())->validate();
         $key = strtolower($data['operation_key']);
+        $arrivalValue = $data['requested_arrival_at'] ?? null;
+        $arrivalDate = $arrivalValue !== null && strlen($arrivalValue) === 10 ? $arrivalValue : null;
+        $arrival = PlanningTime::parse($arrivalValue, 'requested_arrival_at', 'Az érkezés dátuma kívül esik a tárolható dátumtartományon.');
         $payload = [
             'product_id' => (int) $data['product_id'],
             'from_warehouse_id' => (int) $data['from_warehouse_id'],
             'to_warehouse_id' => (int) $data['to_warehouse_id'],
             'quantity' => (int) $data['quantity'],
             'requested_by' => (int) $actor->getKey(),
-            'requested_arrival_at' => $this->arrival($data['requested_arrival_at'] ?? null),
+            'requested_arrival_at' => $arrival?->toDateTimeString(),
             'reason' => $data['reason'] ?? null,
             'note' => $data['note'] ?? null,
             'priority' => $data['priority'] ?? 'normal',
@@ -95,22 +99,40 @@ class TransferIntentService
         if ($payload['from_warehouse_id'] === $payload['to_warehouse_id']) {
             throw ValidationException::withMessages(['to_warehouse_id' => 'A forrásraktár és a célraktár nem lehet ugyanaz.']);
         }
+        // Preserve replay of operations recorded before the deadline precision was stored.
+        $legacyFingerprint = $this->operations->fingerprint('created', $actor, null, $payload);
+        if ($arrivalDate !== null) {
+            $payload['requested_arrival_at'] = CarbonImmutable::parse($arrivalDate, PlanningTime::ZONE)
+                ->setTime(23, 59, 59)->utc()->toDateTimeString();
+        }
+        $payload['requested_arrival_date'] = $arrivalDate;
         $fingerprint = $this->operations->fingerprint('created', $actor, null, $payload);
 
-        return $this->operations->run($key, $fingerprint, function () use ($actor, $payload, $key, $fingerprint) {
-            $actor = $this->operations->currentActor($actor);
-            Gate::forUser($actor)->authorize('create', [
-                TransferIntent::class, $payload['from_warehouse_id'], $payload['to_warehouse_id'],
-            ]);
-            if ($existing = $this->operations->findEvent($key)) {
-                return $this->operations->replay($existing, $fingerprint);
-            }
+        return $this->operations->run($key, $fingerprint,
+            function () use ($actor, $payload, $key, $fingerprint, $legacyFingerprint, $arrivalDate, $arrival) {
+                // A retry must wait for a still-running creation from the same requester before rejecting an elapsed deadline.
+                $actor = $this->operations->currentActor($actor, exclusive: true);
+                Gate::forUser($actor)->authorize('create', [
+                    TransferIntent::class, $payload['from_warehouse_id'], $payload['to_warehouse_id'],
+                ]);
+                if ($existing = $this->operations->findEvent($key)) {
+                    return $this->operations->replay($existing, $fingerprint, $legacyFingerprint);
+                }
 
-            $this->lockReferences($payload);
-            $intent = TransferIntent::create($payload);
+                $this->lockReferences($payload);
+                $past = $arrivalDate !== null ? $arrivalDate < now(PlanningTime::ZONE)->toDateString() : PlanningTime::isPast($arrival);
+                if ($past) {
+                    // An outer repeatable-read transaction may still see the state before the previous request committed.
+                    if ($existing = $this->operations->findEvent($key, current: true)) {
+                        return $this->operations->replay($existing, $fingerprint, $legacyFingerprint);
+                    }
+                    throw ValidationException::withMessages(['requested_arrival_at' => PlanningTime::PAST_ARRIVAL]);
+                }
 
-            return $this->operations->log($intent, $actor, 'created', null, $payload['reason'], $key, $fingerprint);
-        });
+                $intent = TransferIntent::create($payload);
+
+                return $this->operations->log($intent, $actor, 'created', null, $payload['reason'], $key, $fingerprint);
+            }, $legacyFingerprint);
     }
 
     public function approve(User $actor, TransferIntent $intent, array $data): array
@@ -208,18 +230,6 @@ class TransferIntentService
                 throw ValidationException::withMessages([$field => 'A választott raktár időközben megszűnt. Válassz másik raktárt.']);
             }
         }
-    }
-
-    private function arrival(?string $value): ?string
-    {
-        if ($value === null) return null;
-
-        $arrival = CarbonImmutable::parse($value, config('app.timezone'))->utc();
-        if ($arrival->year < 1000 || $arrival->year > 9999) {
-            throw ValidationException::withMessages(['requested_arrival_at' => 'Az érkezés dátuma kívül esik a tárolható dátumtartományon.']);
-        }
-
-        return $arrival->format('Y-m-d H:i:s');
     }
 
     private function normalizeText(array $data): array

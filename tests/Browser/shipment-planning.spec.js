@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { setBrowserServerTime } from './browser-server-time';
 import { plan, shipmentCommand as command } from './shipment-fixtures';
 
 const admin = 'warehouse-admin@example.test';
@@ -17,6 +18,7 @@ async function login(page, email = admin) {
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await expect(page).toHaveURL(/dashboard/);
+    await setBrowserServerTime(page, '2026-11-23T14:23:37Z');
 }
 
 async function json(page, url) {
@@ -99,7 +101,14 @@ async function createPlanThroughUi(page, reference, originName) {
     await origin.fill(originName);
     await page.getByRole('option', { name: originName, exact: false }).click();
     await expect(referenceField).toHaveValue(reference);
-    await page.getByLabel(/Jármű vagy rendszám/).fill('E2E-200');
+    const picker = page.getByRole('combobox', { name: 'Nyilvántartott jármű', exact: true });
+    await picker.fill('E2E-200');
+    const result = page.getByRole('option', { name: /Bemutató teherautó · E2E-200/ });
+    await expect(result).toContainText(/Teherbírás: 1\s?200 kg/);
+    await expect(result).toContainText('Raklaphely: 6');
+    await picker.press('ArrowDown');
+    await picker.press('Enter');
+    await expect(picker).toHaveValue('Bemutató teherautó · E2E-200');
     await page.getByLabel(/Tervezett indulás/).fill('2026-12-07T08:30');
     await button(page, 'Fuvar létrehozása').click();
     await expect(page).toHaveURL(/\/shipments\/\d+(?:\?.*)?$/);
@@ -117,6 +126,50 @@ async function capture(page, name) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: join(screenshots, name + '.png'), fullPage: true, animations: 'disabled' });
 }
+
+test('an elapsed departure reports a field error and keeps the draft form and vehicle', async ({ page }) => {
+    await login(page);
+    await command(page, 'POST', '/shipment-plans/vehicles', {
+        operation_key: randomUUID(), name: 'Dátumpróba teherautó', registration_number: 'DATE-200',
+        payload_capacity_kg: 750, pallet_slots_capacity: 2,
+    }, 201);
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.goto('/shipments/create');
+    const departure = page.getByLabel('Tervezett indulás', { exact: true });
+    const reference = page.getByLabel('Szállítmányhivatkozás', { exact: true });
+    const origin = page.getByRole('combobox', { name: 'Induló raktár', exact: true });
+    const vehicle = page.getByRole('combobox', { name: 'Nyilvántartott jármű', exact: true });
+    const note = page.getByLabel('Megjegyzés', { exact: true });
+    const submit = button(page, 'Fuvar létrehozása');
+    await expect(departure).toHaveAttribute('min', '2026-11-23T15:23');
+    await reference.fill('Dátumellenőrzési fuvar');
+    await origin.fill('Teszt raktár');
+    await page.getByRole('option', { name: 'Teszt raktár', exact: true }).click();
+    await vehicle.fill('DATE-200');
+    await page.getByRole('option', { name: /DATE-200/ }).click();
+    await note.fill('A megjegyzés is megmarad.');
+    await departure.fill('2026-11-22T16:00');
+    await submit.press('Enter');
+    await expect(page.locator('#plan-departure-error')).toHaveText('A tervezett indulás nem lehet múltbeli időpont.');
+
+    await setBrowserServerTime(page, '2026-11-23T14:25:37Z');
+    await departure.fill('2026-11-23T15:24');
+    const rejected = page.waitForResponse(response => response.url().endsWith('/shipment-plans') && response.request().method() === 'POST');
+    await submit.click();
+    expect((await rejected).status()).toBe(422);
+    await expect(page.locator('#plan-departure-error')).toHaveText('A tervezett indulás nem lehet múltbeli időpont.');
+    await expect(reference).toHaveValue('Dátumellenőrzési fuvar');
+    await expect(origin).toHaveValue('Teszt raktár');
+    await expect(vehicle).toHaveValue('Dátumpróba teherautó · DATE-200');
+    await expect(note).toHaveValue('A megjegyzés is megmarad.');
+    await departure.fill('');
+    await submit.click();
+    await expect(page).toHaveURL(/\/shipments\/\d+$/);
+    const id = Number(new URL(page.url()).pathname.split('/').at(-1));
+    const detail = await json(page, apiUrl(id));
+    expect(detail.shipment).toMatchObject({ reference: 'Dátumellenőrzési fuvar', planned_departure_at: null, note: 'A megjegyzés is megmarad.' });
+    expect(detail.shipment.vehicle_id).not.toBeNull();
+});
 
 test('the same shipments tab plans three approved intents across two destinations without booking stock', async ({ page }) => {
     test.setTimeout(120000);
@@ -148,9 +201,13 @@ test('the same shipments tab plans three approved intents across two destination
     await nav.getByRole('link', { name: 'Fuvarok és szállítmányok', exact: true }).click();
     await expect(nav.getByRole('link', { name: 'Fuvarok és szállítmányok', exact: true })).toHaveAttribute('aria-current', 'page');
     await expect(page).toHaveURL(/\/shipments$/);
+    const vehicle = await (await command(page, 'POST', '/shipment-plans/vehicles', {
+        operation_key: randomUUID(), name: 'Bemutató teherautó', registration_number: 'E2E-200',
+        payload_capacity_kg: 1200, pallet_slots_capacity: 6,
+    }, 201)).json();
     const id = await createPlanThroughUi(page, 'Dél-dunántúli közös fuvar', source.name);
     let detail = await json(page, apiUrl(id));
-    expect(detail.shipment).toMatchObject({ origin_warehouse_id: source.id, vehicle_label: 'E2E-200', status: 'draft' });
+    expect(detail.shipment).toMatchObject({ origin_warehouse_id: source.id, vehicle_id: vehicle.vehicle.id, vehicle_label: null, status: 'draft' });
     expect(detail.assignments).toHaveLength(0);
     await byHeading(page, 'Jóváhagyott igények hozzáadása').waitFor();
     for (const demand of [a, b, c]) await expect(eligibleRow(page, demand)).toBeVisible();
@@ -388,4 +445,47 @@ test('source picks are visible to dispatchers while requesters cannot open plann
             await ctx.close();
         }
     }
+});
+
+test('the creation picker excludes inactive vehicles and refreshes a changed registry selection', async ({ page }) => {
+    await login(page);
+    const { vehicle } = await (await command(page, 'POST', '/shipment-plans/vehicles', {
+        operation_key: randomUUID(), name: 'Árufuvar próba', registration_number: 'STALE-435',
+        payload_capacity_kg: 950.5, pallet_slots_capacity: 4,
+    }, 201)).json();
+    await command(page, 'POST', '/shipment-plans/vehicles', {
+        operation_key: randomUUID(), name: 'Árufuvar szervizben', registration_number: 'STALE-436', active: false,
+    }, 201);
+    await page.goto('/shipments/create');
+    const picker = page.getByRole('combobox', { name: 'Nyilvántartott jármű' });
+    const origin = page.getByRole('combobox', { name: 'Induló raktár' });
+    const reference = 'Járműfrissítés ' + randomUUID().slice(0, 8);
+    await page.getByLabel('Szállítmányhivatkozás').fill(reference);
+    await origin.focus();
+    await origin.press('ArrowDown');
+    await origin.press('Enter');
+    for (const width of [320, 375, 768, 1024, 1440]) {
+        await page.setViewportSize({ width, height: 850 });
+        await picker.fill('arufuvar STALE');
+        await expect(page.getByRole('listbox', { name: 'Aktív járművek' }).getByRole('option')).toHaveCount(1);
+        await expect(page.getByRole('option', { name: /STALE-435/ })).toContainText('950,5 kg');
+        await expect(page.getByRole('option', { name: /STALE-436/ })).toHaveCount(0);
+        await assertViewport(page, width, 'Járműválasztó');
+    }
+    await picker.press('ArrowDown');
+    await picker.press('Enter');
+    await command(page, 'PATCH', '/shipment-plans/vehicles/' + vehicle.id, {
+        operation_key: randomUUID(), version: vehicle.version, pallet_slots_capacity: 0, payload_capacity_kg: null,
+    }, 200);
+    await button(page, 'Fuvar létrehozása').click();
+    await expect(page.getByText(/A jármű adatai időközben megváltoztak/)).toBeVisible();
+    await expect(page.getByLabel('Szállítmányhivatkozás')).toHaveValue(reference);
+    await expect(picker).toHaveValue('');
+    await picker.fill('STALE-435');
+    await expect(page.getByRole('option', { name: /STALE-435/ })).toContainText('Teherbírás: nincs megadva · Raklaphely: 0');
+    await picker.press('ArrowDown');
+    await picker.press('Enter');
+    await button(page, 'Fuvar létrehozása').click();
+    await expect(page).toHaveURL(new RegExp('/shipments/[0-9]+$'));
+    await expect(page.locator('[data-plan-vehicle]')).toContainText('STALE-435');
 });

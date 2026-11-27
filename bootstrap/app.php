@@ -16,11 +16,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $middleware->web(append: [\App\Http\Middleware\EnsureActiveSession::class]);
+        $middleware->prependToPriorityList(
+            \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            \App\Http\Middleware\EnsureActiveSession::class,
+        );
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        $exceptions->dontFlash(['token']);
         $exceptions->shouldRenderJsonWhen(fn (Request $request, Throwable $exception) =>
             $request->is('transfer-intents', 'transfer-intents/*', 'shipment-plans', 'shipment-plans/*', 'shipment-receipt-items/*')
                 || $request->expectsJson());

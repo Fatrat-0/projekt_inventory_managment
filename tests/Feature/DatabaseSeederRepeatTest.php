@@ -68,7 +68,7 @@ class DatabaseSeederRepeatTest extends TestCase
             'to_warehouse_id' => $target->warehouse_id, 'quantity' => 200, 'pallet_slots' => 0,
             'dimensions_cm' => ['width' => 60, 'depth' => 20, 'height' => 15],
         ];
-        $this->actingAs($worker)->getJson(route('transfers.putaway-recommendations', $cargo + [
+        $this->actingAs(User::where('role', 'admin')->sole())->getJson(route('transfers.putaway-recommendations', $cargo + [
             'product_id' => $withWeight->product_id, 'cargo_weight_kg' => 11, 'cargo_weight_source' => 'calculated',
             'cargo_weight_packaging' => TransferCargoWeight::packagingRevision($withWeight->defaultPackaging),
         ]))->assertOk()

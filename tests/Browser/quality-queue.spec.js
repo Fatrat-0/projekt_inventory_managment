@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { seedUsableStock } from './movement-fixtures';
 
-async function login(page, email = 'browser@example.test') {
+async function login(page, email = 'manual-issue@example.test') {
     await page.goto('/login');
     await page.getByLabel('Email', { exact: true }).fill(email);
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');

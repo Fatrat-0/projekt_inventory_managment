@@ -181,7 +181,7 @@ class WarehouseReceivingPagesTest extends TestCase
     private function member(int $warehouse, string $role): User
     {
         $actor = User::factory()->create(['role' => 'worker']);
-        $actor->warehouseMemberships()->create(['warehouse_id' => $warehouse, 'role' => $role]);
+        $actor->addWarehouseMembership($warehouse, [$role]);
 
         return $actor;
     }

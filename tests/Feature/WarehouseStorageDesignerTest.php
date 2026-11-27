@@ -19,6 +19,7 @@ class WarehouseStorageDesignerTest extends TestCase
         parent::setUp();
         $this->warehouse = Warehouse::create(['warehouse_name' => 'Állványteszt']);
         $this->actingAs(User::factory()->create(['role' => 'manager']));
+        auth()->user()->addWarehouseMembership($this->warehouse->getKey(), ['receiving_operator']);
     }
 
     private function rack(array $overrides = []): array
@@ -65,6 +66,7 @@ class WarehouseStorageDesignerTest extends TestCase
     public function test_shared_capacity_applies_to_physical_stock_and_reserved_transfers_without_losing_either(): void
     {
         $source = Warehouse::create(['warehouse_name' => 'Küldő raktár']);
+        auth()->user()->addWarehouseMembership($source->getKey(), ['supervisor']);
         $category = Category::create(['category_name' => 'Állványteszt']);
         $product = Product::create(['sku' => 'RACK-TEST', 'product_name' => 'Szerelvény', 'category_id' => $category->category_id, 'price' => 1]);
         foreach ([$this->warehouse, $source] as $warehouse) {
@@ -171,6 +173,7 @@ class WarehouseStorageDesignerTest extends TestCase
     public function test_bin_categories_apply_to_stock_and_reservations_and_protect_existing_inventory(): void
     {
         $source = Warehouse::create(['warehouse_name' => 'Küldő']);
+        auth()->user()->addWarehouseMembership($source->getKey(), ['supervisor']);
         $category = Category::create(['category_name' => 'Engedélyezett']);
         $other = Category::create(['category_name' => 'Másik kategória', 'parent_id' => $category->getKey()]);
         $product = Product::create(['sku' => 'RACK-CAT', 'product_name' => 'Mérőműszer', 'category_id' => $category->getKey(), 'price' => 1]);

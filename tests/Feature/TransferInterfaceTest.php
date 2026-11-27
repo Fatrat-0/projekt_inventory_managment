@@ -26,6 +26,8 @@ class TransferInterfaceTest extends TestCase
         $this->product = Product::create(['product_name' => 'Alpha csavar', 'sku' => 'SKU_100%', 'price' => 10, 'category_id' => $category->category_id]);
         $this->source = Warehouse::create(['warehouse_name' => 'Induló', 'location' => 'A']);
         $this->target = Warehouse::create(['warehouse_name' => 'Cél', 'location' => 'B']);
+        $this->actor->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->actor->addWarehouseMembership($this->target->getKey(), ['receiving_operator']);
         Stock::create(['product_id' => $this->product->product_id, 'warehouse_id' => $this->source->warehouse_id, 'quantity' => 10]);
     }
     private function payload(array $data = []): array { return array_replace(['request_key' => (string)Str::uuid(), 'product_id' => $this->product->product_id, 'from_warehouse_id' => $this->source->warehouse_id, 'to_warehouse_id' => $this->target->warehouse_id, 'quantity' => 4], $data); }
@@ -92,7 +94,9 @@ class TransferInterfaceTest extends TestCase
     public function test_start_request_keys_are_scoped_to_actor(): void
     {
         $data = $this->payload(); $this->post(route('transfers.store'), $data)->assertRedirect();
-        $this->actingAs(User::factory()->create(['role'=>'worker']))->post(route('transfers.store'), $data)->assertRedirect();
+        $other = User::factory()->create(['role' => 'worker']);
+        $other->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->actingAs($other)->post(route('transfers.store'), $data)->assertRedirect();
         $this->assertDatabaseCount('inventory_transfers', 2); $this->assertDatabaseCount('inventory_transfer_requests', 2);
         $this->assertSame(2, Stock::sole()->quantity);
     }

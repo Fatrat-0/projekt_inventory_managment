@@ -45,7 +45,7 @@ class WarehouseTaskSortingTest extends TestCase
 
         $worker = User::factory()->create(['role' => 'worker']);
         $sourceId = $tasks->first()->warehouse_id;
-        $worker->warehouseMemberships()->create(['warehouse_id' => $sourceId, 'role' => 'dispatch_operator']);
+        $worker->addWarehouseMembership($sourceId, ['dispatch_operator']);
         $this->actingAs($worker)->get(route('warehouse-picking-pages.index', [
             'sort_by' => 'product_name', 'sort_dir' => 'asc', 'warehouse_id' => 999999,
         ]))->assertOk()->assertViewHas('tasks', fn ($page) => $page->total() === 0);
@@ -84,7 +84,7 @@ class WarehouseTaskSortingTest extends TestCase
         $this->get(route('warehouse-receiving-pages.index', ['sort_dir' => 'invalid']))->assertOk()->assertSee('Válassz érvényes rendezési irányt.');
 
         $worker = User::factory()->create(['role' => 'worker']);
-        $worker->warehouseMemberships()->create(['warehouse_id' => $pecs->warehouse_id, 'role' => 'receiving_operator']);
+        $worker->addWarehouseMembership($pecs->warehouse_id, ['receiving_operator']);
         $this->actingAs($worker)->getJson(route('shipment-plans.receiving.index', ['sort_by' => 'remaining_quantity', 'sort_dir' => 'asc']))
             ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.stop.id', $pecs->id);
     }
@@ -209,7 +209,7 @@ class WarehouseTaskSortingTest extends TestCase
         $this->getJson(route('shipment-plans.receiving.index', array_replace($filters, ['then_dir' => ['desc']])))
             ->assertUnprocessable()->assertJsonValidationErrors('then_dir');
         $worker = User::factory()->create(['role' => 'worker']);
-        $worker->warehouseMemberships()->create(['warehouse_id' => $pecs->warehouse_id, 'role' => 'receiving_operator']);
+        $worker->addWarehouseMembership($pecs->warehouse_id, ['receiving_operator']);
         $this->actingAs($worker)->getJson(route('shipment-plans.receiving.index', $filters))->assertOk()
             ->assertJsonPath('total', 1)->assertJsonPath('data.0.stop.id', $pecs->id);
         $this->assertSame($before, $this->quantities());
@@ -255,7 +255,7 @@ class WarehouseTaskSortingTest extends TestCase
         $this->getJson(route('shipment-plans.receiving.pending-putaway', array_replace($filters, ['then_by' => ['id']])))
             ->assertUnprocessable()->assertJsonValidationErrors('then_by');
         $worker = User::factory()->create(['role' => 'worker']);
-        $worker->warehouseMemberships()->create(['warehouse_id' => $gyor->warehouse_id, 'role' => 'receiving_operator']);
+        $worker->addWarehouseMembership($gyor->warehouse_id, ['receiving_operator']);
         $this->actingAs($worker)->getJson(route('shipment-plans.receiving.pending-putaway', array_replace($filters, ['warehouse_id' => $gyor->warehouse_id])))
             ->assertOk()->assertJsonPath('total', 0);
         $this->assertSame($before, $this->quantities());

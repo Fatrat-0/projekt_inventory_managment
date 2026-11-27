@@ -190,9 +190,8 @@ Route::middleware(['auth'])->group(function () {
         ->whereNumber('transferIntent')->can('executePickingTask', 'transferIntent')->name('transfer-intents.picking-task.picks');
 
     // Breeze Profil kezelése
-    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    Route::get('/profile', [ProfileController::class, 'edit'])->middleware('cache.headers:private;no_store')->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->middleware('throttle:20,1,profile-update')->name('profile.update');
     
     // Mindenki, aki be van jelentkezve (admin, manager, worker) láthatja és kezelheti a termékeket
     Route::middleware(['role:'.implode(',', \App\Http\Middleware\RoleMiddleware::INVENTORY_ROLES)])->group(function () {
@@ -245,12 +244,12 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/shipments/{shipment}/start', [\App\Http\Controllers\ShipmentController::class, 'start'])->name('shipments.start');
         Route::patch('/shipments/{shipment}/stops/{stop}/receive', [\App\Http\Controllers\ShipmentController::class, 'receive'])->name('shipments.receive');
         Route::patch('/shipments/{shipment}/cancel', [\App\Http\Controllers\ShipmentController::class, 'cancel'])->name('shipments.cancel');
-        Route::get('/shipments/{shipment}/loading-plan', [\App\Http\Controllers\ShipmentController::class, 'pdf'])->name('shipments.pdf');
+        Route::get('/shipments/{shipment}/loading-plan', [\App\Http\Controllers\ShipmentController::class, 'pdf'])->middleware('cache.headers:private;no_store')->name('shipments.pdf');
         Route::patch('/transfers/{transfer}/complete', [InventoryTransferController::class, 'complete'])->name('transfers.complete');
         Route::patch('/transfers/{transfer}/cancel', [InventoryTransferController::class, 'cancel'])->name('transfers.cancel');
-        Route::get('/export-inventory', [ExportController::class, 'inventoryPdf'])->name('export.inventory');
-        Route::get('/export-movements', [ExportController::class, 'movementsPdf'])->name('export.movements');
-        Route::get('/transfers/{transfer}/pdf', [ExportController::class, 'transferPdf'])->name('export.transfer');
+        Route::get('/export-inventory', [ExportController::class, 'inventoryPdf'])->middleware('cache.headers:private;no_store')->name('export.inventory');
+        Route::get('/export-movements', [ExportController::class, 'movementsPdf'])->middleware('cache.headers:private;no_store')->name('export.movements');
+        Route::get('/transfers/{transfer}/pdf', [ExportController::class, 'transferPdf'])->middleware('cache.headers:private;no_store')->name('export.transfer');
     });
 
     // A kategóriákat és raktárakat csak az Admin és a Manager piszkálhatja
@@ -258,7 +257,7 @@ Route::middleware(['auth'])->group(function () {
         Route::patch('/stock/{stock}/minimum', [StockController::class, 'minimum'])->name('stock.minimum');
         Route::resource('categories', CategoryController::class)->except(['show']);
         Route::get('/warehouses/statistics', [WarehouseController::class, 'statistics'])->name('warehouses.statistics');
-        Route::get('/warehouses/statistics.pdf', [ExportController::class, 'warehouseStatisticsPdf'])->name('warehouses.statistics-pdf');
+        Route::get('/warehouses/statistics.pdf', [ExportController::class, 'warehouseStatisticsPdf'])->middleware('cache.headers:private;no_store')->name('warehouses.statistics-pdf');
         Route::resource('warehouses', WarehouseController::class);
         Route::put('/warehouses/{warehouse}/floor-plan', [WarehouseFloorPlanController::class, 'update'])->name('warehouses.floor-plan.update');
         Route::post('/warehouses/{warehouse}/floor-plan/systems', [WarehouseFloorPlanController::class, 'storeSystem'])->name('warehouses.floor-plan.systems.store');
@@ -267,8 +266,14 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/warehouses/{warehouse}/locations', [\App\Http\Controllers\WarehouseLocationController::class, 'store'])->name('warehouses.locations.store');
         Route::patch('/warehouses/{warehouse}/locations/{warehouseLocation}', [\App\Http\Controllers\WarehouseLocationController::class, 'update'])->name('warehouses.locations.update');
         Route::get('/warehouses/{warehouse}/inventory-preview', [WarehouseController::class, 'inventoryPreview'])->name('warehouses.inventory-preview');
-        Route::get('/warehouses/{warehouse}/inventory.pdf', [ExportController::class, 'warehouseInventoryPdf'])->name('warehouses.inventory-pdf');
-        Route::resource('users', UserController::class)->except(['show', 'edit', 'update']);
+        Route::get('/warehouses/{warehouse}/inventory.pdf', [ExportController::class, 'warehouseInventoryPdf'])->middleware('cache.headers:private;no_store')->name('warehouses.inventory-pdf');
+    });
+
+    Route::middleware('role:admin')->group(function () {
+        Route::resource('users', UserController::class)->except(['destroy'])->middlewareFor('update', 'throttle:20,1,account-update');
+        Route::patch('/users/{user}/access', [UserController::class, 'access'])->name('users.access');
+        Route::post('/users/{user}/password-link', [UserController::class, 'passwordLink'])
+            ->middleware('throttle:6,1')->name('users.password-link');
     });
 
 });

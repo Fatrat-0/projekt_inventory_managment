@@ -20,6 +20,10 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        if (!app()->environment('local', 'testing')) {
+            throw new \RuntimeException('A bemutató-seeder csak helyi és tesztkörnyezetben futtatható.');
+        }
+
         DB::transaction(function () {
             Model::withoutEvents(fn () => $this->seedDemoData());
             $this->call(ShipmentCargoDemoSeeder::class);

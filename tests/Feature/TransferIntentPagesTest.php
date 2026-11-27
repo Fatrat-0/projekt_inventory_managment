@@ -29,7 +29,7 @@ class TransferIntentPagesTest extends TestCase
         $this->source = Warehouse::create(['warehouse_name' => 'Központi mintaraktár', 'location' => 'Belső cím, 42.']);
         $this->destination = Warehouse::create(['warehouse_name' => 'Déli mintaraktár']);
         $this->outside = Warehouse::create(['warehouse_name' => 'Külső mintaraktár']);
-        $this->destination->memberships()->create(['user_id' => $this->requester->id, 'role' => 'requester']);
+        $this->requester->addWarehouseMembership($this->destination->getKey(), ['requester']);
         $category = Category::create(['category_name' => 'Szerelvények']);
         $this->product = Product::create([
             'product_name' => 'Rozsdamentes alátét', 'sku' => 'ALATET-100',

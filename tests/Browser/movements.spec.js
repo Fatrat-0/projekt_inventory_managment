@@ -149,7 +149,7 @@ test('warehouse supports keyboard choice, Escape, and clearing', async ({ page }
     await input.press('ArrowDown');
     await input.press('Enter');
     await expect(page.locator('input[name="warehouse_id"]')).toHaveValue('1');
-    await expect(page.getByRole('status')).toContainText('db');
+    await expect(page.getByRole('status', { name: 'Készletelérhetőség' })).toContainText('db');
     await input.click();
     await input.press('Escape');
     await expect(input).toHaveAttribute('aria-expanded', 'false');

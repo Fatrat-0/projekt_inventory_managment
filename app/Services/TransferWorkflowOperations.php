@@ -32,16 +32,19 @@ class TransferWorkflowOperations
         'started_at', 'completed_at', 'created_at', 'updated_at',
     ];
 
-    public function run(string $key, string $fingerprint, Closure $operation, ?string $legacyFingerprint = null): array
+    public function run(User $actor, string $key, string $fingerprint, Closure $operation, ?string $legacyFingerprint = null): array
     {
         try {
             return DB::transaction($operation, 3);
         } catch (UniqueConstraintViolationException $exception) {
             // A competing operation may claim this key. Tentative changes were rolled back.
-            $existing = $this->findEvent($key, true);
-            if (!$existing) throw $exception;
+            return DB::transaction(function () use ($actor, $key, $exception, $fingerprint, $legacyFingerprint) {
+                $this->currentActor($actor);
+                $existing = $this->findEvent($key, true);
+                if (!$existing) throw $exception;
 
-            return $this->replay($existing, $fingerprint, $legacyFingerprint);
+                return $this->replay($existing, $fingerprint, $legacyFingerprint);
+            });
         }
     }
 
@@ -100,6 +103,8 @@ class TransferWorkflowOperations
         $users = User::whereKey($actor->getKey());
         $current = ($exclusive ? $users->lockForUpdate() : $users->sharedLock())->first();
         abort_unless($current, 403, 'A felhasználói fiók már nem érhető el.');
+        abort_unless($current->isActive() && (int) $current->access_version === (int) $actor->access_version,
+            403, 'A felhasználó hozzáférése megváltozott. Jelentkezz be újra.');
 
         return $current;
     }

@@ -29,6 +29,7 @@ class PartnerMovementIntegrationTest extends TestCase
         $category = Category::create(['category_name' => 'Partner teszt']);
         $this->product = Product::create(['category_id' => $category->category_id, 'sku' => 'PARTNER-TEST', 'product_name' => 'Csavar', 'price' => 100]);
         $this->warehouse = Warehouse::create(['warehouse_name' => 'Partner raktár', 'location' => 'Budapest']);
+        $this->user->addWarehouseMembership($this->warehouse->getKey(), ['dispatch_operator']);
         Stock::create(['product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id, 'quantity' => 10]);
         $this->partner = Partner::create(['name' => 'Kettős partner', 'type' => 'both', 'email' => 'both@example.test']);
     }

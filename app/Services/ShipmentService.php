@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\{Product, Shipment, ShipmentStop};
-use Illuminate\Support\Facades\DB;
+use App\Models\{Product, Shipment, ShipmentStop, User};
+use Illuminate\Support\Facades\{DB, Gate};
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
@@ -14,20 +14,24 @@ class ShipmentService
     {
     }
 
-    public function save(array $data, int $actor, ?Shipment $shipment = null): Shipment
+    /** Integer actor IDs are for trusted internal jobs such as demo seeding. */
+    public function save(array $data, User|int $actor, ?Shipment $shipment = null): Shipment
     {
         return DB::transaction(function () use ($data, $actor, $shipment) {
+            if ($actor instanceof User) $actor = app(TransferWorkflowOperations::class)->currentActor($actor);
             if ($shipment) {
                 $shipment = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
                 $this->requireLegacy($shipment);
+                if ($actor instanceof User) Gate::forUser($actor)->authorize('managePlan', $shipment);
                 if ($shipment->status !== 'draft' || (int)($data['version'] ?? 0) !== $shipment->version) {
                     $this->fail('A tervezet közben megváltozott vagy már elindult. Frissítsd az oldalt.');
                 }
                 $shipment->stops()->delete();
                 $shipment->version++;
             } else {
-                $shipment = new Shipment(['user_id' => $actor, 'status' => 'draft', 'version' => 1]);
+                $shipment = new Shipment(['user_id' => $actor instanceof User ? $actor->id : $actor, 'status' => 'draft', 'version' => 1]);
             }
+            if ($actor instanceof User) Gate::forUser($actor)->authorize('createPlan', [Shipment::class, (int) $data['origin_warehouse_id']]);
             $shipment->fill(collect($data)->only(['origin_warehouse_id', 'reference', 'vehicle_label', 'note'])->all());
             $shipment->save();
             foreach (array_values($data['stops']) as $index => $stopData) {
@@ -40,11 +44,13 @@ class ShipmentService
         }, 3);
     }
 
-    public function start(Shipment $shipment, int $actor, int $version): void
+    public function start(Shipment $shipment, User|int $actor, int $version): void
     {
         DB::transaction(function () use ($shipment, $actor, $version) {
+            if ($actor instanceof User) $actor = app(TransferWorkflowOperations::class)->currentActor($actor);
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
             $this->requireLegacy($locked);
+            if ($actor instanceof User) Gate::forUser($actor)->authorize('dispatchPlan', $locked);
             if (in_array($locked->status, ['in_transit', 'completed'], true)) return;
             if ($locked->status !== 'draft' || $locked->version !== $version) $this->fail('Csak a megtekintett, aktuális tervezet indítható el. Frissítsd az oldalt.');
             $locked->load('stops.items');
@@ -56,7 +62,7 @@ class ShipmentService
                 foreach ($stop->items as $item) {
                     $transfer = $this->inventory->startTransfer(['product_id' => $item->product_id,
                         'from_warehouse_id' => $locked->origin_warehouse_id, 'to_warehouse_id' => $stop->warehouse_id,
-                        'quantity' => $item->quantity, 'user_id' => $actor] + WarehouseCapacity::cargo($item->getAttributes()));
+                        'quantity' => $item->quantity, 'user_id' => $actor instanceof User ? $actor->id : $actor] + WarehouseCapacity::cargo($item->getAttributes()));
                     $item->update(['transfer_id' => $transfer->id]);
                 }
             }
@@ -64,12 +70,14 @@ class ShipmentService
         }, 3);
     }
 
-    public function receive(Shipment $shipment, ShipmentStop $stop, int $actor): void
+    public function receive(Shipment $shipment, ShipmentStop $stop, User|int $actor): void
     {
         DB::transaction(function () use ($shipment, $stop, $actor) {
+            if ($actor instanceof User) $actor = app(TransferWorkflowOperations::class)->currentActor($actor);
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
             $this->requireLegacy($locked);
             $stop = $locked->stops()->whereKey($stop->id)->firstOrFail();
+            if ($actor instanceof User) Gate::forUser($actor)->authorize('receiveStop', [Shipment::class, $stop]);
             if ($stop->received_at) return;
             if ($locked->status !== 'in_transit') $this->fail('Csak úton lévő szállítmány vehető át.');
             $next = $locked->stops()->whereNull('received_at')->firstOrFail();
@@ -78,16 +86,18 @@ class ShipmentService
             $this->lockProducts($stop->items);
             $this->capacity->lockWarehouses([$locked->origin_warehouse_id, $stop->warehouse_id]);
             foreach ($stop->items as $item) $this->inventory->finalizeTransfer($item->transfer, true, true);
-            $stop->update(['received_at' => now(), 'received_by' => $actor]);
+            $stop->update(['received_at' => now(), 'received_by' => $actor instanceof User ? $actor->id : $actor]);
             if (!$locked->stops()->whereNull('received_at')->exists()) $locked->update(['status' => 'completed', 'finished_at' => now()]);
         }, 3);
     }
 
-    public function cancel(Shipment $shipment): void
+    public function cancel(Shipment $shipment, ?User $actor = null): void
     {
-        DB::transaction(function () use ($shipment) {
+        DB::transaction(function () use ($shipment, $actor) {
+            if ($actor) $actor = app(TransferWorkflowOperations::class)->currentActor($actor);
             $locked = Shipment::whereKey($shipment->id)->lockForUpdate()->firstOrFail();
             $this->requireLegacy($locked);
+            if ($actor) Gate::forUser($actor)->authorize('managePlan', $locked);
             if ($locked->status === 'cancelled') return;
             if ($locked->status === 'completed') $this->fail('Teljesített szállítmány nem vonható vissza.');
             if ($locked->status === 'in_transit') {

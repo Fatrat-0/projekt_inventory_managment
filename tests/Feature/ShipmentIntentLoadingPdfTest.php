@@ -54,16 +54,12 @@ class ShipmentIntentLoadingPdfTest extends TestCase
     public function test_plan_policy_applies_and_missing_document_data_cannot_download(): void
     {
         $operator = User::factory()->create(['role' => 'worker']);
-        $operator->warehouseMemberships()->create([
-            'warehouse_id' => $this->plan->origin_warehouse_id, 'role' => 'dispatch_operator',
-        ]);
+        $operator->addWarehouseMembership($this->plan->origin_warehouse_id, ['dispatch_operator']);
         $url = route('shipments.pdf', $this->plan);
         $this->actingAs($operator)->get($url)->assertOk();
 
         $receiver = User::factory()->create(['role' => 'worker']);
-        $receiver->warehouseMemberships()->create([
-            'warehouse_id' => $this->plan->stops()->firstOrFail()->warehouse_id, 'role' => 'dispatch_operator',
-        ]);
+        $receiver->addWarehouseMembership($this->plan->stops()->firstOrFail()->warehouse_id, ['dispatch_operator']);
         $this->actingAs($receiver)->get($url)->assertForbidden();
 
         app(ShipmentPlanningService::class)->create($this->admin, [

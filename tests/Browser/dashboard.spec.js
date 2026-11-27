@@ -244,7 +244,7 @@ test('a failed period request preserves the chart and permits a retry', async ({
 for (const chart of ['bar', 'line']) {
     for (const days of [7, 30]) {
         test(`daily chart ${chart}/${days}: hover and keyboard expose values and a day opens its exact movement history`, async ({ page }) => {
-            await login(page);
+            await login(page, 'manual-issue@example.test');
             await movement(page, 1, 'in', 7);
             await movement(page, 1, 'out', 3);
             const source = `/dashboard?days=${days}&chart=${chart}`;
@@ -327,7 +327,7 @@ test('daily chart links work on touch screens and without JavaScript', async ({ 
 });
 
 test('shortages use available stock, return work opens the queue and long names fit every breakpoint', async ({ page }) => {
-    await login(page);
+    await login(page, 'warehouse-admin@example.test');
     const item = await product(page);
     await movement(page, item.id, 'in', 8);
     const issued = await movement(page, item.id, 'out', 6);
@@ -367,7 +367,7 @@ test('shortages use available stock, return work opens the queue and long names 
 
 test('zero availability includes quarantine and missing stock, waiting ages stay readable and tasks precede the chart', async ({ page }) => {
     test.setTimeout(60000);
-    await login(page);
+    await login(page, 'warehouse-admin@example.test');
     const quarantined = await product(page, 1000000, 'Ipari szerszámkészlet raktári karbantartáshoz');
     await movement(page, quarantined.id, 'in', 6);
     const issued = await movement(page, quarantined.id, 'out', 6);
@@ -406,7 +406,7 @@ test('zero availability includes quarantine and missing stock, waiting ages stay
 });
 
 test('pending shipment items link to the shipment and receipt clears the live dashboard task', async ({ page }) => {
-    await login(page);
+    await login(page, 'warehouse-admin@example.test');
     const item = await product(page, 0);
     await movement(page, item.id, 'in', 10);
     const reference = 'Dashboard-'+randomUUID();
@@ -523,7 +523,7 @@ test('shortage lists expand independently, scroll within the panel, and page wit
 
 test('pending transfers and recent movements share the compact scrolling lists and preserve independent pages', async ({ page, browser }) => {
     test.setTimeout(90000);
-    await login(page);
+    await login(page, 'warehouse-admin@example.test');
     const existingTransfers = Number((await page.locator('[data-dashboard-card="transfers"]').textContent()).replace(/\s/g, ''));
     const item = await product(page, 0);
     for (let index = 0; index < 28; index++) {
@@ -564,7 +564,7 @@ test('pending transfers and recent movements share the compact scrolling lists a
     const native = await browser.newContext({ javaScriptEnabled: false });
     try {
         const other = await native.newPage();
-        await login(other);
+        await login(other, 'warehouse-admin@example.test');
         const nativeMovements = other.locator('[data-dashboard-list="movement"]');
         await expect(nativeMovements.locator('[data-recent-movement]:visible')).toHaveCount(3);
         await nativeMovements.getByText('Több megjelenítése', { exact: true }).click();

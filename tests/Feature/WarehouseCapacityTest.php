@@ -31,6 +31,8 @@ class WarehouseCapacityTest extends TestCase
         $this->product = Product::create(['product_name' => 'Csavar', 'sku' => 'TAR-1', 'category_id' => $category->category_id, 'price' => 100]);
         $this->stock($this->source)->update(['quantity' => 300]);
         $this->actingAs($this->worker);
+        $this->worker->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->worker->addWarehouseMembership($this->target->getKey(), ['receiving_operator']);
     }
 
     private function stock(Warehouse $warehouse): Stock

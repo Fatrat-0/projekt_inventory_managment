@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\{User, Warehouse, WarehouseMembership};
+use App\Models\{User, Warehouse};
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -21,10 +21,8 @@ class TransferIntentMembershipDemoSeeder extends Seeder
                 if (!$user || !$warehouse) {
                     throw new RuntimeException('A bemutató tagságokhoz szükség van a DatabaseSeeder által létrehozott tesztfiókokra és raktárakra.');
                 }
-                WarehouseMembership::firstOrCreate([
-                    'user_id' => $user->id,
-                    'warehouse_id' => $warehouse->warehouse_id,
-                ], ['role' => $localRole]);
+                $membership = $user->warehouseMemberships()->firstOrCreate(['warehouse_id' => $warehouse->getKey()]);
+                if ($membership->wasRecentlyCreated) $membership->syncRoles([$localRole]);
             }
         });
     }

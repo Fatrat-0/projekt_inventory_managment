@@ -112,7 +112,8 @@ class WarehouseTransferTaskService
 
     public function pick(User $actor, TransferIntent $intent, array $data): array
     {
-        Gate::forUser($actor)->authorize('executePickingTask', $intent);
+        // The write transaction takes the account lock before it locks and rechecks the assignment.
+        Gate::forUser($actor)->authorize('executePickingTask', [$intent, false]);
         $valid = Validator::make($data, [
             'quantity' => ['required', $this->positiveInteger(TransferIntent::MAX_QUANTITY)],
             'source_allocations' => 'required|list|min:1',
@@ -188,7 +189,7 @@ class WarehouseTransferTaskService
         if ($unassignedConfirmation !== null) $payload['unassigned_confirmation'] = $unassignedConfirmation;
         $fingerprint = $this->operations->fingerprint($type, $actor, $intent->id, $payload);
 
-        return $this->operations->run($key, $fingerprint, function () use (
+        return $this->operations->run($actor, $key, $fingerprint, function () use (
             $actor, $intent, $type, $creating, $quantity, $allocations, $key, $version, $reason, $fingerprint, $unassignedConfirmation,
         ) {
             $actor = $this->operations->currentActor($actor);

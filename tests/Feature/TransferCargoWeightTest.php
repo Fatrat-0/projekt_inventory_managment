@@ -20,9 +20,12 @@ class TransferCargoWeightTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->actingAs(User::factory()->create(['role' => 'worker']));
+        $worker = User::factory()->create(['role' => 'worker']);
+        $this->actingAs($worker);
         $this->source = Warehouse::create(['warehouse_name' => 'Forrás']);
         $this->destination = Warehouse::create(['warehouse_name' => 'Cél']);
+        $worker->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $worker->addWarehouseMembership($this->destination->getKey(), ['receiving_operator']);
         $category = Category::create(['category_name' => 'Alkatrészek']);
         $this->product = Product::create([
             'product_name' => 'Tengely', 'sku' => 'ATM-S-1', 'price' => 1, 'category_id' => $category->getKey(),

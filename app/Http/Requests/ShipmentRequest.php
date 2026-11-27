@@ -2,13 +2,21 @@
 
 namespace App\Http\Requests;
 
-use App\Models\WarehouseLocation;
+use App\Models\{Shipment, WarehouseLocation};
 use App\Services\WarehouseCapacity;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 
 class ShipmentRequest extends FormRequest
 {
-    public function authorize(): bool { return true; }
+    public function authorize(): bool
+    {
+        $shipment = $this->route('shipment');
+
+        return $shipment instanceof Shipment
+            ? Gate::allows('managePlan', $shipment)
+            : Gate::allows('createAnyPlan', Shipment::class);
+    }
 
     protected function prepareForValidation(): void
     {

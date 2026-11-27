@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\{InventoryMovement, InventoryTransfer, Partner, Product, ProductPackaging, ReturnQualityAction, ShipmentDispatch, ShipmentReceipt, ShipmentReceiptItem, Stock, User};
+use App\Policies\TransferIntentPolicy;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -21,17 +22,17 @@ class InventoryService
     ) {}
 
     /** Book an ordinary issue or import opening stock that has already been accepted for use. */
-    public function recordMovement(array $data, ?string $requestKey = null): InventoryMovement
+    public function recordMovement(array $data, ?string $requestKey = null, ?User $actor = null): InventoryMovement
     {
-        return $this->bookMovement($data, $requestKey, false);
+        return $this->bookMovement($data, $requestKey, false, $actor);
     }
 
-    public function receiveManual(array $data, string $requestKey): InventoryMovement
+    public function receiveManual(array $data, string $requestKey, ?User $actor = null): InventoryMovement
     {
-        return $this->bookMovement(array_replace($data, ['type' => 'in']), $requestKey, true);
+        return $this->bookMovement(array_replace($data, ['type' => 'in']), $requestKey, true, $actor);
     }
 
-    private function bookMovement(array $data, ?string $requestKey, bool $protectReceipt): InventoryMovement
+    private function bookMovement(array $data, ?string $requestKey, bool $protectReceipt, ?User $actor): InventoryMovement
     {
         $requestKey = $requestKey !== null ? strtolower($requestKey) : null;
         $payload = [
@@ -50,7 +51,8 @@ class InventoryService
         }
         $hash = hash('sha256', json_encode($payload + ($sources === null ? [] : ['source_allocations' => $sources]), JSON_THROW_ON_ERROR));
         try {
-            return DB::transaction(function () use ($payload, $requestKey, $hash, $sources, $protectReceipt) {
+            return DB::transaction(function () use ($payload, $requestKey, $hash, $sources, $protectReceipt, $actor) {
+                if ($actor) $this->authorizeMovement($actor, $payload);
                 $requestId = null;
                 if ($requestKey !== null) {
                     // The unique insert serializes the SAME request even across different products.
@@ -91,7 +93,20 @@ class InventoryService
                 return $movement;
             }, 3);
         } catch (UniqueConstraintViolationException $e) {
-            return $this->replayMovement($e, $requestKey, $payload['user_id'], $hash);
+            return DB::transaction(function () use ($actor, $payload, $e, $requestKey, $hash) {
+                if ($actor) $this->authorizeMovement($actor, $payload);
+
+                return $this->replayMovement($e, $requestKey, $payload['user_id'], $hash);
+            });
+        }
+    }
+
+    private function authorizeMovement(User $actor, array $payload): void
+    {
+        $current = app(TransferWorkflowOperations::class)->currentActor($actor);
+        abort_unless((int) $current->id === $payload['user_id'], 403);
+        if ($payload['type'] === 'out') {
+            app(TransferIntentPolicy::class)->authorizeManualIssue($current, $payload['warehouse_id']);
         }
     }
 

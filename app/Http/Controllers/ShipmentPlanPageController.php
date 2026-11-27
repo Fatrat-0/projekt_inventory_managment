@@ -54,12 +54,12 @@ class ShipmentPlanPageController extends Controller
         ]);
     }
 
-    public function show(Request $request, Shipment $shipment, ShipmentController $legacy, ShipmentReceivingReader $receiving)
+    public function show(Request $request, Shipment $shipment, ShipmentController $legacy, ShipmentReceivingReader $receiving, ShipmentPolicy $policy)
     {
         if (!$shipment->isTransferIntentPlan()) {
             abort_unless(in_array($request->user()->role, ['admin', 'manager', 'worker'], true), 403, 'Nincs jogosultságod ehhez a szállítmányhoz.');
 
-            return $legacy->show($request, $shipment);
+            return $legacy->show($request, $shipment, $policy);
         }
         $sourceAccess = Gate::allows('viewPlan', $shipment);
         $receivingStops = DB::transaction(fn () => $receiving->shipmentStops($request->user(), $shipment));
@@ -78,7 +78,7 @@ class ShipmentPlanPageController extends Controller
 
     public function edit(Shipment $shipment)
     {
-        if ($shipment->isTransferIntentPlan()) Gate::authorize('managePlan', $shipment);
+        Gate::authorize('managePlan', $shipment);
         abort_unless($shipment->status === 'draft', 409, 'Csak tervezet szerkeszthető.');
 
         return redirect()->route('shipments.show', $shipment);

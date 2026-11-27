@@ -25,6 +25,7 @@ class MovementSafetyTest extends TestCase
         $category = Category::create(['category_name' => 'Teszt']);
         $this->product = Product::create(['category_id' => $category->category_id, 'product_name' => 'Teszt csavar', 'sku' => 'SAFETY', 'price' => 100]);
         $this->warehouse = Warehouse::create(['warehouse_name' => 'Forrás', 'location' => 'A']);
+        $this->user->addWarehouseMembership($this->warehouse->getKey(), ['dispatch_operator']);
         Stock::create(['product_id' => $this->product->product_id, 'warehouse_id' => $this->warehouse->warehouse_id, 'quantity' => 10]);
     }
 
@@ -69,6 +70,7 @@ class MovementSafetyTest extends TestCase
         $this->post(route('movements.store'), $data)->assertRedirect();
         $otherProduct = Product::create(['category_id' => $this->product->category_id, 'product_name' => 'Másik', 'sku' => 'OTHER', 'price' => 100]);
         $otherWarehouse = Warehouse::create(['warehouse_name' => 'Másik', 'location' => 'B']);
+        $this->user->addWarehouseMembership($otherWarehouse->getKey(), ['dispatch_operator']);
         foreach ([['product_id' => $otherProduct->product_id], ['warehouse_id' => $otherWarehouse->warehouse_id]] as $change) {
             $this->postJson(route('movements.store'), array_replace($data, $change))->assertUnprocessable()->assertJsonValidationErrors('request_key');
         }

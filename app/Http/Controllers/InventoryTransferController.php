@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\{InventoryTransfer, Product, Stock, Warehouse, WarehouseLocation};
+use App\Policies\ShipmentPolicy;
 use App\Queries\TransferListing;
 use App\Queries\ReplenishmentSuggestions;
 use App\Services\InventoryService;
@@ -13,7 +14,7 @@ use App\Services\WarehouseCapacity;
 use App\Services\WarehouseStockAvailability;
 use App\Support\TransferListContext;
 use Illuminate\Http\{JsonResponse, Request};
-use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\{DB, Gate, Validator};
 use Illuminate\Support\Str;
 
 class InventoryTransferController extends Controller
@@ -32,8 +33,10 @@ class InventoryTransferController extends Controller
             'products' => Product::orderBy('product_name')->get(), 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
         ]);
     }
-    public function create(Request $request)
+    public function create(Request $request, ShipmentPolicy $shipments)
     {
+        Gate::authorize('create', InventoryTransfer::class);
+        $sourceWarehouses = $shipments->warehousesFor($request->user(), true)->get();
         $context = $request->old('context', $request->query('context', ''));
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
         $requestKey = $request->old('request_key');
@@ -43,12 +46,14 @@ class InventoryTransferController extends Controller
             $selection = $request->validate(['replenishment_stock_id' => 'required|integer|min:1', 'source_stock_id' => 'required|integer|min:1']);
             $proposal = ReplenishmentSuggestions::query()->where('needs.id', $selection['replenishment_stock_id'])->where('needs.source_stock_id', $selection['source_stock_id'])->first();
             if (!$proposal) return redirect()->to(route('dashboard').'#replenishment-title')->withErrors(['replenishment' => 'Ez az utánpótlási javaslat már nem aktuális. Válassz a frissített listából.']);
+            Gate::authorize('start', [InventoryTransfer::class, (int) $proposal->source_warehouse_id]);
             $prefill = ['replenishment_stock_id' => (int)$proposal->id, 'product_id' => (int)$proposal->product_id,
                 'from_warehouse_id' => (int)$proposal->source_warehouse_id, 'to_warehouse_id' => (int)$proposal->warehouse_id,
                 'quantity' => min((int)$proposal->shortage, (int)$proposal->surplus)];
         }
         $sourceProducts = Stock::query()
             ->select(['stocks.id', 'warehouse_id', 'product_id', 'quantity', 'quarantined_quantity'])->withPendingPutaway()
+            ->whereIn('warehouse_id', $sourceWarehouses->modelKeys())
             ->whereColumn('quantity', '>', 'quarantined_quantity')
             ->withSum(['placements as inactive_quantity' => fn ($placements) => $placements
                 ->whereHas('location', fn ($locations) => $locations->where('active', false))], 'quantity')
@@ -67,6 +72,7 @@ class InventoryTransferController extends Controller
             ->orderBy('product_name')->get();
 
         return view('transfers.create', ['products' => $products, 'warehouses' => Warehouse::orderBy('warehouse_name')->get(),
+            'sourceWarehouses' => $sourceWarehouses,
             'context' => $context, 'returnUrl' => TransferListContext::url($context), 'requestKey' => $requestKey, 'prefill' => $prefill,
             'storageLocations' => WarehouseLocation::pickerOptions($this->planDetails(...)), 'sourceProducts' => $sourceProducts]);
     }
@@ -83,6 +89,8 @@ class InventoryTransferController extends Controller
             'quantity.*' => 'A mennyiség 1 és 2 147 483 647 közötti egész szám legyen.',
         ]);
 
+        Gate::authorize('viewPickingSources', [InventoryTransfer::class, (int) $data['from_warehouse_id']]);
+
         return response()->json($picking->options(
             (int) $data['from_warehouse_id'],
             (int) $data['product_id'],
@@ -92,6 +100,7 @@ class InventoryTransferController extends Controller
 
     public function putawayRecommendations(Request $request, SmartPutaway $putaway): JsonResponse
     {
+        Gate::authorize('create', InventoryTransfer::class);
         $data = $request->validate([
             'to_warehouse_id' => 'required|integer|exists:warehouses,warehouse_id',
             'product_id' => 'required|integer|exists:products,product_id',
@@ -162,6 +171,7 @@ class InventoryTransferController extends Controller
     }
     public function store(Request $request, InventoryService $inventory)
     {
+        Gate::authorize('create', InventoryTransfer::class);
         $rules = [
             'request_key' => 'required|uuid',
             'product_id' => 'required|integer|exists:products,product_id',
@@ -200,11 +210,16 @@ class InventoryTransferController extends Controller
             $data['source_allocations'] = $request->input('source_allocations');
         }
         $data['user_id'] = $request->user()->id;
-        $transfer = $inventory->startTransfer($data, $data['request_key']);
+        $transfer = DB::transaction(function () use ($request, $inventory, $data) {
+            $actor = app(\App\Services\TransferWorkflowOperations::class)->currentActor($request->user());
+            Gate::forUser($actor)->authorize('start', [InventoryTransfer::class, (int) $data['from_warehouse_id']]);
+            return $inventory->startTransfer($data, $data['request_key']);
+        }, 3);
         return redirect()->to(TransferListContext::url($request->input('context')))->with('success', 'Átmozgatás elindítva: '.$transfer->transfer_number.'.');
     }
     public function show(Request $request, InventoryTransfer $transfer)
     {
+        Gate::authorize('view', $transfer);
         $transfer->load(['product', 'fromWarehouse', 'toWarehouse', 'user', 'shipmentItem.stop.shipment', 'destinationLocation', 'sourceAllocations']);
         $context = $request->query('context', '');
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';
@@ -212,12 +227,20 @@ class InventoryTransferController extends Controller
     }
     public function complete(Request $request, InventoryTransfer $transfer, InventoryService $inventory)
     {
-        $inventory->finalizeTransfer($transfer, true);
+        DB::transaction(function () use ($request, $inventory, $transfer) {
+            $actor = app(\App\Services\TransferWorkflowOperations::class)->currentActor($request->user());
+            Gate::forUser($actor)->authorize('complete', $transfer);
+            $inventory->finalizeTransfer($transfer, true);
+        }, 3);
         return redirect()->to(TransferListContext::url($request->input('context')))->with('success', 'Az átvétel rögzítve, a célraktár készlete frissült.');
     }
     public function cancel(Request $request, InventoryTransfer $transfer, InventoryService $inventory)
     {
-        $needsPlacement = $inventory->finalizeTransfer($transfer, false);
+        $needsPlacement = DB::transaction(function () use ($request, $inventory, $transfer) {
+            $actor = app(\App\Services\TransferWorkflowOperations::class)->currentActor($request->user());
+            Gate::forUser($actor)->authorize('cancel', $transfer);
+            return $inventory->finalizeTransfer($transfer, false);
+        }, 3);
         $message = 'Átmozgatás visszavonva. Az áru visszakerült a forrásraktárba.';
         if ($needsPlacement > 0) {
             $message .= ' '.number_format($needsPlacement, 0, ',', ' ').' db tárhely nélkül került vissza. Ezeket helyezd el egy alkalmas tárhelyen.';

@@ -2,9 +2,9 @@ import { test, expect } from '@playwright/test';
 import { seedUsableStock } from './movement-fixtures';
 import { randomUUID } from 'node:crypto';
 
-async function login(page, admin = false) {
+async function login(page, email = 'browser@example.test') {
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill(admin ? 'warehouse-admin@example.test' : 'browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill(email);
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await expect(page).toHaveURL(/dashboard/);
@@ -16,7 +16,7 @@ async function editMinimum(row) {
 }
 
 test('minimum editing opens from the menu on desktop and mobile and Cancel discards the draft and restores focus', async ({ page }) => {
-    await login(page, true);
+    await login(page, 'warehouse-admin@example.test');
     await page.goto('/stock?product_id=1&warehouse_id=1');
     let writes = 0;
     page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname.includes('/minimum')) writes++; });
@@ -112,7 +112,7 @@ test('suggestions choose an exact product, editing clears it, and heading sortin
 
 test('pagination and minimum editing preserve search filters sorting and page size', async ({ page }) => {
     test.setTimeout(60000);
-    await login(page, true);
+    await login(page, 'warehouse-admin@example.test');
     const batch = 'BATCH-'+randomUUID().slice(0, 8);
     for (let i = 1; i <= 12; i++) { const item = await product(page, batch); await movement(page, item.id, i); }
     await page.goto('/stock?search='+batch+'&warehouse_id=1&per_page=10&sort_by=quantity&sort_dir=desc');
@@ -134,7 +134,7 @@ test('pagination and minimum editing preserve search filters sorting and page si
 });
 
 test('stale minimum edits fail clearly and do not overwrite another users saved minimum', async ({ page, context }) => {
-    await login(page, true);
+    await login(page, 'warehouse-admin@example.test');
     const item = await product(page); await movement(page, item.id, 9);
     await page.goto('/stock?product_id='+item.id);
     const other = await context.newPage();
@@ -154,7 +154,7 @@ test('stale minimum edits fail clearly and do not overwrite another users saved 
 });
 
 test('fully quarantined stock is unavailable and its action opens the matching quality queue', async ({ page }) => {
-    await login(page);
+    await login(page, 'manual-issue@example.test');
     const item = await product(page); await movement(page, item.id, 6);
     const issue = await movement(page, item.id, 6, 'out');
     expect((await post(page, '/movements/'+issue+'/return', { request_key: randomUUID(), quantity: 6, return_reason: 'Stock listing test' })).status()).toBe(302);
@@ -167,7 +167,7 @@ test('fully quarantined stock is unavailable and its action opens the matching q
 });
 
 test('mobile cards and sorting fit narrow screens and enlarged text with long names and large quantities', async ({ page }) => {
-    await login(page, true);
+    await login(page, 'warehouse-admin@example.test');
     const item = await product(page, 'Hosszú terméknév', true); await movement(page, item.id, 2147483647);
     await page.goto('/stock?product_id='+item.id);
     for (const width of [320, 390, 768, 1280, 1440]) {
@@ -194,7 +194,7 @@ test('native filters mobile sorting and minimum save work without JavaScript', a
     const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 800 } });
     const page = await context.newPage();
     try {
-        await login(page, true);
+        await login(page, 'warehouse-admin@example.test');
         const item = await product(page); await movement(page, item.id, 2);
         await page.goto('/stock?product_id='+item.id+'&warehouse_id=1&per_page=10');
         await page.getByLabel('Készletállapot', { exact: true }).selectOption('low');

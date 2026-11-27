@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\{InventoryTransfer, User};
+use App\Policies\InventoryTransferPolicy;
 use App\Queries\ReturnQualityListing;
 
 class AppTasks
@@ -10,7 +11,7 @@ class AppTasks
     public static function summary(?User $user): ?array
     {
         if (!in_array($user?->role, ['admin', 'manager', 'worker'], true)) return null;
-        $transfers = InventoryTransfer::where('status', 'pending')->count();
+        $transfers = app(InventoryTransferPolicy::class)->visibleTo(InventoryTransfer::where('status', 'pending'), $user)->count();
         $returns = ReturnQualityListing::pendingSummary();
         return ['transfers' => $transfers, 'returns' => $returns['returns_count'], 'returnQuantity' => $returns['quantity'], 'total' => $transfers + $returns['returns_count']];
     }

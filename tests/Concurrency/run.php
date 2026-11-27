@@ -152,6 +152,19 @@ if (($argv[1] ?? '') === '--worker') {
             'return' => $service->recordReturn(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'quality' => $service->processReturnQuality(InventoryMovement::findOrFail($job['id']), $job['data'], $job['requestKey'] ?? null),
             'user_delete' => User::findOrFail($job['id'])->delete(),
+            'user_inactivation' => app(\App\Services\UserAccess::class)->setActive(
+                User::findOrFail($job['actor']), User::findOrFail($job['id']), false,
+            ),
+            'user_demotion' => app(\App\Services\UserAccess::class)->update(
+                User::findOrFail($job['actor']), $target = User::findOrFail($job['id']),
+                ['role' => 'worker', 'name' => $target->name, 'email' => $target->email, 'lock_version' => 1],
+            ),
+            'user_memberships' => app(\App\Services\UserAccess::class)->update(
+                User::findOrFail($job['actor']), $target = User::findOrFail($job['id']),
+                ['role' => $target->role, 'name' => $target->name, 'email' => $target->email,
+                    'lock_version' => 1, 'memberships' => $job['memberships']],
+            ),
+            'authenticated_issue' => $service->recordMovement($job['data'], $job['requestKey'], User::findOrFail($job['data']['user_id'])),
             'start' => $service->startTransfer($job['data'], $job['requestKey'] ?? null),
             'place' => app(WarehouseCapacity::class)->place(WarehouseLocation::findOrFail($job['id']), $job['data']),
             'floor_plan' => app(WarehouseFloorPlan::class)->save(Warehouse::findOrFail($job['id']), $job['data']),
@@ -188,6 +201,12 @@ if (($argv[1] ?? '') === '--worker') {
         echo "REJECTED\n";
     } catch (Throwable $e) {
         if ($outerSnapshot && DB::transactionLevel() > 0) DB::rollBack();
+        if ((($job['allowRevoked'] ?? false) || in_array($job['action'], ['user_inactivation', 'user_demotion'], true))
+            && $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+            && $e->getStatusCode() === 403) {
+            echo "REJECTED\n";
+            exit(0);
+        }
         if ($job['action'] === 'vehicle_delete' && $e instanceof \Illuminate\Database\QueryException && ($e->errorInfo[1] ?? null) === 1451) {
             echo "REJECTED\n";
             exit(0);
@@ -274,9 +293,96 @@ try {
     check(Artisan::call('migrate', ['--database' => 'inventory_race', '--force' => true]) === 0, 'Test migrations failed.');
     $tables = ['users', 'products', 'partners', 'warehouses', 'categories', 'stocks', 'inventory_movements', 'inventory_transfers', 'inventory_movement_requests', 'inventory_transfer_requests', 'return_quality_actions', 'shipments', 'shipment_stops', 'shipment_items', 'warehouse_locations', 'warehouse_placements', 'inventory_transfer_source_allocations', 'transfer_intents', 'transfer_workflow_events', 'warehouse_memberships', 'transfer_stock_reservations', 'warehouse_transfer_tasks', 'warehouse_transfer_allocations', 'vehicles', 'vehicle_operations', 'shipment_assignment_cargos', 'shipment_cargo_confirmations', 'shipment_plan_operations', 'shipment_intent_assignments', 'shipment_dispatches', 'shipment_transit_items', 'shipment_receipts', 'shipment_receipt_items', 'shipment_receipt_putaways'];
     $tables[] = 'inventory_movement_sources';
-    array_push($tables, 'manual_receipt_batches', 'manual_receipt_putaways', 'warehouse_relocations');
+    array_push($tables, 'manual_receipt_batches', 'manual_receipt_putaways', 'warehouse_relocations', 'user_access_events', 'warehouse_membership_roles');
     $engines = DB::select('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('.implode(',', array_fill(0, count($tables), '?')).')', [$database, ...$tables]);
     check(count($engines) === count($tables) && count(array_filter($engines, fn ($row) => $row->ENGINE === 'InnoDB')) === count($tables), 'Concurrency tests require InnoDB tables.');
+
+    $migration = require database_path('migrations/2026_11_24_140000_create_warehouse_membership_roles.php');
+    $migration->down();
+    $legacyUser = User::factory()->create(['role' => 'worker']);
+    $legacyRows = [];
+    foreach (array_keys(\App\Models\WarehouseMembership::ROLES) as $role) {
+        $row = ['user_id' => $legacyUser->id, 'warehouse_id' => Warehouse::factory()->create()->getKey(), 'role' => $role,
+            'created_at' => '2026-02-03 10:11:12', 'updated_at' => '2026-03-01 09:30:00'];
+        $row['id'] = DB::table('warehouse_memberships')->insertGetId($row);
+        $legacyRows[] = $row;
+    }
+    $migration->up();
+    $migration->up();
+    foreach ($legacyRows as $row) {
+        $membership = $legacyUser->warehouseMemberships()->findOrFail($row['id']);
+        check($membership->warehouse_id === $row['warehouse_id'] && $membership->roleCodes() === [$row['role']]
+            && $membership->getRawOriginal('created_at') === $row['created_at'] && $membership->getRawOriginal('updated_at') === $row['updated_at'],
+            'The MySQL migration changed a legacy membership or assigned an additional role.');
+    }
+    check($legacyUser->warehouseMemberships()->count() === 4 && DB::table('warehouse_membership_roles')->count() === 4,
+        'The MySQL migration created duplicate assignments.');
+    \Illuminate\Support\Facades\Schema::table('warehouse_memberships', fn ($table) => $table->string('role')->nullable());
+    $legacyRows[0]['role'] = 'receiving_operator';
+    foreach ($legacyRows as $row) {
+        DB::table('warehouse_memberships')->where('id', $row['id'])->update(['role' => $row['role']]);
+    }
+    $migration->up();
+    check(DB::table('warehouse_membership_roles')->count() === 4
+        && $legacyUser->warehouseMemberships()->findOrFail($legacyRows[0]['id'])->roleCodes() === ['receiving_operator'],
+        'Retrying the migration after a legacy change left an extra role.');
+    echo 'PASS: legacy warehouse memberships migrate without changing their role, ID or timestamps'.PHP_EOL;
+
+    $membershipEditCount = 0;
+    foreach ([false, true] as $outerSnapshot) {
+        $editor = User::factory()->create(['role' => 'admin']);
+        $operator = User::factory()->create(['role' => 'worker']);
+        $warehouse = Warehouse::factory()->create();
+        $membership = $operator->addWarehouseMembership($warehouse->getKey(), ['dispatch_operator', 'receiving_operator']);
+        $common = ['action' => 'user_memberships', 'id' => $operator->id, 'actor' => $editor->id, 'outerSnapshot' => $outerSnapshot];
+        $outcomes = race($database, [], [
+            $common + ['memberships' => [['warehouse_id' => $warehouse->getKey(), 'roles' => ['dispatch_operator']]]],
+            $common + ['memberships' => [['warehouse_id' => $warehouse->getKey(), 'roles' => ['receiving_operator']]]],
+        ], userBarrier: $operator->id);
+        $event = $operator->accessEvents()->sole()->changes['memberships'][0];
+        $remaining = $membership->roleCodes();
+        check($outcomes === ['OK', 'REJECTED'] && $operator->fresh()->access_version === 1
+            && $event['before'] === ['dispatch_operator', 'receiving_operator'] && $event['after'] === $remaining
+            && in_array($remaining, [['dispatch_operator'], ['receiving_operator']], true), 'Parallel membership editors overwrote a role set or double-booked its audit.');
+        $membershipEditCount++;
+        echo 'PASS: competing role set edits'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+    foreach ([false, true] as $outerSnapshot) {
+        [$first, $second] = User::factory()->count(2)->create(['role' => 'admin'])->all();
+        $common = ['action' => 'user_inactivation', 'outerSnapshot' => $outerSnapshot];
+        $outcomes = race($database, [], [
+            $common + ['actor' => $first->id, 'id' => $second->id],
+            $common + ['actor' => $second->id, 'id' => $first->id],
+        ], userBarrier: $first->id);
+        check($outcomes === ['OK', 'REJECTED'], 'Competing administrators did not produce exactly one revocation.');
+        $admins = User::whereKey([$first->id, $second->id])->get();
+        check($admins->count() === 2 && $admins->filter->isActive()->count() === 1 && $admins->sum('access_version') === 1,
+            'Competing revocations must preserve both users and exactly one active administrator.');
+        DB::table('user_access_events')->whereIn('user_id', [$first->id, $second->id])->delete();
+        User::whereKey([$first->id, $second->id])->delete();
+        echo 'PASS: competing administrator revocations'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+    }
+    foreach ([false, true] as $outerSnapshot) {
+        foreach (['user_demotion', 'user_inactivation'] as $rival) {
+            [$first, $second] = User::factory()->count(2)->create(['role' => 'admin'])->all();
+            $pending = User::factory()->create(['role' => 'admin', 'password_change_required' => true]);
+            $common = ['outerSnapshot' => $outerSnapshot];
+            $outcomes = race($database, [], [
+                $common + ['action' => 'user_demotion', 'actor' => $first->id, 'id' => $second->id],
+                $common + ['action' => $rival, 'actor' => $second->id, 'id' => $first->id],
+            ], userBarrier: $first->id);
+            $ids = [$first->id, $second->id];
+            check($outcomes === ['OK', 'REJECTED']
+                && \App\Services\UserAccess::usableAdmins()->whereKey($ids)->count() === 1
+                && $pending->fresh()->password_change_required,
+                'A concurrent change removed the last usable administrator despite a pending account.');
+            $events = DB::table('user_access_events')->whereIn('user_id', $ids);
+            check((clone $events)->count() === 1, 'Concurrent administrator changes produced duplicate audit events.');
+            $events->delete();
+            User::whereKey([...$ids, $pending->id])->delete();
+            echo 'PASS: competing administrator demotion and '.$rival.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
+        }
+    }
     $user = User::factory()->create(['role' => 'worker']);
     $category = Category::create(['category_name' => 'Concurrency']);
     $service = app(InventoryService::class);
@@ -888,7 +994,12 @@ try {
     check(array_column($search['results'], 'url') === [route('products.show', $literalProduct)], 'Global search MySQL literal matching differs.');
     $tasks = \App\Support\AppTasks::summary($layoutUser);
     check($tasks['returns'] === $summaryExpected['open_count'] && $tasks['returnQuantity'] === $summaryExpected['pending_quantity']
-        && $tasks['transfers'] === InventoryTransfer::where('status', 'pending')->get()->count(), 'Topbar tasks differ from current business state.');
+        && $tasks['transfers'] === 0, 'Topbar exposed legacy transfers to a worker without warehouse membership.');
+    $pending = InventoryTransfer::where('status', 'pending')->get();
+    $destinationId = $pending->firstOrFail()->to_warehouse_id;
+    $layoutUser->addWarehouseMembership($destinationId, ['receiving_operator']);
+    check(\App\Support\AppTasks::summary($layoutUser)['transfers'] === $pending->where('to_warehouse_id', $destinationId)->count(),
+        'Topbar tasks did not match the destination warehouse membership.');
     check(hash_equals($searchBefore, $queueSnapshot()), 'Global search or task counts changed business records.');
     echo 'PASS: global search MySQL accents/literals and topbar task counts'.PHP_EOL;
     foreach (['weight', 'slots'] as $limit) {
@@ -998,9 +1109,9 @@ try {
     $secondSupervisor = User::factory()->create(['role' => 'worker']);
     $intentSource = Warehouse::create(['warehouse_name' => 'Intent source']);
     $intentDestination = Warehouse::create(['warehouse_name' => 'Intent destination']);
-    $intentSource->memberships()->create(['user_id' => $requester->id, 'role' => 'requester']);
-    $intentSource->memberships()->create(['user_id' => $supervisor->id, 'role' => 'supervisor']);
-    $intentSource->memberships()->create(['user_id' => $secondSupervisor->id, 'role' => 'supervisor']);
+    $requester->addWarehouseMembership($intentSource->getKey(), ['requester']);
+    $supervisor->addWarehouseMembership($intentSource->getKey(), ['supervisor']);
+    $secondSupervisor->addWarehouseMembership($intentSource->getKey(), ['supervisor']);
     $intentProduct = Product::create(['category_id' => $category->category_id, 'product_name' => 'Concurrent intents', 'sku' => 'INTENT-RACE', 'price' => 1]);
     $intentService = app(TransferIntentService::class);
     $intentData = ['product_id' => $intentProduct->getKey(), 'from_warehouse_id' => $intentSource->getKey(),
@@ -1509,10 +1620,12 @@ try {
         $intentService->approve($supervisor, $intent, $command($intent));
         $reservationService->reserve($supervisor, $intent, $command($intent->refresh()));
         $tasks->create($supervisor, $intent, $command($intent->refresh()));
-        $tasks->pick($supervisor, $intent, $command($intent->refresh(), [
-            'quantity' => $picked, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => $picked]],
-            'unassigned_confirmation' => ['found' => true, 'description' => 'Kiadási gyűjtőhely.'],
-        ]));
+        if ($picked > 0) {
+            $tasks->pick($supervisor, $intent, $command($intent->refresh(), [
+                'quantity' => $picked, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => $picked]],
+                'unassigned_confirmation' => ['found' => true, 'description' => 'Kiadási gyűjtőhely.'],
+            ]));
+        }
 
         return $intent->refresh();
     };
@@ -1537,6 +1650,53 @@ try {
 
         return $plan->refresh();
     };
+
+    $keepMembershipRoles = static function (User $operator, Warehouse $warehouse, array $roles) use ($dispatchAdmin): void {
+        app(\App\Services\UserAccess::class)->update($dispatchAdmin, $operator, [
+            'name' => $operator->name, 'email' => $operator->email, 'role' => $operator->role,
+            'lock_version' => 1, 'memberships' => [['warehouse_id' => $warehouse->getKey(), 'roles' => $roles]],
+        ]);
+    };
+    $newOperator = static function (Warehouse $warehouse, array $roles): User {
+        $operator = User::factory()->create(['role' => 'worker']);
+        $operator->addWarehouseMembership($warehouse->getKey(), $roles);
+
+        return $operator;
+    };
+    $product = Product::create(['category_id' => $category->getKey(), 'product_name' => 'Revoked warehouse access', 'sku' => 'REVOKED-ACCESS', 'price' => 1]);
+    $sourceStock = Stock::create(['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'quantity' => 80]);
+    $issuer = $newOperator($intentSource, ['dispatch_operator', 'receiving_operator']);
+    $issue = [
+        'action' => 'authenticated_issue', 'allowRevoked' => true, 'outerSnapshot' => true, 'requestKey' => (string) Str::uuid(),
+        'data' => ['warehouse_id' => $intentSource->getKey(), 'product_id' => $product->getKey(), 'user_id' => $issuer->id, 'quantity' => 5, 'type' => 'out'],
+    ];
+    check(race($database, [], [$issue], userBarrier: $issuer->id, beforeRelease: fn () => $keepMembershipRoles($issuer, $intentSource, ['receiving_operator'])) === ['REJECTED']
+        && $sourceStock->refresh()->quantity === 80 && InventoryMovement::where('product_id', $product->getKey())->doesntExist()
+        && $issuer->hasWarehouseCapability('receive', $intentSource->getKey()),
+        'A previously authenticated issue escaped membership revocation.');
+    echo 'PASS: warehouse access revocation versus authenticated issue'.PHP_EOL;
+
+    $dispatcher = $newOperator($intentSource, ['supervisor', 'dispatch_operator', 'receiving_operator']);
+    $truck = Vehicle::create(['name' => 'Revocation dispatch', 'payload_capacity_grams' => 1200000, 'pallet_slots_capacity' => 6]);
+    $intent = $prepareDispatchIntent($product, $intentDestination, 20, 20);
+    $plan = $prepareDispatchPlan('Revocation dispatch', $truck, [$intent]);
+    $dispatch = ['action' => 'shipment_plan', 'operation' => 'dispatch', 'actor' => $dispatcher->id, 'ship' => $plan->id,
+        'outerSnapshot' => true, 'allowRevoked' => true, 'data' => $command($plan, ['confirmed' => true])];
+    check(race($database, [], [$dispatch], userBarrier: $dispatcher->id, beforeRelease: fn () => $keepMembershipRoles($dispatcher, $intentSource, ['dispatch_operator', 'receiving_operator'])) === ['REJECTED']
+        && $plan->refresh()->status === 'draft' && $plan->dispatch()->doesntExist() && $sourceStock->refresh()->quantity === 80
+        && $dispatcher->hasWarehouseCapability('pick', $intentSource->getKey()),
+        'A previously authenticated dispatch escaped membership revocation.');
+    echo 'PASS: warehouse access revocation versus dispatch'.PHP_EOL;
+
+    $picker = $newOperator($intentSource, ['dispatch_operator', 'receiving_operator']);
+    $pendingPick = $prepareDispatchIntent($product, $intentDestination, 5, 0);
+    $pick = ['action' => 'pick_task', 'actor' => $picker->id, 'id' => $pendingPick->id, 'outerSnapshot' => true, 'allowRevoked' => true,
+        'data' => $command($pendingPick, ['quantity' => 5, 'source_allocations' => [['source_type' => 'unassigned', 'location_id' => null, 'quantity' => 5]],
+            'unassigned_confirmation' => ['found' => true, 'description' => 'Kiadási gyűjtőhely.']])];
+    check(race($database, [], [$pick], userBarrier: $picker->id, beforeRelease: fn () => $keepMembershipRoles($picker, $intentSource, ['receiving_operator'])) === ['REJECTED']
+        && $pendingPick->pickingTasks()->sole()->staged_quantity === 0 && $sourceStock->refresh()->quantity === 80
+        && $picker->hasWarehouseCapability('receive', $intentSource->getKey()), 'Revoking the picking role still let a previously authenticated user stage stock.');
+    echo 'PASS: partial warehouse role revocation versus picking'.PHP_EOL;
 
     foreach ([false, true] as $outerSnapshot) {
         foreach (['double dispatch', 'same dispatch replay', 'detach', 'reorder', 'change vehicle', 'edit cargo', 'resize vehicle',
@@ -1807,7 +1967,7 @@ try {
     $receivers = collect([User::factory()->create(['role' => 'worker']), User::factory()->create(['role' => 'worker'])]);
     foreach ([$intentDestination, $secondDispatchDestination] as $warehouse) {
         foreach ($receivers as $receiver) {
-            $warehouse->memberships()->create(['user_id' => $receiver->id, 'role' => 'receiving_operator']);
+            $receiver->addWarehouseMembership($warehouse->getKey(), ['receiving_operator']);
         }
     }
     $receiptLocation = $intentDestination->storageLocations()->create([
@@ -1842,6 +2002,14 @@ try {
             'items' => [['transit_item_id' => $line->id, 'quantity' => $quantity, 'note' => 'Ellenőrzött darabszám.']],
         ],
     ];
+    [, $revocationPlan, , $target, , $line] = $receiptFixture('RECEIPT-AFTER-REVOCATION');
+    $revokedReceiver = $newOperator($intentDestination, ['receiving_operator', 'dispatch_operator']);
+    $receive = $receiptJob($line, $revokedReceiver, 20, true) + ['allowRevoked' => true];
+    check(race($database, [], [$receive], userBarrier: $revokedReceiver->id, beforeRelease: fn () => $keepMembershipRoles($revokedReceiver, $intentDestination, ['dispatch_operator'])) === ['REJECTED']
+        && $target->refresh()->quantity === 7 && $revocationPlan->receipts()->doesntExist() && $line->refresh()->remaining_quantity === 20
+        && $revokedReceiver->hasWarehouseCapability('pick', $intentDestination->getKey()),
+        'A previously authenticated receipt escaped membership revocation.');
+    echo 'PASS: warehouse access revocation versus receipt'.PHP_EOL;
     $scenarios = [
         'same transit item', 'same receipt replay', 'same receipt key with different notes', 'different destination stops',
         'ordinary issue uses older stock', 'manual placement uses older stock',
@@ -2369,7 +2537,7 @@ try {
         echo 'PASS: load verification, relief, reservation and putaway races, UUID and rollback'.($outerSnapshot ? ' with outer snapshots' : '').PHP_EOL;
     }
 
-    echo (69 + $intentRaceCount + $reservationRaceCount + $pickingRaceCount + $planningRaceCount + $cargoRaceCount
+    echo (80 + $membershipEditCount + $intentRaceCount + $reservationRaceCount + $pickingRaceCount + $planningRaceCount + $cargoRaceCount
         + $dispatchRaceCount + $vehicleRaceCount + $receiptRaceCount + $putawayRaceCount + $manualIssueRaceCount + $manualReceiptRaceCount + $relocationRaceCount + $verificationRaceCount)." MySQL concurrency checks passed.\n";
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e).': '.$e->getMessage().PHP_EOL);

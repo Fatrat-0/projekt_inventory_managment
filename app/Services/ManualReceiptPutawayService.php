@@ -137,8 +137,11 @@ class ManualReceiptPutawayService
                 return $this->result($event->refresh(), $hash);
             }, 3);
         } catch (UniqueConstraintViolationException $error) {
-            if ($prior = $this->findEvent($key, true)) return $this->result($prior, $hash);
-            throw $error;
+            return DB::transaction(function () use ($actor, $batch, $key, $hash, $error) {
+                $this->authorize($this->operations->currentActor($actor), $batch);
+                if ($prior = $this->findEvent($key, true)) return $this->result($prior, $hash);
+                throw $error;
+            });
         }
     }
 

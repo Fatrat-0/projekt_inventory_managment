@@ -3,9 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ProfileUpdateRequest;
+use App\Http\Middleware\EnsureActiveSession;
+use App\Services\UserAccess;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Redirect;
 use Illuminate\View\View;
 
@@ -24,42 +25,15 @@ class ProfileController extends Controller
     /**
      * Update the user's profile information.
      */
-    public function update(ProfileUpdateRequest $request): RedirectResponse
+    public function update(ProfileUpdateRequest $request, UserAccess $access): RedirectResponse
     {
-        $request->user()->fill($request->validated());
-
-        if ($request->user()->isDirty('email')) {
-            $request->user()->email_verified_at = null;
+        $user = $access->updateProfile($request->user(), $request->safe()->only(['name', 'email']));
+        if ((int) $user->access_version !== (int) $request->user()->access_version) {
+            $request->session()->regenerate();
+            $request->session()->put(EnsureActiveSession::VERSION_KEY, (int) $user->access_version);
+            \Illuminate\Support\Facades\Auth::setUser($user);
         }
-
-        $request->user()->save();
 
         return Redirect::route('profile.edit')->with('status', 'profile-updated');
-    }
-
-    /**
-     * Delete the user's account.
-     */
-    public function destroy(Request $request): RedirectResponse
-    {
-        $request->validateWithBag('userDeletion', [
-            'password' => ['required', 'current_password'],
-        ]);
-
-        $user = $request->user();
-
-        try {
-            $user->delete();
-        } catch (\Illuminate\Validation\ValidationException $exception) {
-            throw $exception->errorBag('userDeletion');
-        }
-
-        // The row is already deleted; rotating its remember token would save it again.
-        Auth::logoutCurrentDevice();
-
-        $request->session()->invalidate();
-        $request->session()->regenerateToken();
-
-        return Redirect::to('/');
     }
 }

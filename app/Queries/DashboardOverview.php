@@ -3,7 +3,8 @@
 namespace App\Queries;
 
 use App\Services\WarehouseStockAvailability;
-use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, Shipment, Stock, Warehouse};
+use App\Models\{Category, InventoryMovement, InventoryTransfer, Product, Shipment, Stock, User, Warehouse};
+use App\Policies\{InventoryTransferPolicy, ShipmentPolicy};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -51,9 +52,9 @@ class DashboardOverview
             ->whereNotNull('categories.aggregate_min_stock')->whereRaw("{$available} < categories.aggregate_min_stock");
     }
 
-    public function data(int $days, array $pages = []): array
+    public function data(int $days, array $pages = [], ?User $actor = null): array
     {
-        return DB::transaction(function () use ($days, $pages) {
+        return DB::transaction(function () use ($days, $pages, $actor) {
             $asOf = now();
             $start = $asOf->copy()->startOfDay()->subDays($days - 1);
             $productAlerts = self::productAlerts();
@@ -71,12 +72,17 @@ class DashboardOverview
             $warehousePeak = max(1, (int)DB::query()->fromSub($warehouseTotals, 'totals')->max('physical'));
             $replenishments = ReplenishmentSuggestions::query();
             $replenishmentCount = (clone $replenishments)->count();
-            $transit = InventoryTransfer::where('status', 'pending')->selectRaw('COUNT(*) AS transfers_count, COALESCE(SUM(quantity), 0) AS quantity')->first();
-            $pending = InventoryTransfer::with(['product', 'fromWarehouse', 'toWarehouse', 'shipmentItem.stop.shipment'])
-                ->where('status', 'pending')->orderBy('created_at')->orderBy('id');
+            $pending = InventoryTransfer::where('status', 'pending');
+            if ($actor) app(InventoryTransferPolicy::class)->visibleTo($pending, $actor);
+            $transit = (clone $pending)->selectRaw('COUNT(*) AS transfers_count, COALESCE(SUM(quantity), 0) AS quantity')->first();
+            $pending->with(['product', 'fromWarehouse', 'toWarehouse', 'shipmentItem.stop.shipment'])->orderBy('created_at')->orderBy('id');
             $recent = InventoryMovement::with(['product', 'warehouse', 'user'])->where('created_at', '<=', $asOf)->orderByDesc('created_at')->orderByDesc('id');
             $movementCount = (clone $recent)->count();
-            $shipments = Shipment::where('planning_mode', Shipment::MODE_LEGACY)
+            $shipmentQuery = Shipment::where('planning_mode', Shipment::MODE_LEGACY);
+            if ($actor && $actor->role !== 'admin') {
+                $shipmentQuery->whereIn('origin_warehouse_id', app(ShipmentPolicy::class)->originWarehouseIds($actor));
+            }
+            $shipments = $shipmentQuery
                 ->selectRaw("COALESCE(SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END), 0) AS in_transit, COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END), 0) AS drafts")->first();
             $activity = InventoryMovement::where('created_at', '>=', $start)->where('created_at', '<=', $asOf)
                 ->selectRaw("DATE(created_at) AS day, SUM(CASE WHEN type = 'in' THEN 1 ELSE 0 END) AS in_count, SUM(CASE WHEN type = 'out' THEN 1 ELSE 0 END) AS out_count")

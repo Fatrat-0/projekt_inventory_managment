@@ -41,7 +41,7 @@ class DashboardController extends Controller
             if ($request->has($key) && !in_array($id, $layout['visible'], true)) { unset($data[$key]); $cleaned = true; }
         }
         if ($cleaned) return $this->canonicalRedirect($request, route('dashboard', $data));
-        $overview = (new DashboardOverview)->data($days, array_intersect_key($data, DashboardOverview::PANEL_PAGES));
+        $overview = (new DashboardOverview)->data($days, array_intersect_key($data, DashboardOverview::PANEL_PAGES), $request->user());
         $params = ['days' => $days, 'chart' => $data['chart'] ?? 'bar'];
         $overflow = null;
         foreach (DashboardOverview::PANEL_PAGES as $key => $panel) {

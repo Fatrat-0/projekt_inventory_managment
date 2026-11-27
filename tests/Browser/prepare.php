@@ -30,10 +30,13 @@ for ($i = 1; $i <= 10; $i++) {
 $warehouse = Warehouse::create(['warehouse_name' => 'Teszt raktár', 'location' => 'Test']);
 $north = Warehouse::create(['warehouse_name' => 'Északi tesztraktár', 'location' => 'Bemutató célállomás']);
 foreach (['Déli tesztraktár', 'Nyugati tesztraktár'] as $name) Warehouse::create(['warehouse_name' => $name, 'location' => 'Bemutató célállomás']);
-$user->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => 'requester']);
+$user->addWarehouseMembership($warehouse->getKey(), ['requester']);
+$manualOperator = User::factory()->create(['email' => 'manual-issue@example.test', 'password' => Hash::make('browser-test-password'), 'role' => 'worker']);
+$manualOperator->addWarehouseMembership($warehouse->getKey(), ['dispatch_operator']);
+$manualOperator->addWarehouseMembership($north->getKey(), ['dispatch_operator']);
 $receivingUser = User::factory()->create(['name' => 'Átvevő tesztfelhasználó', 'email' => 'receiving-intents@example.test',
     'password' => Hash::make('browser-test-password'), 'role' => 'worker']);
-$receivingUser->warehouseMemberships()->create(['warehouse_id' => $north->getKey(), 'role' => 'receiving_operator']);
+$receivingUser->addWarehouseMembership($north->getKey(), ['receiving_operator']);
 foreach ([[$a, 20], [$b, 7]] as [$product, $quantity]) {
     Stock::create(['product_id' => $product->product_id, 'warehouse_id' => $warehouse->warehouse_id, 'quantity' => $quantity]);
 }
@@ -49,5 +52,5 @@ foreach ([
     $picker = User::factory()->create([
         'email' => $email, 'name' => $name, 'password' => Hash::make('browser-test-password'), 'role' => 'worker',
     ]);
-    $picker->warehouseMemberships()->create(['warehouse_id' => $pickingWarehouse->getKey(), 'role' => $role]);
+    $picker->addWarehouseMembership($pickingWarehouse->getKey(), [$role]);
 }

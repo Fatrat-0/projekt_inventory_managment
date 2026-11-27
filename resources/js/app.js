@@ -32,6 +32,7 @@ import appSearch from './components/app-search';
 import stockListing from './components/stock-listing';
 import listingView from './components/listing-view';
 import listingColumns from './components/listing-columns';
+import userForm from './components/user-form';
 import warehouseFloorPlan from './components/warehouse-floor-plan';
 import warehouseCapacityTree from './components/warehouse-capacity-tree';
 
@@ -39,6 +40,7 @@ window.Alpine = Alpine;
 
 Alpine.data('listingView', listingView);
 Alpine.data('listingColumns', listingColumns);
+Alpine.data('userForm', userForm);
 
 Alpine.data('productListing', () => ({
     ...listingView('products'),

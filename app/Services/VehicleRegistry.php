@@ -73,12 +73,13 @@ class VehicleRegistry
                 return $this->response($event->refresh());
             }, 3);
         } catch (UniqueConstraintViolationException|ConflictHttpException $error) {
-            $previous = $this->operation($key, true);
-            if (!$previous) {
-                throw $error;
-            }
+            return DB::transaction(function () use ($actor, $key, $hash, $error) {
+                $this->authorizeManage($this->workflow->currentActor($actor));
+                $previous = $this->operation($key, true);
+                if (!$previous) throw $error;
 
-            return $this->replay($previous, $hash);
+                return $this->replay($previous, $hash);
+            });
         }
     }
 

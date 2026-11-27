@@ -13,7 +13,7 @@
                         </label>
                     @endforeach
                 </div>
-                <p class="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-500">Csak a táblázat megjelenését módosítja. A kártyák, a rendezés és a PDF változatlan marad.</p>
+                <p class="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-500">Csak a táblázat megjelenését módosítja. A kártyák és a rendezés változatlan maradnak.</p>
                 <button type="button" @click="resetColumns(); refreshPosition()" class="mt-3 min-h-10 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50">Alapbeállítások visszaállítása</button>
             </div>
         </div>

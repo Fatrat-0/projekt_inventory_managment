@@ -109,7 +109,7 @@ test('search ignores old responses and recovers from failure and closing during 
 
 test('task indicator uses real pending transfers, supports keyboard and closes before opening search', async ({ page, browser, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 800 });
-    await login(page);
+    await login(page, true);
     const sku = randomUUID();
     const fixture = await browser.newContext({ baseURL });
     let targetId;

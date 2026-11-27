@@ -29,6 +29,8 @@ class TransferPickingTest extends TestCase
         $this->destination = Warehouse::create(['warehouse_name' => 'Cél']);
         $this->stock = Stock::create(['product_id' => $this->product->getKey(), 'warehouse_id' => $this->source->getKey(), 'quantity' => 100]);
         $this->worker = User::factory()->create(['role' => 'worker']);
+        $this->worker->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->worker->addWarehouseMembership($this->destination->getKey(), ['receiving_operator']);
     }
 
     public function test_source_lookup_requires_transfer_permissions_and_valid_input(): void

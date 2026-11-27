@@ -1,6 +1,7 @@
 <x-guest-layout>
     <!-- Session Status -->
     <x-auth-session-status class="mb-4" :status="session('status')" />
+    <p class="mb-4 text-sm text-gray-600">Új hozzáférést a rendszergazdától kérhetsz.</p>
 
     <form method="POST" action="{{ route('login') }}">
         @csrf

@@ -93,7 +93,8 @@ class ShipmentCargoDemoSeederTest extends TestCase
 
         foreach (['manager' => 'supervisor', 'worker' => 'dispatch_operator'] as $username => $role) {
             $viewer = User::where('email', $username.'@raktar.hu')->sole();
-            $this->assertDatabaseHas('warehouse_memberships', ['user_id' => $viewer->id, 'warehouse_id' => $origin->getKey(), 'role' => $role]);
+            $membership = $viewer->warehouseMemberships()->where('warehouse_id', $origin->getKey())->sole();
+            $this->assertSame([$role], $membership->roleCodes());
             $this->actingAs($viewer)->getJson(route('shipment-plans.cargo.show', $ready))->assertOk()
                 ->assertJsonPath('can_manage', $role === 'supervisor');
         }
@@ -159,7 +160,7 @@ class ShipmentCargoDemoSeederTest extends TestCase
         $rows = [];
         foreach ([
             'vehicles', 'vehicle_operations', 'shipments', 'shipment_stops', 'shipment_items', 'shipment_intent_assignments',
-            'shipment_plan_operations', 'shipment_assignment_cargos', 'shipment_cargo_confirmations', 'warehouse_memberships',
+            'shipment_plan_operations', 'shipment_assignment_cargos', 'shipment_cargo_confirmations', 'warehouse_memberships', 'warehouse_membership_roles',
             'shipment_dispatches', 'shipment_transit_items', 'shipment_receipts', 'shipment_receipt_items', 'shipment_receipt_putaways',
             'transfer_intents', 'transfer_workflow_events', 'transfer_stock_reservations', 'warehouse_transfer_tasks',
             'warehouse_transfer_allocations', 'stocks', 'warehouse_placements', 'inventory_movement_requests', 'inventory_movements', 'inventory_transfers',

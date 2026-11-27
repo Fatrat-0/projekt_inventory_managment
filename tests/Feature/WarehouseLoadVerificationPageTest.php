@@ -109,7 +109,7 @@ class WarehouseLoadVerificationPageTest extends TestCase
     private function member(string $role, Warehouse $warehouse): User
     {
         $user = User::factory()->create(['role' => 'worker']);
-        $user->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $user->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $user;
     }

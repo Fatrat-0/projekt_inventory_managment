@@ -258,7 +258,9 @@ class ManualReceiptTest extends TestCase
         $actor = $this->member($this->warehouse, 'receiving_operator');
         $this->actingAs($actor)->postJson(route('movements.in.receipts.putaway', $batch), $this->putaway($this->bin('A-01'), 5))
             ->assertCreated();
-        $this->delete('/profile', ['password' => 'password'])->assertRedirect()->assertSessionHasErrorsIn('userDeletion', 'user');
+        $this->delete('/profile', ['password' => 'password'])->assertMethodNotAllowed();
+        $this->actingAs($this->admin)->patch(route('users.access', $actor), ['active' => false, 'lock_version' => 1])->assertRedirect();
+        $this->assertFalse($actor->fresh()->isActive());
         $this->assertDatabaseHas('users', ['id' => $actor->id]);
         $this->assertDatabaseHas('manual_receipt_putaways', ['actor_id' => $actor->id, 'actor_name' => $actor->name]);
     }
@@ -298,7 +300,7 @@ class ManualReceiptTest extends TestCase
     private function member(Warehouse $warehouse, string $role): User
     {
         $user = User::factory()->create(['role' => 'worker']);
-        $user->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $user->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $user;
     }

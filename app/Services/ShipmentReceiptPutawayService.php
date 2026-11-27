@@ -102,8 +102,12 @@ class ShipmentReceiptPutawayService
                 return $this->record($actor, $current, $location, $placed['placement'], $placed['geometry_status'], $data, $weight, $hash);
             }, 3);
         } catch (UniqueConstraintViolationException $error) {
-            if ($prior = $this->findEvent($key, true)) return $this->replay($prior, $hash);
-            throw $error;
+            return DB::transaction(function () use ($actor, $item, $key, $hash, $error) {
+                $currentActor = $this->operations->currentActor($actor);
+                Gate::forUser($currentActor)->authorize('putawayReceiptItem', [Shipment::class, $item]);
+                if ($prior = $this->findEvent($key, true)) return $this->replay($prior, $hash);
+                throw $error;
+            });
         }
     }
 

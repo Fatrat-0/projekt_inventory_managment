@@ -24,7 +24,7 @@ async function receive(page, path, position) {
 test.beforeEach(async ({ page }) => {
     page.on('dialog', dialog => dialog.accept());
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill('browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill('warehouse-admin@example.test');
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByLabel('Password', { exact: true }).press('Enter');
     await expect(page).toHaveURL(/dashboard/);

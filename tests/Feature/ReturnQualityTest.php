@@ -327,18 +327,18 @@ class ReturnQualityTest extends TestCase
         $this->assertDatabaseCount('return_quality_actions', 0);
     }
 
-    public function test_quality_operator_cannot_be_deleted_from_user_management_or_their_profile(): void
+    public function test_inactivating_a_quality_operator_keeps_the_audit_author(): void
     {
         $return = $this->returned();
         $operator = User::factory()->create(['role' => 'worker', 'password' => 'password']);
         $this->actingAs($operator);
         $this->process($return)->assertRedirect();
         $this->actingAs(User::factory()->create(['role' => 'admin']));
-        $this->deleteJson(route('users.destroy', $operator))->assertUnprocessable()->assertJsonValidationErrors('user');
-        $this->actingAs($operator);
-        $this->deleteJson(route('profile.destroy'), ['password' => 'password'])->assertUnprocessable()->assertJsonValidationErrors('user');
-        $this->assertAuthenticatedAs($operator);
-        $this->assertDatabaseHas('users', ['id' => $operator->id]);
+        $this->deleteJson('/users/'.$operator->id)->assertMethodNotAllowed();
+        $this->from(route('users.index'))->patch(route('users.access', $operator), ['active' => false, 'lock_version' => 1])
+            ->assertRedirect(route('users.index'));
+        $this->assertFalse($operator->fresh()->isActive());
+        $this->assertDatabaseHas('return_quality_actions', ['user_id' => $operator->id]);
         $this->assertDatabaseCount('return_quality_actions', 1);
     }
 
@@ -393,14 +393,13 @@ class ReturnQualityTest extends TestCase
             'action' => 'release', 'quantity' => 2, 'stock_before' => 10, 'stock_after' => 10, 'quarantined_before' => 5, 'quarantined_after' => 3]);
     }
 
-    public function test_blocked_profile_deletion_keeps_the_actor_authenticated_and_uses_the_profile_error_bag(): void
+    public function test_removed_profile_deletion_leaves_the_quality_actor_intact(): void
     {
         $return = $this->returned();
         $operator = User::factory()->create(['role' => 'worker', 'password' => 'password']);
         $this->actingAs($operator);
         $this->process($return)->assertRedirect();
-        $this->from(route('profile.edit'))->delete(route('profile.destroy'), ['password' => 'password'])
-            ->assertRedirect(route('profile.edit'))->assertSessionHasErrorsIn('userDeletion', 'user');
+        $this->delete('/profile', ['password' => 'password'])->assertMethodNotAllowed();
         $this->assertAuthenticatedAs($operator);
         $this->assertDatabaseHas('users', ['id' => $operator->id]);
         $this->assertDatabaseCount('return_quality_actions', 1);

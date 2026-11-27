@@ -535,7 +535,7 @@ class ShipmentPlanningTest extends TestCase
     private function member(Warehouse $warehouse, string $role): User
     {
         $actor = User::factory()->create(['role' => 'worker']);
-        $actor->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $actor->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $actor;
     }

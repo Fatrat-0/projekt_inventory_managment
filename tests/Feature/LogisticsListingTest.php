@@ -29,6 +29,9 @@ class LogisticsListingTest extends TestCase
         $this->origin = Warehouse::create(['warehouse_name' => 'Indulás', 'location' => 'Budapest']);
         $this->a = Warehouse::create(['warehouse_name' => 'Cél A', 'location' => 'Győr']);
         $this->b = Warehouse::create(['warehouse_name' => 'Cél B', 'location' => 'Pécs']);
+        $this->actor->addWarehouseMembership($this->origin->getKey(), ['supervisor']);
+        $this->actor->addWarehouseMembership($this->a->getKey(), ['receiving_operator']);
+        $this->actor->addWarehouseMembership($this->b->getKey(), ['receiving_operator']);
         foreach ([$this->product, $this->other] as $p) Stock::create(['product_id' => $p->product_id, 'warehouse_id' => $this->origin->warehouse_id, 'quantity' => 100]);
     }
     private function payload(string $reference = 'Körjárat'): array

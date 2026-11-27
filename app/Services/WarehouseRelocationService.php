@@ -131,9 +131,13 @@ class WarehouseRelocationService
         } catch (ValidationException|ConflictHttpException|UniqueConstraintViolationException $error) {
             // A competing commit may be invisible to an earlier InnoDB snapshot.
             // Locking lookup happens after rollback, with no subsequent insert on a missing key.
-            $prior = WarehouseRelocation::where('operation_key', $key)->sharedLock()->first();
-            if ($prior) return $this->replay($prior, $hash);
-            throw $error;
+            return DB::transaction(function () use ($actor, $data, $key, $hash, $error) {
+                $current = $this->operations->currentActor($actor);
+                $this->policy->authorize($current, $data['warehouse_id'], locked: true);
+                $prior = WarehouseRelocation::where('operation_key', $key)->sharedLock()->first();
+                if ($prior) return $this->replay($prior, $hash);
+                throw $error;
+            });
         }
     }
 

@@ -108,7 +108,7 @@ class TransferIntentService
         $payload['requested_arrival_date'] = $arrivalDate;
         $fingerprint = $this->operations->fingerprint('created', $actor, null, $payload);
 
-        return $this->operations->run($key, $fingerprint,
+        return $this->operations->run($actor, $key, $fingerprint,
             function () use ($actor, $payload, $key, $fingerprint, $legacyFingerprint, $arrivalDate, $arrival) {
                 // A retry must wait for a still-running creation from the same requester before rejecting an elapsed deadline.
                 $actor = $this->operations->currentActor($actor, exclusive: true);
@@ -170,7 +170,7 @@ class TransferIntentService
         $intentId = (int) $intent->getKey();
         $fingerprint = $this->operations->fingerprint($target, $actor, $intentId, ['version' => $version, 'reason' => $reason]);
 
-        return $this->operations->run($key, $fingerprint, function () use ($actor, $intentId, $ability, $target, $key, $version, $reason, $fingerprint) {
+        return $this->operations->run($actor, $key, $fingerprint, function () use ($actor, $intentId, $ability, $target, $key, $version, $reason, $fingerprint) {
             $actor = $this->operations->currentActor($actor);
             $current = TransferIntent::whereKey($intentId)->lockForUpdate()->first();
             abort_unless($current, 404, 'Az átmozgatási igény nem található.');

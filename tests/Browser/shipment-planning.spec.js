@@ -294,7 +294,7 @@ test('the same shipments tab plans three approved intents across two destination
 
 test('double submission and explicit refresh handle a conflicting plan version and preserve the selection', async ({ page }) => {
     await login(page);
-    const source = await warehouse(page, 'Ütközés teszt – induló raktár');
+    const source = await warehouse(page, 'Ütközés teszt – induló raktár '+randomUUID().slice(0, 8));
     const goods = await product(page, source.id, 3);
     const first = await intent(page, { origin: source.id, destination: 2, productId: goods.id });
     const concurrent = await intent(page, { origin: source.id, destination: 3, productId: goods.id });

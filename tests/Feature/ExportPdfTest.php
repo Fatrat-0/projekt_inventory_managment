@@ -189,6 +189,7 @@ class ExportPdfTest extends TestCase
             'warehouse_name' => 'Déli Telephely',
             'location' => 'Pécs',
         ]);
+        $user->addWarehouseMembership($toWarehouse->getKey(), ['receiving_operator']);
 
         $product = Product::create([
             'product_name' => 'Ütvefúró Pro',

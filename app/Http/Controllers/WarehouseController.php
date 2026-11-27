@@ -83,8 +83,9 @@ class WarehouseController extends Controller
         $stockTotals = $warehouse->stocks()
             ->selectRaw("COALESCE(SUM(quantity), 0) AS quantity, COALESCE(SUM(quarantined_quantity), 0) AS total_quarantined, COALESCE(SUM({$available}), 0) AS total_available, COUNT(CASE WHEN quantity > 0 THEN 1 END) AS products_count")
             ->first();
-        $incomingQuery = $warehouse->incomingTransfers()->where('status', 'pending');
-        $outgoingQuery = $warehouse->outgoingTransfers()->where('status', 'pending');
+        $policy = app(\App\Policies\InventoryTransferPolicy::class);
+        $incomingQuery = $policy->visibleTo($warehouse->incomingTransfers()->getQuery()->where('status', 'pending'), $request->user());
+        $outgoingQuery = $policy->visibleTo($warehouse->outgoingTransfers()->getQuery()->where('status', 'pending'), $request->user());
         $transferTotals = fn($query) => (clone $query)->selectRaw('COUNT(*) AS transfer_count, COALESCE(SUM(quantity), 0) AS quantity')->first();
         $preview = fn($query) => (clone $query)->with(['product', 'fromWarehouse', 'toWarehouse', 'shipmentItem.stop.shipment'])->orderByDesc('created_at')->orderByDesc('id')->limit(5)->get();
         $suggestions = $warehouse->stocks()->with('product')->get();

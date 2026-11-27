@@ -194,22 +194,19 @@ class TransferWorkflowFoundationTest extends TestCase
     public function test_user_can_have_different_local_roles_in_several_warehouses(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
-        $dispatch = $admin->warehouseMemberships()->create(['warehouse_id' => $this->source->getKey(), 'role' => 'dispatch_operator']);
-        $receive = $this->destination->memberships()->create(['user_id' => $admin->id, 'role' => 'receiving_operator']);
+        $dispatch = $admin->addWarehouseMembership($this->source->getKey(), ['dispatch_operator']);
+        $receive = $admin->addWarehouseMembership($this->destination->getKey(), ['receiving_operator']);
 
         $this->assertCount(2, $admin->warehouseMemberships);
         $this->assertTrue($dispatch->user->is($admin));
         $this->assertTrue($dispatch->warehouse->is($this->source));
         $this->assertTrue($receive->warehouse->is($this->destination));
         $this->assertTrue($this->destination->memberships()->sole()->is($receive));
-        $this->assertTrue($dispatch->allows('pick'));
-        $this->assertTrue($dispatch->allows('dispatch'));
-        $this->assertFalse($dispatch->allows('receive'));
-        $this->assertTrue($receive->allows('receive'));
-        $this->assertTrue($receive->allows('putaway'));
-        $this->assertFalse($receive->allows('dispatch'));
-        $this->assertFalse($receive->allows('approve'));
-        $this->assertFalse($receive->allows('unknown-capability'));
+        $this->assertTrue($admin->hasWarehouseCapability('pick', $this->source->getKey()));
+        $this->assertFalse($admin->hasWarehouseCapability('receive', $this->source->getKey()));
+        $this->assertTrue($admin->hasWarehouseCapability('receive', $this->destination->getKey()));
+        $this->assertFalse($admin->hasWarehouseCapability('pick', $this->destination->getKey()));
+        $this->assertFalse($admin->hasWarehouseCapability('supervise', $this->destination->getKey()));
     }
 
     public function test_database_rejects_a_second_membership_in_the_same_warehouse(): void
@@ -217,12 +214,11 @@ class TransferWorkflowFoundationTest extends TestCase
         $membership = [
             'user_id' => $this->requester->id,
             'warehouse_id' => $this->source->getKey(),
-            'role' => 'requester',
         ];
-        WarehouseMembership::create($membership);
+        $this->requester->addWarehouseMembership($this->source->getKey(), ['requester']);
 
         $this->expectException(QueryException::class);
-        WarehouseMembership::create(array_replace($membership, ['role' => 'supervisor']));
+        WarehouseMembership::create($membership);
     }
 
     public function test_events_store_actor_transition_timestamp_reason_and_structured_metadata(): void
@@ -339,7 +335,7 @@ class TransferWorkflowFoundationTest extends TestCase
         $before = $snapshot();
 
         $intent = $this->intent(['quantity' => 100]);
-        $this->requester->warehouseMemberships()->create(['warehouse_id' => $this->source->getKey(), 'role' => 'requester']);
+        $this->requester->addWarehouseMembership($this->source->getKey(), ['requester']);
         $this->event($intent, $this->requester);
 
         $this->assertEquals($before, $snapshot());

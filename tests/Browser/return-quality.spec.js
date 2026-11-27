@@ -4,7 +4,7 @@ import { seedUsableStock } from './movement-fixtures';
 
 test.beforeEach(async ({ page }) => {
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill('browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill('manual-issue@example.test');
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await expect(page).toHaveURL(/dashboard/);

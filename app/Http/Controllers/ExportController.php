@@ -13,6 +13,8 @@ use App\Queries\WarehouseStatistics;
 use App\Support\WarehouseInventoryPdfOptions;
 use App\Support\{WarehouseStatisticsPdfOptions, WarehouseStatisticsReport};
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 
 class ExportController extends Controller
@@ -70,7 +72,7 @@ class ExportController extends Controller
             'show_count_col'  => $request->boolean('show_count_col'),
             'blind_mode'      => $request->boolean('blind_mode'),
             'show_signatures' => $request->boolean('show_signatures'),
-            'orientation'     => $request->input('orientation', 'portrait'),
+            'orientation'     => $request->input('orientation') ?? 'portrait',
         ];
 
         $pdf = Pdf::loadView('pdf.inventory', compact('products', 'filterInfo', 'options'))
@@ -88,8 +90,6 @@ class ExportController extends Controller
         $request->validate(['orientation' => ['nullable', 'in:portrait,landscape']]);
         $listing = new \App\Queries\MovementListing($request);
         $movements = $listing->query()->get();
-        $filterInfo = array_values($listing->labels());
-
         $options = [
             'type_filter'     => $listing->filters['type'] ?? 'all',
             'show_warehouse'  => $request->boolean('show_warehouse', true),
@@ -98,8 +98,20 @@ class ExportController extends Controller
             'show_user'       => $request->boolean('show_user', true),
             'show_summary'    => $request->boolean('show_summary', true),
             'show_signatures' => $request->boolean('show_signatures', true),
-            'orientation'     => $request->input('orientation', 'portrait'),
+            'orientation'     => $request->input('orientation') ?? 'portrait',
         ];
+        $filters = $listing->labels();
+        // Search may include names or free text even when those columns are hidden.
+        $hiddenLabels = array_keys(array_filter([
+            'warehouse_id' => !$options['show_warehouse'],
+            'user_id' => !$options['show_user'],
+            'partner_id' => !$options['show_partner'],
+            'search' => !($options['show_reference'] && $options['show_partner'] && $options['show_user'] && $options['show_warehouse']),
+        ]));
+        $filterInfo = array_values(Arr::except($filters, $hiddenLabels));
+        if (count($filterInfo) < count($filters)) {
+            $filterInfo[] = 'Egyes szűrőértékek elrejtve a megjelenítési beállítások szerint.';
+        }
 
         $pdf = Pdf::loadView('pdf.movements', compact('movements', 'options', 'filterInfo'))
                   ->setPaper('a4', $options['orientation']);
@@ -114,6 +126,7 @@ class ExportController extends Controller
     // 3. RAKTÁRKÖZI SZÁLLÍTÓLEVÉL (EGYEDI BIZONYLAT) PDF
     public function transferPdf(Request $request, InventoryTransfer $transfer)
     {
+        Gate::authorize('view', $transfer);
         $transfer->load(['product.category', 'fromWarehouse', 'toWarehouse']);
 
         $pdf = Pdf::loadView('pdf.transfer', compact('transfer'))

@@ -191,7 +191,7 @@ class InventoryMovementController extends Controller
                     'confirmed.*' => 'Erősítsd meg az áru tényleges átvételét.',
                 ]);
             }
-            $movement = $inventory->receiveManual($validated, $requestKey);
+            $movement = $inventory->receiveManual($validated, $requestKey, $request->user());
             if ($request->expectsJson()) {
                 $batch = $movement->manualReceiptBatch;
                 $state = $batch?->state();
@@ -207,7 +207,7 @@ class InventoryMovementController extends Controller
                 ], 201)->header('Cache-Control', 'private, no-store');
             }
         } else {
-            $movement = $inventory->recordMovement($validated, $requestKey);
+            $movement = $inventory->recordMovement($validated, $requestKey, $request->user());
         }
 
         if ($request->expectsJson() && isset($validated['source_allocations'])) return $this->issueHistory($movement);
@@ -256,6 +256,7 @@ class InventoryMovementController extends Controller
         ]);
         $recommendBins = $request->boolean('recommend_bins');
         $data = $this->issueInput($request, $recommendBins);
+        app(TransferIntentPolicy::class)->authorizeManualIssue($request->user(), (int) $data['warehouse_id']);
         $options = $picking->issueOptions($data['warehouse_id'], $data['product_id'], $data['quantity'] ?? null,
             $recommendBins ? ($input['source_allocations'] ?? []) : null);
         $ids = array_values(array_filter(array_column($options['sources'], 'location_id')));
@@ -281,6 +282,7 @@ class InventoryMovementController extends Controller
     public function validateIssue(Request $request, SmartPicking $picking)
     {
         $data = $this->issueInput($request, true);
+        app(TransferIntentPolicy::class)->authorizeManualIssue($request->user(), (int) $data['warehouse_id']);
         $picking->validateIssue($data['warehouse_id'], $data['product_id'], $data['quantity'], $request->input('source_allocations'));
 
         return response()->json(['valid' => true])->header('Cache-Control', 'no-store');

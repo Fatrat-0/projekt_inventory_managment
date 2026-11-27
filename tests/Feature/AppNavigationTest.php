@@ -18,7 +18,7 @@ class AppNavigationTest extends TestCase
         return new \DOMXPath($document);
     }
 
-    public static function roles(): array { return [['admin', 10], ['manager', 9], ['worker', 6]]; }
+    public static function roles(): array { return [['admin', 10], ['manager', 8], ['worker', 6]]; }
 
     #[DataProvider('roles')]
     public function test_navigation_only_links_to_pages_the_role_can_open(string $role, int $count): void
@@ -120,7 +120,7 @@ class AppNavigationTest extends TestCase
             'supervisor' => ['warehouse-picking-pages.index', ['Kitárolás', 'Átvétel', 'Betárolás']],
         ] as $role => [$target, $labels]) {
             $member = User::factory()->create(['role' => 'worker']);
-            $member->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+            $member->addWarehouseMembership($warehouse->getKey(), [$role]);
             $this->actingAs($member);
             $dashboard = $this->document($this->get('/dashboard')->assertOk()->getContent());
             $this->assertCount($target ? 1 : 0, $dashboard->query($menuEntry));

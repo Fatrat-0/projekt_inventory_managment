@@ -26,7 +26,7 @@
                 <div class="mt-4">@include('warehouses.locations.form', ['action' => route('warehouses.locations.update', $locationParams)])</div>
             </details>
         @endif
-        @if($location->active)
+        @if($location->active && $canHandleStock)
             <section class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                 <h2 class="font-semibold text-gray-900">Készlet tárhelyhez rendelése</h2>
                 @if($stocks->isEmpty())
@@ -83,10 +83,12 @@
                             <a href="{{ route('warehouses.load-checks.show', $params + ['placement' => $placement->id]) }}"
                                class="inline-flex min-h-10 items-center text-sm font-semibold text-indigo-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">Tétel terhelésének ellenőrzése</a>
                         @endif
+                        @if($canHandleStock)
                         <form method="POST" action="{{ route('warehouses.locations.release', $locationParams + ['placement' => $placement]) }}" onsubmit="return confirm('A teljes tétel kikerüljön a tárhelyről?')">
                             @csrf @method('DELETE')
                             <button class="min-h-10 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50">Kivétel a tárhelyről</button>
                         </form>
+                        @endif
                     </li>
                 @empty
                     <li class="text-sm text-gray-600">A tárhely üres.</li>

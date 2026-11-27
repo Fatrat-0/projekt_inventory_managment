@@ -3,8 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\InventoryMovement;
-use App\Services\{InventoryService, WarehouseStockAvailability};
+use App\Services\{InventoryService, TransferWorkflowOperations, WarehouseStockAvailability};
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class MovementReturnController extends Controller
@@ -27,7 +28,11 @@ class MovementReturnController extends Controller
     {
         $data = $request->validate(['request_key' => 'required|uuid', 'quantity' => 'required|integer|min:1|max:2147483647',
             'return_reason' => 'required|string|max:500', 'reference' => 'nullable|string|max:255'], [], ['return_reason' => 'visszáru indoka']);
-        $recorded = $inventory->recordReturn($movement, $data + ['user_id' => $request->user()->id], $data['request_key']);
+        $recorded = DB::transaction(function () use ($request, $inventory, $movement, $data) {
+            $actor = app(TransferWorkflowOperations::class)->currentActor($request->user());
+
+            return $inventory->recordReturn($movement, $data + ['user_id' => $actor->id], $data['request_key']);
+        }, 3);
         // Keep the bounded token; the detail page resolves it to a local list URL.
         $context = $request->input('context');
         $context = is_string($context) && strlen($context) <= 4096 ? $context : '';

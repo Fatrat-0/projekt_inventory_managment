@@ -97,7 +97,8 @@ class ShipmentCargoDemoSeeder extends Seeder
     {
         foreach ([['manager@raktar.hu', 'manager', 'supervisor'], ['worker@raktar.hu', 'worker', 'dispatch_operator']] as [$email, $role, $membership]) {
             $user = User::where('email', $email)->where('role', $role)->first();
-            $user?->warehouseMemberships()->firstOrCreate(['warehouse_id' => $source->getKey()], ['role' => $membership]);
+            $record = $user?->warehouseMemberships()->firstOrCreate(['warehouse_id' => $source->getKey()]);
+            if ($record?->wasRecentlyCreated) $record->syncRoles([$membership]);
         }
     }
 

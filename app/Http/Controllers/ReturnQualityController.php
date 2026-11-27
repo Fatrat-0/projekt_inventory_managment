@@ -3,9 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\InventoryMovement;
-use App\Services\InventoryService;
+use App\Services\{InventoryService, TransferWorkflowOperations};
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\{Crypt, DB};
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -70,7 +70,11 @@ class ReturnQualityController extends Controller
                 return response()->view('movements.confirm-scrap', compact('movement', 'data', 'context', 'confirmation'))->header('Cache-Control', 'no-store');
             }
         }
-        $action = $inventory->processReturnQuality($movement, $data + ['user_id' => $request->user()->id], $data['request_key']);
+        $action = DB::transaction(function () use ($request, $inventory, $movement, $data) {
+            $actor = app(TransferWorkflowOperations::class)->currentActor($request->user());
+
+            return $inventory->processReturnQuality($movement, $data + ['user_id' => $actor->id], $data['request_key']);
+        }, 3);
         return redirect()->route('movements.show', ['movement' => $movement, 'context' => $context])
             ->with('success', $action->action_label.' rögzítve: '.$action->quantity.' db.');
     }

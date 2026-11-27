@@ -3,7 +3,7 @@ import { seedUsableStock } from './movement-fixtures';
 
 test.beforeEach(async ({ page }, { tags }) => {
     await page.goto('/login');
-    await page.getByLabel('Email', { exact: true }).fill(tags.includes('@manual-out') ? 'warehouse-admin@example.test' : 'browser@example.test');
+    await page.getByLabel('Email', { exact: true }).fill((tags.includes('@manual-out') || tags.includes('@legacy-transfer')) ? 'warehouse-admin@example.test' : 'browser@example.test');
     await page.getByLabel('Password', { exact: true }).fill('browser-test-password');
     await page.getByRole('button', { name: 'Log in', exact: true }).click();
     await expect(page).toHaveURL(/dashboard/);
@@ -191,7 +191,8 @@ test('changing a selected partner role in another tab is checked again at save',
 });
 
 for (const path of ['/movements/create', '/transfers/create']) {
-    test('restoring '+path+' unlocks submitting, refreshes stock and preserves the request key', async ({ page }) => {
+    const tags = path.includes('transfers') ? { tag: '@legacy-transfer' } : {};
+    test('restoring '+path+' unlocks submitting, refreshes stock and preserves the request key', tags, async ({ page }) => {
         const transfer = path.includes('transfers');
         if (transfer) {
             // The real source picker needs stock before the stubbed stock refresh can run.

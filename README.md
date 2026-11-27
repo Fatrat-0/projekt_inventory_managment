@@ -55,6 +55,12 @@ A rendszer több raktár készleteinek egységes kezelését, hierarchikus kateg
    chmod +x deploy.sh
    ./deploy.sh
    ```
+5. Új adatbázis esetén hozd létre az első adminisztrátort a szerveren. A parancs a jelszót interaktívan, rejtett mezőben kéri.
+   ```bash
+   php artisan inventory:create-admin "Rendszergazda" admin@ceg.example
+   ```
+
+A Felhasználók oldalon az adminisztrátor adhat ki, módosíthat és inaktiválhat fiókokat. Raktáranként több helyi szerepkör is kiosztható. Meglévő adatbázison a frissítést mentés után, karbantartási ablakban, adatmegőrző migrációval végezd. A fiókkiadás módja, az átállási lépések és a jogosultsági mátrix a [felhasználói hozzáférés dokumentációjában](docs/felhasznaloi-hozzaferes.md) található.
 
 ---
 
@@ -70,11 +76,13 @@ php artisan test
 
 ## 🔑 Alapértelmezett Tesztfiókok (Seeder futtatása után)
 
+A bemutatóadatokat csak elkülönített fejlesztői vagy tesztadatbázisba töltsd be. A `DatabaseSeeder` kizárólag `local` és `testing` környezetben fut, az alábbi jelszavak a demonstrációhoz készültek. A Playwright-futtató saját eldobható adatbázist és külön tesztfiókokat készít.
+
 | Szerepkör | E-mail cím | Jelszó | Jogosultsági kör |
 | :--- | :--- | :--- | :--- |
 | **Adminisztrátor (`admin`)** | `admin@raktar.hu` | `admin123` | Teljes hozzáférés (felhasználók, raktárak, kategóriák, készletek) |
-| **Raktárvezető (`manager`)** | `manager@raktar.hu` | `manager123` | Raktárak, kategóriák, felhasználók és készletmozgások kezelése |
-| **Raktáros (`worker`)** | `worker@raktar.hu` | `worker123` | Termékek, készletmozgások, átmozgatások és PDF-bizonylatok kezelése |
+| **Raktárvezető (`manager`)** | `manager@raktar.hu` | `manager123` | Raktárak, kategóriák és készletmozgások kezelése. Az átmozgatási műveletek raktári tagságtól függnek. |
+| **Raktáros (`worker`)** | `worker@raktar.hu` | `worker123` | Termékek és készletmozgások kezelése. Az átmozgatási műveletek és bizonylatok raktári tagságtól függnek. |
 
 ### Átmozgatási igények bemutatója
 

@@ -101,7 +101,7 @@ test('product column migration, corrupt preferences, fixed columns and per-page 
     await page.evaluate(() => {
         localStorage.setItem('productColumns', JSON.stringify({ sku: false, price: false, product_name: false, actions: false, alien: false }));
         localStorage.setItem('inventory.stock.columns', '{broken');
-        localStorage.setItem('inventory.users.columns', JSON.stringify({ name: false, actions: false, email: 'false', created_at: null }));
+        localStorage.setItem('inventory.users.columns', JSON.stringify({ name: false, actions: false, role: false, state: false, email: 'false', created_at: null }));
         localStorage.setItem('inventory.categories.columns', '[]');
     });
     await page.goto('/products'); await expect(cells(page, 'sku')).toHaveCount(0); await expect(cells(page, 'price')).toHaveCount(0);
@@ -109,7 +109,7 @@ test('product column migration, corrupt preferences, fixed columns and per-page 
     await expect(table(page).locator('thead [data-listing-column="actions"]')).toBeVisible();
     await picker(page).click(); await panel(page).getByRole('button', { name: 'Alapbeállítások visszaállítása', exact: true }).click();
     await page.keyboard.press('Escape'); await page.reload(); await expect(table(page).locator('thead th:visible')).toHaveCount(7);
-    for (const [path, count] of [['stock', 8], ['users', 4], ['categories', 6]]) {
+    for (const [path, count] of [['stock', 8], ['users', 7], ['categories', 6]]) {
         await page.goto('/'+path); await expect(table(page).locator('thead th:visible')).toHaveCount(count);
     }
     await page.goto('/stock'); await picker(page).click(); await panel(page).getByRole('checkbox', { name: 'Cikkszám (SKU) oszlop megjelenítése', exact: true }).uncheck(); await page.keyboard.press('Escape');

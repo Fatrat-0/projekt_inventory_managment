@@ -4,9 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\{Warehouse, WarehouseLocation, WarehousePlacement};
 use App\Policies\WarehouseRelocationPolicy;
-use App\Services\{WarehouseCapacity, WarehouseLoadVerificationService};
+use App\Services\{TransferWorkflowOperations, WarehouseCapacity, WarehouseLoadVerificationService};
 use App\Support\{WarehouseListContext, WarehouseStockContext, WarehouseStorageOverview};
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class WarehouseLocationController extends Controller
@@ -42,11 +43,12 @@ class WarehouseLocationController extends Controller
             ->filter(fn ($stock) => $stock->available_quantity > $stock->assigned_quantity + $stock->staged_quantity)
             ->sortBy('product.product_name');
 
-        $loadChecks = $access->canAccessWarehouse($request->user(), (int) $warehouse->getKey())
+        $canHandleStock = $access->canAccessWarehouse($request->user(), (int) $warehouse->getKey());
+        $loadChecks = $canHandleStock
             ? $checks->counts($request->user(), $warehouse, $location->id) : null;
 
         return view('warehouses.locations.show', $this->viewData($request, $warehouse)
-            + compact('location', 'placements', 'stocks', 'capacity', 'sharedFreeWeight', 'loadChecks'));
+            + compact('location', 'placements', 'stocks', 'capacity', 'sharedFreeWeight', 'loadChecks', 'canHandleStock'));
     }
 
     public function store(Request $request, Warehouse $warehouse, WarehouseCapacity $capacity)
@@ -74,7 +76,11 @@ class WarehouseLocationController extends Controller
             'cargo_weight_kg' => 'required|'.WarehouseCapacity::WEIGHT_RULE,
             'pallet_slots' => 'nullable|'.WarehouseCapacity::SLOT_RULE,
         ], [], ['cargo_weight_kg' => 'teljes tömeg', 'pallet_slots' => 'raklapok száma']);
-        $capacity->place($location, $data + ['user_id' => $request->user()->id]);
+        DB::transaction(function () use ($request, $capacity, $warehouse, $location, $data) {
+            $actor = app(TransferWorkflowOperations::class)->currentActor($request->user());
+            app(WarehouseRelocationPolicy::class)->authorize($actor, (int) $warehouse->getKey(), locked: true);
+            $capacity->place($location, $data + ['user_id' => $actor->id]);
+        }, 3);
 
         return $this->backToLocation($request, $warehouse, $location, 'A készlet a tárhelyhez rendelve.');
     }
@@ -83,7 +89,11 @@ class WarehouseLocationController extends Controller
     {
         $location = $warehouse->storageLocations()->findOrFail($warehouseLocation->id);
         abort_unless((int) $placement->warehouse_location_id === $location->id, 404);
-        $capacity->release($location, $placement);
+        DB::transaction(function () use ($request, $capacity, $warehouse, $location, $placement) {
+            $actor = app(TransferWorkflowOperations::class)->currentActor($request->user());
+            app(WarehouseRelocationPolicy::class)->authorize($actor, (int) $warehouse->getKey(), locked: true);
+            $capacity->release($location, $placement);
+        }, 3);
 
         return $this->backToLocation($request, $warehouse, $location, 'A tétel kikerült a tárhelyről. A raktári foglalások érvényben maradnak.');
     }

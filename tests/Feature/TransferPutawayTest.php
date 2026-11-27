@@ -24,12 +24,15 @@ class TransferPutawayTest extends TestCase
         $category = Category::create(['category_name' => 'Alkatrészek']);
         $this->product = Product::create(['product_name' => 'Tengely', 'sku' => 'ATM-PUT-1', 'price' => 1, 'category_id' => $category->getKey()]);
         $this->worker = User::factory()->create(['role' => 'worker']);
+        $this->worker->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->worker->addWarehouseMembership($this->destination->getKey(), ['receiving_operator']);
         Stock::create(['warehouse_id' => $this->source->getKey(), 'product_id' => $this->product->getKey(), 'quantity' => 10]);
     }
 
     public function test_source_options_exclude_quarantined_and_include_pickable_assigned_stock(): void
     {
         $assignedWarehouse = Warehouse::create(['warehouse_name' => 'Tárhelyhez kötött készlet']);
+        $this->worker->addWarehouseMembership($assignedWarehouse->getKey(), ['supervisor']);
         Stock::create(['warehouse_id' => $this->destination->getKey(), 'product_id' => $this->product->getKey(), 'quantity' => 3, 'quarantined_quantity' => 3]);
         $assigned = Stock::create(['warehouse_id' => $assignedWarehouse->getKey(), 'product_id' => $this->product->getKey(), 'quantity' => 4]);
         $location = $assignedWarehouse->storageLocations()->create(['name' => 'Polc', 'code' => 'F-01', 'kind' => 'shelf', 'max_weight_grams' => 50000]);

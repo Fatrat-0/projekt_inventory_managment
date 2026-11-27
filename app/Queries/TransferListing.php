@@ -3,6 +3,8 @@
 namespace App\Queries;
 
 use App\Models\{InventoryTransfer, Product, Warehouse};
+use App\Models\User;
+use App\Policies\InventoryTransferPolicy;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use App\Support\{ListingDates, ListingNumber};
@@ -11,8 +13,10 @@ class TransferListing
 {
     public const SORTS = ['created_at' => 'Dátum', 'product_name' => 'Termék', 'quantity' => 'Mennyiség', 'status' => 'Állapot'];
     public array $filters;
+    private User $actor;
     public function __construct(Request $request)
     {
+        $this->actor = $request->user();
         $data = $request->validate(ListingDates::rules($request) + [
             'search' => 'nullable|string|max:200', 'status' => ['nullable', Rule::in(array_keys(InventoryTransfer::STATUSES))],
             'product_id' => 'nullable|integer|exists:products,product_id',
@@ -30,7 +34,10 @@ class TransferListing
     public function query(bool $ignoreStatus = false)
     {
         $f = $this->filters;
-        $query = InventoryTransfer::with(['product', 'fromWarehouse', 'toWarehouse', 'user', 'shipmentItem.stop.shipment']);
+        $query = app(InventoryTransferPolicy::class)->visibleTo(
+            InventoryTransfer::with(['product', 'fromWarehouse', 'toWarehouse', 'user', 'shipmentItem.stop.shipment']),
+            $this->actor,
+        );
         foreach (['status', 'product_id', 'from_warehouse_id', 'to_warehouse_id'] as $key) {
             if ($key === 'status' && $ignoreStatus) continue;
             if ($f[$key]) $query->where($key, $f[$key]);

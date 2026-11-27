@@ -121,10 +121,15 @@ test('card actions preserve transfer context and receipt behavior and protect th
     await expect(card.getByRole('button', { name: 'Átvétel', exact: true })).toHaveCount(0);
     await expect(page).toHaveURL(url => url.searchParams.get('search') === 'LIST-VIEW' && url.searchParams.get('sort_by') === 'quantity' && url.searchParams.get('per_page') === '25');
     await expect(toggle(page, 'cards')).toHaveAttribute('aria-pressed', 'true');
-    await page.goto('/users'); await toggle(page, 'cards').click();
+    await page.goto('/users?search=warehouse-admin%40example.test'); await toggle(page, 'cards').click();
     const self = page.locator('[data-listing-cards] article').filter({ hasText: 'warehouse-admin@example.test' });
-    await expect(self).toContainText('Te vagy az'); await expect(self.getByRole('button', { name: 'Törlés', exact: true })).toHaveCount(0);
-    await expect(page.locator('[data-listing-cards] article').filter({ hasText: 'browser@example.test' }).getByRole('button', { name: 'Törlés', exact: true })).toBeVisible();
+    await expect(self).toContainText('Az utolsó használható adminisztrátori fiók.');
+    await self.getByRole('button', { name: /^Műveletek:/ }).click();
+    await expect(self.getByRole('menuitem', { name: 'Inaktiválás', exact: true })).toHaveCount(0);
+    await page.goto('/users?search=browser%40example.test');
+    const worker = page.locator('[data-listing-cards] article').filter({ hasText: 'browser@example.test' });
+    await worker.getByRole('button', { name: /^Műveletek:/ }).click();
+    await expect(worker.getByRole('menuitem', { name: 'Inaktiválás', exact: true })).toBeVisible();
 });
 
 test('all shared views work when local storage is unavailable', async ({ page }) => {

@@ -258,8 +258,8 @@ class ManualIssueTest extends TestCase
         Stock::create(['product_id' => $zero->getKey(), 'warehouse_id' => $this->warehouse->getKey(), 'quantity' => 0]);
 
         $worker = User::factory()->create(['role' => 'worker']);
-        $worker->warehouseMemberships()->create(['warehouse_id' => $this->warehouse->getKey(), 'role' => 'dispatch_operator']);
-        $worker->warehouseMemberships()->create(['warehouse_id' => $other->getKey(), 'role' => 'receiving_operator']);
+        $worker->addWarehouseMembership($this->warehouse->getKey(), ['dispatch_operator']);
+        $worker->addWarehouseMembership($other->getKey(), ['receiving_operator']);
         $this->actingAs($worker);
         $this->getJson(route('movements.out.options'))->assertOk()->assertExactJson([
             'products' => [['id' => (string) $this->product->getKey()]],

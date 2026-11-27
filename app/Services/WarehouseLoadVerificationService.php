@@ -227,9 +227,13 @@ class WarehouseLoadVerificationService
             }, 3);
         } catch (ConflictHttpException|UniqueConstraintViolationException $error) {
             // Current read after rollback also works when an outer transaction already established a snapshot.
-            $prior = WarehouseLoadVerification::where('operation_key', $key)->sharedLock()->first();
-            if ($prior) return $this->replay($prior, $hash);
-            throw $error;
+            return DB::transaction(function () use ($actor, $warehouseId, $key, $hash, $error) {
+                $this->policy->verify($this->operations->currentActor($actor), $warehouseId, locked: true);
+                $prior = WarehouseLoadVerification::where('operation_key', $key)->sharedLock()->first();
+                if (!$prior) throw $error;
+
+                return $this->replay($prior, $hash);
+            });
         }
     }
 

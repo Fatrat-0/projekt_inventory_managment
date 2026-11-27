@@ -170,7 +170,7 @@ class TransferIntentWorkflowTest extends TestCase
         $unrelated = Warehouse::create(['warehouse_name' => 'Másik raktár']);
         foreach (['worker', 'manager'] as $role) {
             $actor = User::factory()->create(['role' => $role]);
-            $actor->warehouseMemberships()->create(['warehouse_id' => $unrelated->getKey(), 'role' => 'supervisor']);
+            $actor->addWarehouseMembership($unrelated->getKey(), ['supervisor']);
             $this->actingAs($actor)->postJson(route('transfer-intents.store'), $this->input())->assertForbidden();
         }
 
@@ -316,7 +316,7 @@ class TransferIntentWorkflowTest extends TestCase
         $this->getJson(route('transfer-intents.index'))->assertOk()->assertJsonCount(0, 'data')->assertJsonPath('total', 0);
         $this->actingAs($admin)->getJson(route('transfer-intents.index'))->assertOk()->assertJsonCount(2, 'data')->assertJsonPath('total', 2);
 
-        $destinationDispatcher->warehouseMemberships()->create(['warehouse_id' => $this->source->getKey(), 'role' => 'dispatch_operator']);
+        $destinationDispatcher->addWarehouseMembership($this->source->getKey(), ['dispatch_operator']);
         $this->actingAs($destinationDispatcher)->getJson(route('transfer-intents.index'))->assertOk()->assertJsonCount(2, 'data');
     }
 
@@ -432,7 +432,7 @@ class TransferIntentWorkflowTest extends TestCase
     private function member(Warehouse $warehouse, string $role): User
     {
         $user = User::factory()->create(['role' => 'worker']);
-        $user->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $user->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $user;
     }

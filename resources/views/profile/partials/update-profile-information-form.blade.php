@@ -1,4 +1,8 @@
 <section>
+    @php
+        $draftName = is_string(old('name')) ? old('name') : $user->name;
+        $draftEmail = is_string(old('email')) ? old('email') : $user->email;
+    @endphp
     <header>
         <h2 class="text-lg font-medium text-gray-900">
             {{ __('Profile Information') }}
@@ -13,19 +17,21 @@
         @csrf
     </form>
 
-    <form method="post" action="{{ route('profile.update') }}" class="mt-6 space-y-6">
+    <form method="post" action="{{ route('profile.update') }}" class="mt-6 space-y-6"
+        x-data="{ email: '', savedEmail: @js($user->email) }" x-init="email = $el.elements.email.value"
+        @pageshow.window="if ($event.persisted) { email = $el.elements.email.value; $refs.emailPassword.value = '' }">
         @csrf
         @method('patch')
 
         <div>
             <x-input-label for="name" :value="__('Name')" />
-            <x-text-input id="name" name="name" type="text" class="mt-1 block w-full" :value="old('name', $user->name)" required autofocus autocomplete="name" />
+            <x-text-input id="name" name="name" type="text" class="mt-1 block w-full" :value="$draftName" required autofocus autocomplete="name" />
             <x-input-error class="mt-2" :messages="$errors->get('name')" />
         </div>
 
         <div>
             <x-input-label for="email" :value="__('Email')" />
-            <x-text-input id="email" name="email" type="email" class="mt-1 block w-full" :value="old('email', $user->email)" required autocomplete="username" />
+            <x-text-input id="email" name="email" type="email" class="mt-1 block w-full" :value="$draftEmail" x-model="email" required autocomplete="username" />
             <x-input-error class="mt-2" :messages="$errors->get('email')" />
 
             @if ($user instanceof \Illuminate\Contracts\Auth\MustVerifyEmail && ! $user->hasVerifiedEmail())
@@ -45,6 +51,13 @@
                     @endif
                 </div>
             @endif
+        </div>
+
+        <div x-show="email.trim() !== savedEmail" @if(trim($draftEmail) === $user->email) style="display: none" @endif>
+            <x-input-label for="profile-email-password" value="Jelenlegi jelszó e-mail-cím módosításához" />
+            <x-text-input id="profile-email-password" name="current_password" type="password" autocomplete="current-password" x-ref="emailPassword"
+                x-bind:required="email.trim() !== savedEmail" x-bind:disabled="email.trim() === savedEmail" class="mt-1 block w-full" />
+            <x-input-error class="mt-2" :messages="$errors->get('current_password')" />
         </div>
 
         <div class="flex items-center gap-4">

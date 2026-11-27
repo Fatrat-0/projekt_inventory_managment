@@ -4,7 +4,9 @@
             @can('createAnyPlan', \App\Models\Shipment::class)
                 <a href="{{ route('shipments.create') }}" class="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium">Új fuvar tervezése</a>
             @endcan
-            <a href="{{ route('transfers.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">+ Új átmozgatás</a>
+            @can('create', \App\Models\InventoryTransfer::class)
+                <a href="{{ route('transfers.create', ['context' => $context]) }}" class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">+ Új átmozgatás</a>
+            @endcan
             <x-listing-view-toggle />
         </x-page-toolbar>
         <x-operation-feedback />

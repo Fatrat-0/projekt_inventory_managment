@@ -430,7 +430,7 @@ class ShipmentReceiptPutawayTest extends TestCase
     private function member(int $warehouse, string $role): User
     {
         $member = User::factory()->create(['role' => 'worker']);
-        $member->warehouseMemberships()->create(['warehouse_id' => $warehouse, 'role' => $role]);
+        $member->addWarehouseMembership($warehouse, [$role]);
 
         return $member;
     }

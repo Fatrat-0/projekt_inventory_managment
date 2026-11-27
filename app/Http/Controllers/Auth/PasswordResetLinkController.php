@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Services\UserAccess;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\{DB, Password};
 use Illuminate\View\View;
+use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 
 class PasswordResetLinkController extends Controller
 {
@@ -27,18 +29,21 @@ class PasswordResetLinkController extends Controller
     {
         $request->validate([
             'email' => ['required', 'email'],
+        ], [
+            'email.*' => 'Adj meg érvényes e-mail-címet.',
         ]);
 
-        // We will send the password reset link to this user. Once we have attempted
-        // to send the link, we will examine the response then see the message we
-        // need to show to the user. Finally, we'll send out a proper response.
-        $status = Password::sendResetLink(
-            $request->only('email')
-        );
+        if (!UserAccess::mailAvailable()) {
+            return back()->withErrors(['email' => 'Jelszóbeállításhoz kérj segítséget a rendszergazdától.']);
+        }
+        try {
+            DB::transaction(fn () => Password::sendResetLink(
+                [...$request->only('email'), 'deactivated_at' => null, fn ($query) => $query->lockForUpdate()],
+            ));
+        } catch (TransportExceptionInterface) {
+            // Keep the public response independent of account and delivery status.
+        }
 
-        return $status == Password::RESET_LINK_SENT
-                    ? back()->with('status', __($status))
-                    : back()->withInput($request->only('email'))
-                        ->withErrors(['email' => __($status)]);
+        return back()->with('status', 'Ha az e-mail-címhez aktív fiók tartozik, elküldjük a jelszóbeállító linket.');
     }
 }

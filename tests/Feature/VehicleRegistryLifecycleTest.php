@@ -173,8 +173,8 @@ class VehicleRegistryLifecycleTest extends TestCase
         $operator = User::factory()->create(['role' => 'worker']);
         $requester = User::factory()->create(['role' => 'worker']);
         $warehouse = Warehouse::factory()->create();
-        $operator->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => 'dispatch_operator']);
-        $requester->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => 'requester']);
+        $operator->addWarehouseMembership($warehouse->getKey(), ['dispatch_operator']);
+        $requester->addWarehouseMembership($warehouse->getKey(), ['requester']);
         $url = route('vehicle-pages.index');
 
         $this->get($url)->assertRedirect(route('login'));
@@ -196,7 +196,7 @@ class VehicleRegistryLifecycleTest extends TestCase
         $unauthorized = User::factory()->create(['role' => 'worker']);
         $myOrigin = Warehouse::factory()->create();
         $outside = Warehouse::factory()->create();
-        $operator->warehouseMemberships()->create(['warehouse_id' => $myOrigin->getKey(), 'role' => 'dispatch_operator']);
+        $operator->addWarehouseMembership($myOrigin->getKey(), ['dispatch_operator']);
         $vehicle = Vehicle::create(['name' => 'Kiadható']);
         $common = ['vehicle_id' => $vehicle->id, 'user_id' => $admin->id, 'planning_mode' => Shipment::MODE_TRANSFER_INTENT];
         $localDraft = Shipment::create($common + [

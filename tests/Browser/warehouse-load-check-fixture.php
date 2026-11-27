@@ -66,7 +66,7 @@ if (($argv[2] ?? '') === 'duplicates') {
 }
 $operator = User::factory()->create(['role' => 'worker', 'email' => 'load-'.strtolower($key).'@example.test',
     'password' => Hash::make('browser-test-password')]);
-$operator->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => 'dispatch_operator']);
+$operator->addWarehouseMembership($warehouse->getKey(), ['dispatch_operator']);
 $args = [$warehouse, $first->id];
 echo json_encode([
     'id' => $first->id, 'other_id' => $second->id, 'sku' => $product->sku, 'other_sku' => $other->sku,

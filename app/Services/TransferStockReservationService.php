@@ -77,7 +77,7 @@ class TransferStockReservationService
         $type = $reserve ? 'stock_reserved' : 'stock_released';
         $fingerprint = $this->operations->fingerprint($type, $actor, $intentId, ['version' => $version, 'reason' => $reason]);
 
-        return $this->operations->run($key, $fingerprint, function () use ($actor, $intentId, $reserve, $type, $key, $version, $reason, $fingerprint) {
+        return $this->operations->run($actor, $key, $fingerprint, function () use ($actor, $intentId, $reserve, $type, $key, $version, $reason, $fingerprint) {
             $actor = $this->operations->currentActor($actor);
             $current = TransferIntent::whereKey($intentId)->lockForUpdate()->first();
             abort_unless($current, 404, 'Az átmozgatási igény nem található.');

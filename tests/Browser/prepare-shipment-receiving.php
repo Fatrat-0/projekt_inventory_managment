@@ -54,7 +54,7 @@ $fixture = DB::transaction(function () use ($withOpenPicking) {
             'email' => Str::lower(Str::ascii($firstName)).'-'.$token.'@example.test',
             'password' => Hash::make('browser-test-password'), 'role' => 'worker',
         ]);
-        $person->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $person->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $person->email;
     };
@@ -151,9 +151,7 @@ $fixture = DB::transaction(function () use ($withOpenPicking) {
 
     $pickingIntent = null;
     if ($withOpenPicking) {
-        User::where('email', $emailByStop[$pecs->getKey()])->sole()->warehouseMemberships()->create([
-            'warehouse_id' => $source->getKey(), 'role' => 'dispatch_operator',
-        ]);
+        User::where('email', $emailByStop[$pecs->getKey()])->sole()->addWarehouseMembership($source->getKey(), ['dispatch_operator']);
         $product = Product::create([
             'sku' => '5C-KITAROLAS-'.$token, 'product_name' => 'Hosszú nevű pótalkatrész a kitárolási próba számára',
             'price' => 200, 'category_id' => $category->getKey(),

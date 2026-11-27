@@ -423,15 +423,15 @@ class ShipmentCargoPreparationTest extends TestCase
         $this->readiness($plan)->assertJsonPath('cargo_ready', true);
     }
 
-    public function test_vehicle_audit_author_is_protected_from_account_deletion(): void
+    public function test_inactivating_a_vehicle_audit_author_keeps_their_events(): void
     {
         $actor = User::factory()->create(['role' => 'admin']);
         $this->actingAs($actor);
         $vehicle = $this->createVehicle(1200, 6);
 
-        $this->actingAs($this->admin)->from(route('users.index'))->delete(route('users.destroy', $actor))
-            ->assertRedirect(route('users.index'))->assertSessionHasErrors('user');
-        $this->assertDatabaseHas('users', ['id' => $actor->id]);
+        $this->actingAs($this->admin)->from(route('users.index'))->patch(route('users.access', $actor), ['active' => false, 'lock_version' => 1])
+            ->assertRedirect(route('users.index'));
+        $this->assertFalse($actor->fresh()->isActive());
         $this->assertDatabaseHas('vehicle_operations', ['vehicle_id' => $vehicle['id'], 'actor_id' => $actor->id]);
     }
 
@@ -546,7 +546,7 @@ class ShipmentCargoPreparationTest extends TestCase
     private function member(Warehouse $warehouse, string $role): User
     {
         $user = User::factory()->create(['role' => 'worker']);
-        $user->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $user->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $user;
     }

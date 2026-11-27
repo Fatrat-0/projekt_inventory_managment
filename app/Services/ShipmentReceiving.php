@@ -62,8 +62,13 @@ class ShipmentReceiving
         } catch (UniqueConstraintViolationException $error) {
             // Different shipment roots can compete for the same unique key. The
             // losing transaction is already rolled back before the current read.
-            if ($prior = $this->findReceipt($key, true)) return $this->replay($prior, $hash);
-            throw $error;
+            return DB::transaction(function () use ($actor, $shipment, $stop, $key, $hash, $error) {
+                $currentActor = $this->operations->currentActor($actor);
+                $destination = $shipment->stops()->whereKey($stop->id)->sharedLock()->firstOrFail();
+                Gate::forUser($currentActor)->authorize('receiveStop', [Shipment::class, $destination]);
+                if ($prior = $this->findReceipt($key, true)) return $this->replay($prior, $hash);
+                throw $error;
+            });
         }
     }
 

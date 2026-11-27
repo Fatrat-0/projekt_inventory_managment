@@ -21,6 +21,7 @@
             'value' => (string) $warehouse->warehouse_id, 'name' => $warehouse->warehouse_name,
             'label' => $warehouse->warehouse_name.($warehouse->location ? ' · '.$warehouse->location : ''),
         ])->values();
+        $sourceItems = $warehouseItems->whereIn('value', $sourceWarehouses->modelKeys())->values();
         $oldSources = old('source_allocations', []);
         $previousSources = collect(is_array($oldSources) ? $oldSources : [])
             ->filter(fn ($row) => is_array($row) && array_key_exists('location_id', $row)
@@ -104,7 +105,7 @@
                             </div>
                             <div class="min-w-0" @source-selected="setSource($event.detail.value)" @input="sourceEdited = true">
                                 <label for="transfer-source" class="mb-1 block text-sm font-medium">Forrásraktár</label>
-                                <x-autocomplete-picker :items="$warehouseItems" id="transfer-source" name="from_warehouse_id" :value="$field('from_warehouse_id')" :required="true"
+                                <x-autocomplete-picker :items="$sourceItems" id="transfer-source" name="from_warehouse_id" :value="$field('from_warehouse_id')" :required="true"
                                     event-name="source-selected" placeholder="Raktár neve vagy helye…" available-values="sourceOptions" error-active="!sourceEdited" described-by="transfer-filter-help" />
                             </div>
                             <div class="min-w-0" @destination-selected="setDestination($event.detail.value)" @input="destinationEdited = true">

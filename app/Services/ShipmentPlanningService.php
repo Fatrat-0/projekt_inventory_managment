@@ -320,10 +320,20 @@ class ShipmentPlanningService
         } catch (UniqueConstraintViolationException|ConflictHttpException|ValidationException $error) {
             // A concurrent operation can win despite an older outer read snapshot, including
             // when a second create hits the already assigned intent before logging its own key.
-            $prior = $this->findOperation($operationKey, true);
-            if (!$prior) throw $error;
+            return DB::transaction(function () use ($actor, $shipment, $origin, $action, $operationKey, $error, $hash) {
+                $currentActor = $this->intentOperations->currentActor($actor);
+                $gate = Gate::forUser($currentActor);
+                if ($shipment) {
+                    $current = Shipment::whereKey($shipment->id)->sharedLock()->firstOrFail();
+                    $gate->authorize($action === 'dispatch' ? 'dispatchPlan' : 'managePlan', $current);
+                } else {
+                    $gate->authorize('createPlan', [Shipment::class, $origin]);
+                }
+                $prior = $this->findOperation($operationKey, true);
+                if (!$prior) throw $error;
 
-            return $this->replay($prior, $hash);
+                return $this->replay($prior, $hash);
+            });
         }
     }
 

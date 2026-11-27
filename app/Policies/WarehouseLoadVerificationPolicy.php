@@ -16,8 +16,7 @@ class WarehouseLoadVerificationPolicy
 
     public function canVerify(User $actor, int $warehouseId, bool $locked = false): bool
     {
-        return $actor->role === 'admin' || $actor->warehouseMemberships()->where('warehouse_id', $warehouseId)
-            ->where('role', 'supervisor')->when($locked, fn ($query) => $query->sharedLock())->first(['id']) !== null;
+        return $actor->role === 'admin' || $actor->hasWarehouseCapability('supervise', $warehouseId, $locked);
     }
 
     public function verify(User $actor, int $warehouseId, bool $locked = false): void

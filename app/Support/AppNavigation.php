@@ -47,7 +47,7 @@ class AppNavigation
                 ['route' => 'partners.index', 'label' => 'Partnerek', 'icon' => 'contacts', 'patterns' => ['partners.*']],
             ]))];
         }
-        if ($manage) $groups[] = ['label' => 'Adminisztráció', 'items' => [
+        if ($user?->role === 'admin') $groups[] = ['label' => 'Adminisztráció', 'items' => [
             ['route' => 'users.index', 'label' => 'Felhasználók', 'icon' => 'users', 'patterns' => ['users.*']],
         ]];
         return $groups;

@@ -31,7 +31,7 @@ class AppWorkspaceTest extends TestCase
         $worker = $this->getJson('/search')->assertOk()->assertHeader('Cache-Control', 'no-store, private')->json('results');
         $this->assertCount(6, $worker);
         foreach ($worker as $result) { $this->assertSame('Oldal', $result['kind']); $this->get($result['url'])->assertOk(); }
-        foreach (['admin' => 10, 'manager' => 9] as $role => $count) {
+        foreach (['admin' => 10, 'manager' => 8] as $role => $count) {
             $this->actingAs(User::factory()->create(['role' => $role]));
             $this->getJson('/search')->assertOk()->assertJsonCount($count, 'results');
             $search = $this->getJson('/search?q=raktari+feladatok')->assertOk();
@@ -78,6 +78,7 @@ class AppWorkspaceTest extends TestCase
         $closed = $service->recordReturn($source, ['user_id' => $this->worker->id, 'quantity' => 2, 'return_reason' => 'Lezárt']);
         $service->processReturnQuality($closed, ['action' => 'release', 'quantity' => 2, 'reason' => 'Megfelelő', 'user_id' => $this->worker->id]);
         $destination = Warehouse::create(['warehouse_name' => 'Másik']);
+        $this->worker->addWarehouseMembership($destination->getKey(), ['receiving_operator']);
         foreach (['pending', 'completed', 'cancelled'] as $status) InventoryTransfer::create(['product_id' => $this->product->product_id,
             'from_warehouse_id' => $this->warehouse->warehouse_id, 'to_warehouse_id' => $destination->warehouse_id, 'quantity' => 1, 'status' => $status, 'user_id' => $this->worker->id]);
         $this->assertSame(['transfers' => 1, 'returns' => 1, 'returnQuantity' => 3, 'total' => 2], AppTasks::summary($this->worker));

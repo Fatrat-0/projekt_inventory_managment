@@ -25,6 +25,8 @@ class InventoryWorkflowTest extends TestCase
         $this->product = Product::create(['product_name' => 'Csavar', 'sku' => 'TEST', 'price' => 100, 'category_id' => $category->category_id]);
         $this->source = Warehouse::create(['warehouse_name' => 'Forrás', 'location' => 'A']);
         $this->destination = Warehouse::create(['warehouse_name' => 'Cél', 'location' => 'B']);
+        $this->user->addWarehouseMembership($this->source->getKey(), ['supervisor']);
+        $this->user->addWarehouseMembership($this->destination->getKey(), ['supervisor']);
         Stock::create(['product_id' => $this->product->product_id, 'warehouse_id' => $this->source->warehouse_id, 'quantity' => 10]);
     }
 

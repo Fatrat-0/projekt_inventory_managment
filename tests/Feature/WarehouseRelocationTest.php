@@ -481,7 +481,7 @@ class WarehouseRelocationTest extends TestCase
     private function member(string $role, Warehouse $warehouse): User
     {
         $actor = User::factory()->create(['role' => 'worker']);
-        $actor->warehouseMemberships()->create(['warehouse_id' => $warehouse->getKey(), 'role' => $role]);
+        $actor->addWarehouseMembership($warehouse->getKey(), [$role]);
 
         return $actor;
     }

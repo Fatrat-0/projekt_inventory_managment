@@ -21,6 +21,7 @@ class LoadingPlanPdfOptionsTest extends TestCase
         $category=Category::create(['category_name'=>'Teszt']);
         $product=Product::create(['product_name'=>'Rakodott termék','sku'=>'SKU-TITKOS','price'=>10,'category_id'=>$category->category_id]);
         $origin=Warehouse::create(['warehouse_name'=>'Induló','location'=>'ORIGIN-ADDRESS']);
+        $user->addWarehouseMembership($origin->getKey(), ['dispatch_operator']);
         $target=Warehouse::create(['warehouse_name'=>'Cél','location'=>'TARGET-ADDRESS']);
         $this->shipment=app(ShipmentService::class)->save(['reference'=>'Fuvar PDF','origin_warehouse_id'=>$origin->warehouse_id,'note'=>'PRIVATE-NOTE',
             'stops'=>[['warehouse_id'=>$target->warehouse_id,'items'=>[['product_id'=>$product->product_id,'quantity'=>2]]]]],$user->id);

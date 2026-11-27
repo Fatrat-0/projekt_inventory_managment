@@ -7,11 +7,35 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
+
+    public const ROLES = ['worker' => 'Raktáros', 'manager' => 'Raktárvezető', 'admin' => 'Adminisztrátor'];
+
+    public const ROLE_DESCRIPTIONS = [
+        'worker' => 'Eléri a közös készlet-, termék-, partner- és készletmozgás-felületeket. A raktári feladatokhoz helyi tagság szükséges.',
+        'manager' => 'A közös felületeken túl kezeli a kategóriákat, raktárakat és helyi minimumokat. A helyi jóváhagyáshoz felügyelői tagság szükséges.',
+        'admin' => 'Kezeli a felhasználói fiókokat, és minden raktárhoz hozzáfér.',
+    ];
+
+    public function accessEvents(): HasMany
+    {
+        return $this->hasMany(UserAccessEvent::class);
+    }
+
+    public function isActive(): bool
+    {
+        return $this->deactivated_at === null;
+    }
+
+    public function isUsableAdministrator(): bool
+    {
+        return $this->role === 'admin' && $this->isActive() && !$this->password_change_required;
+    }
 
     /**
      * The attributes that are mass assignable.
@@ -104,6 +128,27 @@ class User extends Authenticatable
         return $this->hasMany(WarehouseMembership::class);
     }
 
+    public function addWarehouseMembership(int $warehouseId, array $roles): WarehouseMembership
+    {
+        return DB::transaction(function () use ($warehouseId, $roles) {
+            $membership = $this->warehouseMemberships()->create(['warehouse_id' => $warehouseId]);
+            $membership->syncRoles($roles);
+
+            return $membership;
+        });
+    }
+
+    public function hasWarehouseCapability(string $capability, int|array $warehouses, bool $locked = true): bool
+    {
+        // A locking join reads current assignments in MySQL even inside an older transaction snapshot.
+        return $this->warehouseMemberships()->getQuery()
+            ->join('warehouse_membership_roles as assignment', 'assignment.warehouse_membership_id', '=', 'warehouse_memberships.id')
+            ->whereIn('warehouse_memberships.warehouse_id', (array) $warehouses)
+            ->whereIn('assignment.role', WarehouseMembership::CAPABILITIES[$capability]['roles'])
+            ->orderBy('warehouse_memberships.warehouse_id')->orderBy('assignment.id')
+            ->when($locked, fn ($query) => $query->sharedLock())->first(['assignment.id']) !== null;
+    }
+
     public function initiatedTransferIntents(): HasMany
     {
         return $this->hasMany(TransferIntent::class, 'requested_by');
@@ -145,6 +190,10 @@ class User extends Authenticatable
             'dashboard_layout' => 'array',
             'dashboard_layout_version' => 'integer',
             'email_verified_at' => 'datetime',
+            'deactivated_at' => 'immutable_datetime',
+            'access_version' => 'integer',
+            'lock_version' => 'integer',
+            'password_change_required' => 'boolean',
             'password' => 'hashed',
         ];
     }
